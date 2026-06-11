@@ -2,93 +2,106 @@ import SwiftUI
 import AppKit
 
 struct SettingsView: View {
+    let embeddedInDashboard: Bool
+
     @StateObject private var authManager = AuthenticationManager.shared
     @StateObject private var dataManager = UsageDataManager.shared
     @StateObject private var claudeCodeService = ClaudeCodeLocalService.shared
+    @StateObject private var claudeAccountStore = ClaudeCodeAccountStore.shared
     @StateObject private var cursorService = CursorLocalService.shared
     @StateObject private var costTracker = CostTracker.shared
 
     @State private var claudeAdminKey: String = ""
     @State private var openaiAdminKey: String = ""
+    @State private var newClaudeAccountName: String = ""
+    @State private var newClaudeConfigDirectory: String = ""
 
     @State private var showingClaudeHelp = false
     @State private var showingOpenAIHelp = false
 
+    init(embeddedInDashboard: Bool = false) {
+        self.embeddedInDashboard = embeddedInDashboard
+    }
+
     var body: some View {
-        Form {
-            Section("Claude (Anthropic)") {
-                HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(authManager.isClaudeAuthenticated ? .green : .gray)
-                    Text(authManager.isClaudeAuthenticated ? "Connected" : "Not Connected")
+        Group {
+            if embeddedInDashboard {
+                settingsContent
+            } else {
+                ScrollView {
+                    settingsContent
+                        .padding(22)
                 }
+                .background(SettingsDesign.background)
+            }
+        }
+        .frame(minWidth: 560, minHeight: 500)
+        .sheet(isPresented: $showingClaudeHelp) {
+            ClaudeHelpView()
+        }
+        .sheet(isPresented: $showingOpenAIHelp) {
+            OpenAIHelpView()
+        }
+    }
 
-                SecureField("Admin API Key (sk-ant-admin...)", text: $claudeAdminKey)
-                    .textFieldStyle(.roundedBorder)
+    private var settingsContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            claudeAdminSection
+            claudeCodeSection
+            openAISection
+            cursorSection
+            costTrackingSection
+            refreshSection
+        }
+        .frame(maxWidth: 760, alignment: .leading)
+    }
 
-                HStack {
+    private var claudeAdminSection: some View {
+        SettingsPanelSection(title: "Claude (Anthropic)", logoKind: .claude, color: MeterBarTheme.claudeAccent) {
+            SettingsRowView(title: "Connection") {
+                StatusPill(
+                    title: authManager.isClaudeAuthenticated ? "Connected" : "Not Connected",
+                    isConnected: authManager.isClaudeAuthenticated
+                )
+            }
+
+            SettingsRowView(title: "Admin API Key", detail: "Required for organization usage APIs.") {
+                SecureField("sk-ant-admin...", text: $claudeAdminKey)
+                    .textFieldStyle(SettingsTextFieldStyle())
+                    .frame(maxWidth: 330)
+            }
+
+            SettingsRowView(title: "Actions") {
+                HStack(spacing: 8) {
                     Button("Save") {
                         _ = authManager.setClaudeAdminKey(claudeAdminKey)
                         claudeAdminKey = ""
                     }
+                    .buttonStyle(SettingsButtonStyle())
                     .disabled(claudeAdminKey.isEmpty)
 
                     Button("Remove") {
                         authManager.removeClaudeAdminKey()
                     }
-                    .foregroundColor(.red)
+                    .buttonStyle(SettingsButtonStyle(role: .destructive))
                     .disabled(!authManager.isClaudeAuthenticated)
-                }
 
-                Button("How to get Admin API Key") {
-                    showingClaudeHelp = true
+                    Button("Help") {
+                        showingClaudeHelp = true
+                    }
+                    .buttonStyle(SettingsButtonStyle())
                 }
-                .buttonStyle(.link)
             }
+        }
+    }
 
-            Section("Claude Code (Pro/Max)") {
-                HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(claudeCodeService.hasAccess ? .green : .gray)
-                    Text(claudeCodeService.hasAccess ? "Connected" : "Not Connected")
-                }
+    private var claudeCodeSection: some View {
+        SettingsPanelSection(title: "Claude Code (Pro/Max)", logoKind: .claude, color: MeterBarTheme.claudeAccent) {
+            SettingsRowView(title: "CLI status") {
+                HStack(spacing: 8) {
+                    StatusPill(title: claudeCodeService.authState.statusText, isConnected: claudeCodeService.hasAccess)
 
-                if claudeCodeService.hasAccess {
-                    if let subscriptionType = claudeCodeService.subscriptionType {
-                        HStack {
-                            Text("Plan:")
-                                .foregroundColor(.secondary)
-                            Text(subscriptionType.capitalized)
-                                .bold()
-                        }
-                        .font(.caption)
-                    }
-
-                    if let rateLimitTier = claudeCodeService.rateLimitTier {
-                        HStack {
-                            Text("Tier:")
-                                .foregroundColor(.secondary)
-                            Text(rateLimitTier.replacingOccurrences(of: "_", with: " ").capitalized)
-                        }
-                        .font(.caption)
-                    }
-
-                    Button("Refresh Status") {
-                        claudeCodeService.checkAccess()
-                        Task {
-                            await dataManager.refreshAll()
-                        }
-                    }
-                } else {
-                    Text("Automatically reads Claude Code CLI credentials from macOS Keychain.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    Text("Log in to Claude Code CLI first: run 'claude' in terminal")
-                        .font(.caption)
-                        .foregroundColor(.orange)
-
-                    Button("Check Again") {
+                    Button(claudeCodeService.hasAccess ? "Refresh" : "Check Again") {
                         claudeCodeService.checkAccess()
                         if claudeCodeService.hasAccess {
                             Task {
@@ -96,75 +109,132 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(SettingsButtonStyle())
                 }
             }
 
-            Section("OpenAI") {
-                HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(authManager.isOpenAIAuthenticated ? .green : .gray)
-                    Text(authManager.isOpenAIAuthenticated ? "Connected" : "Not Connected")
+            if claudeCodeService.hasAccess {
+                if let subscriptionType = claudeCodeService.subscriptionType {
+                    SettingsRowView(title: "Plan") {
+                        Text(subscriptionType.capitalized)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                    }
                 }
 
-                SecureField("Admin API Key", text: $openaiAdminKey)
-                    .textFieldStyle(.roundedBorder)
+                if let rateLimitTier = claudeCodeService.rateLimitTier {
+                    SettingsRowView(title: "Tier") {
+                        Text(rateLimitTier.replacingOccurrences(of: "_", with: " ").capitalized)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                    }
+                }
+            } else {
+                SettingsNotice(
+                    text: claudeCodeService.authState.guidanceText,
+                    color: .secondary
+                )
+                SettingsNotice(
+                    text: "MeterBar reads Claude CLI usage output before any legacy OAuth fallback.",
+                    color: MeterBarTheme.warning
+                )
+            }
 
-                HStack {
+            SettingsDivider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Claude Accounts")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+
+                ForEach(claudeAccountStore.accounts) { account in
+                    AccountProfileRow(account: account) {
+                        claudeAccountStore.removeAccount(id: account.id)
+                        Task {
+                            await dataManager.refreshAll()
+                        }
+                    }
+                }
+            }
+
+            SettingsRowView(title: "New account") {
+                TextField("Account name", text: $newClaudeAccountName)
+                    .textFieldStyle(SettingsTextFieldStyle())
+                    .frame(maxWidth: 220)
+            }
+
+            SettingsRowView(title: "Config directory", detail: "Use a separate CLAUDE_CONFIG_DIR for each extra account.") {
+                HStack(spacing: 8) {
+                    TextField("Path", text: $newClaudeConfigDirectory)
+                        .textFieldStyle(SettingsTextFieldStyle())
+                        .frame(maxWidth: 280)
+
+                    Button("Choose") {
+                        chooseClaudeConfigDirectory()
+                    }
+                    .buttonStyle(SettingsButtonStyle())
+                }
+            }
+
+            SettingsRowView(title: "Add profile") {
+                Button("Add Account") {
+                    addClaudeAccount()
+                }
+                .buttonStyle(SettingsButtonStyle(prominent: true))
+                .disabled(!canAddClaudeAccount)
+            }
+        }
+    }
+
+    private var openAISection: some View {
+        SettingsPanelSection(title: "OpenAI", logoKind: .codex, color: .cyan) {
+            SettingsRowView(title: "Connection") {
+                StatusPill(
+                    title: authManager.isOpenAIAuthenticated ? "Connected" : "Not Connected",
+                    isConnected: authManager.isOpenAIAuthenticated
+                )
+            }
+
+            SettingsRowView(title: "Admin API Key", detail: "Required for platform usage APIs.") {
+                SecureField("Admin API Key", text: $openaiAdminKey)
+                    .textFieldStyle(SettingsTextFieldStyle())
+                    .frame(maxWidth: 330)
+            }
+
+            SettingsRowView(title: "Actions") {
+                HStack(spacing: 8) {
                     Button("Save") {
                         _ = authManager.setOpenAIAdminKey(openaiAdminKey)
                         openaiAdminKey = ""
                     }
+                    .buttonStyle(SettingsButtonStyle())
                     .disabled(openaiAdminKey.isEmpty)
 
                     Button("Remove") {
                         authManager.removeOpenAIAdminKey()
                     }
-                    .foregroundColor(.red)
+                    .buttonStyle(SettingsButtonStyle(role: .destructive))
                     .disabled(!authManager.isOpenAIAuthenticated)
-                }
 
-                Button("How to get Admin API Key") {
-                    showingOpenAIHelp = true
+                    Button("Help") {
+                        showingOpenAIHelp = true
+                    }
+                    .buttonStyle(SettingsButtonStyle())
                 }
-                .buttonStyle(.link)
             }
+        }
+    }
 
-            Section("Cursor") {
-                HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(cursorService.hasAccess ? .green : .gray)
-                    Text(cursorService.hasAccess ? "Connected" : "Not Connected")
-                }
+    private var cursorSection: some View {
+        SettingsPanelSection(title: "Cursor", logoKind: .cursor, color: .green) {
+            SettingsRowView(title: "Connection") {
+                HStack(spacing: 8) {
+                    StatusPill(
+                        title: cursorService.hasAccess ? "Connected" : "Not Connected",
+                        isConnected: cursorService.hasAccess
+                    )
 
-                if cursorService.hasAccess {
-                    if let subscriptionType = cursorService.subscriptionType {
-                        HStack {
-                            Text("Plan:")
-                                .foregroundColor(.secondary)
-                            Text(subscriptionType.capitalized)
-                                .bold()
-                        }
-                        .font(.caption)
-                    }
-
-                    Button("Refresh Status") {
-                        cursorService.checkAccess()
-                        Task {
-                            await dataManager.refreshAll()
-                        }
-                    }
-                } else {
-                    Text("Automatically reads Cursor IDE credentials from macOS Keychain.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    Text("Log in to Cursor IDE first: open Cursor and sign in to your account")
-                        .font(.caption)
-                        .foregroundColor(.orange)
-
-                    Button("Check Again") {
-                        // Force a rescan of all possible database paths
+                    Button(cursorService.hasAccess ? "Refresh" : "Check Again") {
                         cursorService.checkAccess(forceRescan: true)
                         if cursorService.hasAccess {
                             Task {
@@ -172,74 +242,82 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(SettingsButtonStyle())
                 }
             }
 
-            Section("Cost Tracking (Last 30 Days)") {
-                if costTracker.isScanning {
-                    HStack {
+            if let subscriptionType = cursorService.subscriptionType, cursorService.hasAccess {
+                SettingsRowView(title: "Plan") {
+                    Text(subscriptionType.capitalized)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                }
+            } else if !cursorService.hasAccess {
+                SettingsNotice(text: "Reads Cursor IDE credentials from Cursor's local state database.", color: .secondary)
+                SettingsNotice(text: "Log in to Cursor IDE first, then check again.", color: MeterBarTheme.warning)
+            }
+        }
+    }
+
+    private var costTrackingSection: some View {
+        SettingsPanelSection(title: "Cost Tracking", systemImage: "chart.bar.xaxis", color: .green) {
+            if costTracker.isScanning {
+                SettingsRowView(title: "Status") {
+                    HStack(spacing: 8) {
                         ProgressView()
                             .scaleEffect(0.7)
                         Text("Scanning sessions...")
                             .foregroundColor(.secondary)
                     }
-                } else if let summary = costTracker.costSummary {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Total Cost")
-                            Spacer()
-                            Text(summary.formattedTotalCost)
-                                .bold()
-                                .foregroundColor(.primary)
-                        }
+                }
+            } else if let summary = costTracker.costSummary {
+                SettingsRowView(title: "Total cost") {
+                    Text(summary.formattedTotalCost)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                }
 
-                        HStack {
-                            Text("Daily Average")
-                            Spacer()
-                            Text(summary.formattedDailyCost)
-                                .foregroundColor(.secondary)
-                        }
+                SettingsRowView(title: "Daily average") {
+                    Text(summary.formattedDailyCost)
+                        .foregroundColor(.secondary)
+                }
 
-                        Divider()
-
-                        ForEach(summary.costs) { cost in
-                            HStack {
-                                Image(systemName: cost.provider.iconName)
-                                    .foregroundColor(.secondary)
-                                Text(cost.provider.displayName)
-                                Spacer()
-                                VStack(alignment: .trailing) {
-                                    Text(cost.formattedCost)
-                                        .font(.caption)
-                                    Text("\(cost.formattedTokens) tokens")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                        }
-
-                        if let lastScan = costTracker.lastScanDate {
-                            Text("Last scanned: \(lastScan, style: .relative) ago")
+                ForEach(summary.costs) { cost in
+                    SettingsRowView(title: cost.provider.displayName) {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(cost.formattedCost)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                            Text("\(cost.formattedTokens) tokens")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
                     }
-                } else {
-                    Text("No cost data available")
-                        .foregroundColor(.secondary)
                 }
 
-                Button("Scan Local Sessions") {
+                if let lastScan = costTracker.lastScanDate {
+                    SettingsNotice(text: "Last scanned \(formatDate(lastScan)) ago.", color: .secondary)
+                }
+            } else {
+                SettingsNotice(text: "No cost data loaded yet.", color: .secondary)
+            }
+
+            SettingsRowView(title: "Local sessions") {
+                Button("Scan 30 Days") {
                     Task {
                         await costTracker.scanCosts(days: 30)
                     }
                 }
+                .buttonStyle(SettingsButtonStyle(prominent: true))
                 .disabled(costTracker.isScanning)
             }
+        }
+    }
 
-            Section("Refresh") {
-                Picker("Auto-refresh interval", selection: Binding(
+    private var refreshSection: some View {
+        SettingsPanelSection(title: "Refresh", systemImage: "arrow.clockwise", color: .cyan) {
+            SettingsRowView(title: "Auto-refresh interval") {
+                Picker("", selection: Binding(
                     get: { dataManager.refreshInterval },
                     set: { dataManager.refreshInterval = $0 }
                 )) {
@@ -247,22 +325,340 @@ struct SettingsView: View {
                         Text(interval.displayName).tag(interval)
                     }
                 }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(width: 180)
+            }
 
-                Button("Refresh Now") {
+            SettingsRowView(title: "Manual refresh") {
+                RefreshIconButton(title: "Refresh Now", help: "Refresh usage") {
                     Task {
                         await dataManager.refreshAll()
                     }
                 }
             }
         }
-        .formStyle(.grouped)
-        .frame(minWidth: 450, minHeight: 500)
-        .sheet(isPresented: $showingClaudeHelp) {
-            ClaudeHelpView()
+    }
+
+    private var canAddClaudeAccount: Bool {
+        !newClaudeAccountName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !newClaudeConfigDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func formatDate(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func addClaudeAccount() {
+        claudeAccountStore.addAccount(
+            name: newClaudeAccountName,
+            configDirectory: newClaudeConfigDirectory
+        )
+        newClaudeAccountName = ""
+        newClaudeConfigDirectory = ""
+        Task {
+            await dataManager.refreshAll()
         }
-        .sheet(isPresented: $showingOpenAIHelp) {
-            OpenAIHelpView()
+    }
+
+    private func chooseClaudeConfigDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Use"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            newClaudeConfigDirectory = url.path
+            if newClaudeAccountName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                newClaudeAccountName = url.lastPathComponent
+            }
         }
+    }
+}
+
+private enum SettingsDesign {
+    static let background = Color(red: 0.02, green: 0.024, blue: 0.028)
+    static let surface = Color(red: 0.075, green: 0.082, blue: 0.094)
+    static let row = Color.white.opacity(0.025)
+    static let border = Color.white.opacity(0.08)
+    static let borderStrong = Color.white.opacity(0.14)
+}
+
+private struct SettingsPanelSection<Content: View>: View {
+    let title: String
+    let logoKind: ProviderLogoKind?
+    let systemImage: String?
+    let color: Color
+    let content: Content
+
+    init(
+        title: String,
+        logoKind: ProviderLogoKind,
+        color: Color,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.logoKind = logoKind
+        self.systemImage = nil
+        self.color = color
+        self.content = content()
+    }
+
+    init(
+        title: String,
+        systemImage: String,
+        color: Color,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.logoKind = nil
+        self.systemImage = systemImage
+        self.color = color
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                if let logoKind {
+                    ProviderLogoView(kind: logoKind, size: 16, foregroundColor: color)
+                } else if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(color)
+                        .frame(width: 16, height: 16)
+                }
+
+                Text(title)
+                    .font(.headline)
+                    .fontWeight(.semibold)
+            }
+
+            VStack(alignment: .leading, spacing: 0) {
+                content
+            }
+            .background(SettingsDesign.row)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(SettingsDesign.border, lineWidth: 1)
+            }
+        }
+        .padding(14)
+        .background(SettingsDesign.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(SettingsDesign.border, lineWidth: 1)
+        }
+    }
+}
+
+private struct SettingsRowView<Content: View>: View {
+    let title: String
+    let detail: String?
+    let content: Content
+
+    init(title: String, detail: String? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.detail = detail
+        self.content = content()
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                if let detail {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            content
+                .frame(maxWidth: 380, alignment: .trailing)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(SettingsDesign.border)
+                .frame(height: 1)
+                .padding(.leading, 12)
+        }
+    }
+}
+
+private struct SettingsNotice: View {
+    let text: String
+    let color: Color
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundColor(color)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(SettingsDesign.border)
+                    .frame(height: 1)
+                    .padding(.leading, 12)
+            }
+    }
+}
+
+private struct SettingsDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(SettingsDesign.borderStrong)
+            .frame(height: 1)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+    }
+}
+
+private struct StatusPill: View {
+    let title: String
+    let isConnected: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(isConnected ? Color.green : Color.secondary)
+                .frame(width: 7, height: 7)
+            Text(title)
+                .font(.caption)
+                .fontWeight(.semibold)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background((isConnected ? Color.green : Color.secondary).opacity(0.14))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay {
+            RoundedRectangle(cornerRadius: 6)
+                .stroke((isConnected ? Color.green : Color.secondary).opacity(0.18), lineWidth: 1)
+        }
+    }
+}
+
+private struct AccountProfileRow: View {
+    let account: ClaudeCodeAccount
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: account.isDefault ? "person.crop.circle" : "person.crop.circle.badge.plus")
+                .foregroundColor(MeterBarTheme.claudeAccent)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(account.name)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Text(account.configDirectory ?? "Default Claude CLI profile")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            if !account.isDefault {
+                Button("Remove", action: onRemove)
+                    .buttonStyle(SettingsButtonStyle(role: .destructive))
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(SettingsDesign.border)
+                .frame(height: 1)
+                .padding(.leading, 12)
+        }
+    }
+}
+
+private struct SettingsButtonStyle: ButtonStyle {
+    enum Role {
+        case normal
+        case destructive
+    }
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    var role: Role = .normal
+    var prominent = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.caption)
+            .fontWeight(.semibold)
+            .foregroundColor(textColor)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(backgroundColor.opacity(configuration.isPressed ? 0.70 : 1))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(borderColor, lineWidth: 1)
+            }
+            .opacity(isEnabled ? 1 : 0.45)
+    }
+
+    private var textColor: Color {
+        if prominent { return .black }
+        switch role {
+        case .normal:
+            return .primary
+        case .destructive:
+            return .red
+        }
+    }
+
+    private var backgroundColor: Color {
+        if prominent { return .cyan }
+        switch role {
+        case .normal:
+            return Color.white.opacity(0.06)
+        case .destructive:
+            return Color.red.opacity(0.12)
+        }
+    }
+
+    private var borderColor: Color {
+        if prominent { return Color.cyan.opacity(0.7) }
+        switch role {
+        case .normal:
+            return SettingsDesign.borderStrong
+        case .destructive:
+            return Color.red.opacity(0.22)
+        }
+    }
+}
+
+private struct SettingsTextFieldStyle: TextFieldStyle {
+    func _body(configuration: TextField<Self._Label>) -> some View {
+        configuration
+            .textFieldStyle(.plain)
+            .font(.subheadline)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(Color.white.opacity(0.045))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(SettingsDesign.borderStrong, lineWidth: 1)
+            }
     }
 }
 
@@ -292,7 +688,7 @@ struct ClaudeHelpView: View {
 
             Text("Note: You must be an organization admin to create Admin API keys. Individual accounts cannot access the Usage API.")
                 .font(.caption)
-                .foregroundColor(.orange)
+                .foregroundColor(MeterBarTheme.warning)
 
             HStack {
                 Button("Open Claude Console") {
@@ -340,7 +736,7 @@ struct OpenAIHelpView: View {
 
             Text("Note: You must be an organization owner or admin to create Admin keys.")
                 .font(.caption)
-                .foregroundColor(.orange)
+                .foregroundColor(MeterBarTheme.warning)
 
             HStack {
                 Button("Open OpenAI Settings") {

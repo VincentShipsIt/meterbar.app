@@ -28,11 +28,48 @@ struct TokenCost: Codable, Identifiable {
     }
 }
 
+struct DailyTokenUsage: Codable, Identifiable {
+    var id: String { "\(provider.rawValue)-\(Self.dayFormatter.string(from: date))" }
+
+    let date: Date
+    let provider: ServiceType
+    let inputTokens: Int
+    let outputTokens: Int
+    let cacheReadTokens: Int
+    let estimatedCostUSD: Double
+
+    var totalTokens: Int {
+        inputTokens + outputTokens + cacheReadTokens
+    }
+
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+}
+
 struct CostSummary {
     let costs: [TokenCost]
     let totalCostUSD: Double
     let totalTokens: Int
     let periodDays: Int
+    let dailyUsage: [DailyTokenUsage]
+
+    init(
+        costs: [TokenCost],
+        totalCostUSD: Double,
+        totalTokens: Int,
+        periodDays: Int,
+        dailyUsage: [DailyTokenUsage] = []
+    ) {
+        self.costs = costs
+        self.totalCostUSD = totalCostUSD
+        self.totalTokens = totalTokens
+        self.periodDays = periodDays
+        self.dailyUsage = dailyUsage
+    }
 
     var formattedTotalCost: String {
         String(format: "$%.2f", totalCostUSD)

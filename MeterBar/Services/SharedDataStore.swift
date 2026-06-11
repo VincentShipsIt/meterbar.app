@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(WidgetKit)
+import WidgetKit
+#endif
 
 /// Shared data store using App Groups for Widget extension access
 class SharedDataStore {
@@ -15,19 +18,22 @@ class SharedDataStore {
     
     func saveMetrics(_ metrics: [ServiceType: UsageMetrics]) {
         guard let containerURL = containerURL else {
-            print("❌ [SharedDataStore] App Group container not available. Enable 'App Groups' capability in Xcode for both app and widget targets.")
+            print("[SharedDataStore] App Group container not available. Enable App Groups for both app and widget targets.")
             return
         }
 
-        print("✅ [SharedDataStore] Writing to App Group: \(containerURL.path)")
         let fileURL = containerURL.appendingPathComponent("\(metricsKey).json")
         
         let encoded = metrics.reduce(into: [String: UsageMetrics]()) { result, pair in
             result[pair.key.rawValue] = pair.value
         }
         
-        if let data = try? JSONEncoder().encode(encoded) {
-            try? data.write(to: fileURL)
+        do {
+            let data = try JSONEncoder().encode(encoded)
+            try data.write(to: fileURL)
+            reloadWidgetTimelines()
+        } catch {
+            print("[SharedDataStore] Failed to save metrics: \(error)")
         }
     }
     
@@ -47,5 +53,12 @@ class SharedDataStore {
             }
         }
     }
-}
 
+    private func reloadWidgetTimelines() {
+        #if canImport(WidgetKit)
+        if #available(macOS 11.0, *) {
+            WidgetCenter.shared.reloadTimelines(ofKind: "UsageWidget")
+        }
+        #endif
+    }
+}

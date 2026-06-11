@@ -26,7 +26,8 @@ let package = Package(
                 "Info.plist",
                 "MeterBar.entitlements",
                 "App/MeterBar.entitlements",
-                "Assets.xcassets"
+                "Assets.xcassets",
+                "Resources"
             ]
         ),
         .testTarget(

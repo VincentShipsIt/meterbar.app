@@ -113,14 +113,14 @@ final class APIIntegrationTests: XCTestCase {
 
         let claudeCodeService = ClaudeCodeLocalService.shared
 
-        // Check if OAuth token exists
+        // Check if Claude Code usage access is available
         guard claudeCodeService.hasAccess else {
-            print("⚠️  SKIPPED: No Claude Code OAuth token found")
+            print("⚠️  SKIPPED: Claude Code usage access not available")
             print("   To test: Log into Claude Code CLI (claude login)")
-            throw XCTSkip("Claude Code OAuth token not found")
+            throw XCTSkip("Claude Code usage access not available")
         }
 
-        print("✓ Claude Code OAuth token found")
+        print("✓ Claude Code usage access available: \(claudeCodeService.authState.statusText)")
 
         if let subType = claudeCodeService.subscriptionType {
             print("  Subscription: \(subType)")

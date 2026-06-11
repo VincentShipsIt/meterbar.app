@@ -7,6 +7,7 @@ class UsageDataManager: ObservableObject {
     static let shared = UsageDataManager()
 
     @Published var metrics: [ServiceType: UsageMetrics] = [:]
+    @Published var claudeCodeAccountMetrics: [UUID: UsageMetrics] = [:]
     @Published var isLoading: Bool = false
     @Published var lastError: Error?
 
@@ -26,6 +27,7 @@ class UsageDataManager: ObservableObject {
     private let openaiService = OpenAIService.shared
     private let codexCliService = CodexCliLocalService.shared
     private let authManager = AuthenticationManager.shared
+    private let claudeCodeAccountStore = ClaudeCodeAccountStore.shared
 
     private var refreshTimer: Timer?
     private let cacheKey = "cached_usage_metrics"
@@ -55,15 +57,13 @@ class UsageDataManager: ObservableObject {
 
         // Fetch Claude Code metrics (local files)
         if claudeCodeService.hasAccess {
-            do {
-                let metrics = try await claudeCodeService.fetchUsageMetrics()
-                newMetrics[.claudeCode] = metrics
-            } catch {
-                lastError = error
-                // Preserve cached data if available (graceful degradation)
-                if let cachedMetrics = self.metrics[.claudeCode] {
-                    newMetrics[.claudeCode] = cachedMetrics
-                }
+            let accountMetrics = await fetchClaudeCodeAccountMetrics()
+            claudeCodeAccountMetrics = accountMetrics
+
+            if let representativeMetrics = representativeClaudeCodeMetrics(from: accountMetrics) {
+                newMetrics[.claudeCode] = representativeMetrics
+            } else if let cachedMetrics = self.metrics[.claudeCode] {
+                newMetrics[.claudeCode] = cachedMetrics
             }
         }
 
@@ -138,16 +138,14 @@ class UsageDataManager: ObservableObject {
                 guard claudeCodeService.hasAccess else {
                     throw ServiceError.notAuthenticated
                 }
-                do {
-                    newMetrics = try await claudeCodeService.fetchUsageMetrics()
-                } catch {
-                    // On individual refresh, preserve cached data if fetch fails
-                    if let cachedMetric = metrics[service] {
-                        newMetrics = cachedMetric
-                        lastError = error
-                    } else {
-                        throw error
-                    }
+                let accountMetrics = await fetchClaudeCodeAccountMetrics()
+                claudeCodeAccountMetrics = accountMetrics
+                if let representativeMetrics = representativeClaudeCodeMetrics(from: accountMetrics) {
+                    newMetrics = representativeMetrics
+                } else if let cachedMetric = metrics[service] {
+                    newMetrics = cachedMetric
+                } else {
+                    throw lastError ?? ServiceError.notAuthenticated
                 }
             case .openai:
                 guard authManager.isOpenAIAuthenticated else {
@@ -254,6 +252,27 @@ class UsageDataManager: ObservableObject {
                 await self?.refreshAll()
             }
         }
+    }
+
+    private func fetchClaudeCodeAccountMetrics() async -> [UUID: UsageMetrics] {
+        var refreshedMetrics: [UUID: UsageMetrics] = [:]
+
+        for account in claudeCodeAccountStore.accounts {
+            do {
+                refreshedMetrics[account.id] = try await claudeCodeService.fetchUsageMetrics(account: account)
+            } catch {
+                lastError = error
+                if let cachedMetrics = claudeCodeAccountMetrics[account.id] {
+                    refreshedMetrics[account.id] = cachedMetrics
+                }
+            }
+        }
+
+        return refreshedMetrics
+    }
+
+    private func representativeClaudeCodeMetrics(from accountMetrics: [UUID: UsageMetrics]) -> UsageMetrics? {
+        accountMetrics[ClaudeCodeAccount.defaultID] ?? accountMetrics.values.first
     }
 
     func getNextRefreshTime() -> Date? {

@@ -60,76 +60,41 @@ class CodexCliLocalService: ObservableObject {
     /// Read OAuth access token from ~/.codex/auth.json
     /// This file is created and maintained by the Codex CLI when user logs in
     func getAuthToken() -> String? {
-        let path = authFilePath
-        print("[CodexCliLocalService] Reading auth file: \(path)")
-
-        let fileExists = FileManager.default.fileExists(atPath: path)
-        print("[CodexCliLocalService] File exists: \(fileExists)")
-
-        if !fileExists {
-            print("[CodexCliLocalService] Auth file not found at \(path)")
+        guard let token = readAuthFile()?.tokens?.accessToken else {
             return nil
         }
 
-        guard let data = FileManager.default.contents(atPath: path) else {
-            print("[CodexCliLocalService] Could not read file contents (permission issue?)")
+        guard !OAuthTokenExpiry.isExpired(jwt: token) else {
             return nil
         }
 
-        print("[CodexCliLocalService] Read \(data.count) bytes")
-
-        // Log raw JSON for debugging
-        if let rawJson = String(data: data, encoding: .utf8) {
-            print("[CodexCliLocalService] Raw JSON (first 200 chars): \(rawJson.prefix(200))")
-        }
-
-        do {
-            let authData = try JSONDecoder().decode(CodexAuthFile.self, from: data)
-            print("[CodexCliLocalService] Decoded auth file - tokens: \(authData.tokens != nil), accessToken: \(authData.tokens?.accessToken != nil)")
-            if let token = authData.tokens?.accessToken {
-                print("[CodexCliLocalService] Access token found (length: \(token.count))")
-                return token
-            } else {
-                print("[CodexCliLocalService] No access token in auth file")
-                return nil
-            }
-        } catch {
-            print("[CodexCliLocalService] Failed to parse auth.json: \(error)")
-            return nil
-        }
+        return token
     }
 
     /// Read account ID from ~/.codex/auth.json
     /// Required for the ChatGPT-Account-Id header to get team/workspace data
     func getAccountId() -> String? {
-        let path = authFilePath
-
-        guard let data = FileManager.default.contents(atPath: path) else {
-            return nil
-        }
-
-        do {
-            let authData = try JSONDecoder().decode(CodexAuthFile.self, from: data)
-            if let accountId = authData.tokens?.accountId {
-                print("[CodexCliLocalService] Account ID found: \(accountId)")
-                return accountId
-            }
-            return nil
-        } catch {
-            return nil
-        }
+        readAuthFile()?.tokens?.accountId
     }
 
+    private func readAuthFile() -> CodexAuthFile? {
+        guard FileManager.default.fileExists(atPath: authFilePath),
+              let data = FileManager.default.contents(atPath: authFilePath) else {
+            return nil
+        }
+
+        return try? JSONDecoder().decode(CodexAuthFile.self, from: data)
+    }
 
     /// Check and update access status
     func checkAccess() {
         let token = getAuthToken()
         let hasToken = token != nil
-        print("[CodexCliLocalService] checkAccess: authFile=\(authFilePath), hasToken=\(hasToken)")
         if hasToken {
             hasAccess = true
         } else {
             hasAccess = false
+            subscriptionType = nil
         }
     }
 
@@ -159,7 +124,6 @@ class CodexCliLocalService: ObservableObject {
         // Without this header, API returns free plan data even for team accounts
         if let accountId = getAccountId() {
             request.setValue(accountId, forHTTPHeaderField: "ChatGPT-Account-Id")
-            print("[CodexCliLocalService] Using account ID: \(accountId)")
         }
 
         // Browser-like headers to avoid blocks
@@ -192,10 +156,6 @@ class CodexCliLocalService: ObservableObject {
                 throw ServiceError.apiError("HTTP \(httpResponse.statusCode): \(errorMessage.prefix(100))")
             }
 
-            // Parse the response
-            let rawResponse = String(data: data, encoding: .utf8) ?? "{}"
-            print("[CodexCliLocalService] Raw response: \(rawResponse.prefix(500))")
-
             let decoder = JSONDecoder()
             // Note: Codex CLI API uses Unix timestamps (Int64), not ISO8601 dates
             
@@ -227,7 +187,8 @@ class CodexCliLocalService: ObservableObject {
             let sessionLimit = UsageLimit(
                 used: primaryWindow.usedPercent,
                 total: 100.0,
-                resetTime: Date(timeIntervalSince1970: Double(primaryWindow.resetAt))
+                resetTime: Date(timeIntervalSince1970: Double(primaryWindow.resetAt)),
+                windowSeconds: TimeInterval(primaryWindow.limitWindowSeconds)
             )
 
             // Secondary window (7 days = 604800 seconds) = weekly limit
@@ -236,7 +197,8 @@ class CodexCliLocalService: ObservableObject {
             let weeklyLimit = UsageLimit(
                 used: secondaryWindow?.usedPercent ?? 0.0,
                 total: 100.0,
-                resetTime: secondaryWindow != nil ? Date(timeIntervalSince1970: Double(secondaryWindow!.resetAt)) : Date()
+                resetTime: secondaryWindow != nil ? Date(timeIntervalSince1970: Double(secondaryWindow!.resetAt)) : Date(),
+                windowSeconds: secondaryWindow.map { TimeInterval($0.limitWindowSeconds) }
             )
 
             // Code review rate limit (7 days window) = code review limit
@@ -246,7 +208,8 @@ class CodexCliLocalService: ObservableObject {
                 codeReviewLimit = UsageLimit(
                     used: codeReviewPrimary.usedPercent,
                     total: 100.0,
-                    resetTime: Date(timeIntervalSince1970: Double(codeReviewPrimary.resetAt))
+                    resetTime: Date(timeIntervalSince1970: Double(codeReviewPrimary.resetAt)),
+                    windowSeconds: TimeInterval(codeReviewPrimary.limitWindowSeconds)
                 )
             }
 
@@ -276,12 +239,6 @@ class CodexCliLocalService: ObservableObject {
             throw error
         } catch let decodingError as DecodingError {
             print("[CodexCliLocalService] Decoding error: \(decodingError)")
-            // If decoding fails, the API structure might be different
-            // Log the raw response for debugging
-            if let data = try? Data(contentsOf: URL(string: usageEndpoint)!) {
-                let rawResponse = String(data: data, encoding: .utf8) ?? "{}"
-                print("[CodexCliLocalService] Failed to decode response. Raw JSON: \(rawResponse)")
-            }
             let serviceError = ServiceError.parsingError
             await MainActor.run { self.lastError = serviceError }
             throw serviceError
@@ -365,6 +322,45 @@ struct Credits: Codable {
         case balance
         case approxLocalMessages = "approx_local_messages"
         case approxCloudMessages = "approx_cloud_messages"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        hasCredits = (try? container.decode(Bool.self, forKey: .hasCredits)) ?? false
+        unlimited = (try? container.decode(Bool.self, forKey: .unlimited)) ?? false
+
+        if let doubleBalance = try? container.decode(Double.self, forKey: .balance) {
+            balance = doubleBalance
+        } else if let stringBalance = try? container.decode(String.self, forKey: .balance) {
+            balance = Double(stringBalance)
+        } else {
+            balance = nil
+        }
+
+        approxLocalMessages = Self.decodeMessageEstimate(container, forKey: .approxLocalMessages)
+        approxCloudMessages = Self.decodeMessageEstimate(container, forKey: .approxCloudMessages)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(hasCredits, forKey: .hasCredits)
+        try container.encode(unlimited, forKey: .unlimited)
+        try container.encodeIfPresent(balance, forKey: .balance)
+        try container.encodeIfPresent(approxLocalMessages, forKey: .approxLocalMessages)
+        try container.encodeIfPresent(approxCloudMessages, forKey: .approxCloudMessages)
+    }
+
+    private static func decodeMessageEstimate(
+        _ container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) -> Int? {
+        if let value = try? container.decode(Int.self, forKey: key) {
+            return value
+        }
+        if let values = try? container.decode([Int].self, forKey: key) {
+            return values.last ?? values.first
+        }
+        return nil
     }
 }
 

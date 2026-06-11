@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import UserNotifications
 
@@ -22,6 +23,7 @@ struct MeterBarApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
+    private var cancellables = Set<AnyCancellable>()
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("🚀 MeterBar: Application did finish launching")
@@ -42,12 +44,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         button.action = #selector(togglePopover)
         button.target = self
         button.toolTip = "MeterBar"
+        button.imagePosition = .imageLeft
+        button.font = .systemFont(ofSize: 14, weight: .semibold)
         
         // Create popover
         popover = NSPopover()
-        popover?.contentSize = NSSize(width: 320, height: 500)
+        popover?.contentSize = NSSize(width: 520, height: 420)
         popover?.behavior = .transient
-        popover?.contentViewController = NSHostingController(rootView: MenuBarView())
+        popover?.contentViewController = NSHostingController(
+            rootView: MenuBarView { [weak self] size in
+                self?.popover?.contentSize = size
+            }
+        )
+
+        Task { @MainActor in
+            observeUsageMetrics()
+        }
 
         // Setup notifications (also handles initial data refresh)
         setupNotifications()
@@ -144,6 +156,84 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         UNUserNotificationCenter.current().add(request)
     }
 
+    @MainActor
+    private func observeUsageMetrics() {
+        UsageDataManager.shared.$metrics
+            .sink { [weak self] metrics in
+                Task { @MainActor in
+                    self?.updateStatusItem(metrics: metrics)
+                }
+            }
+            .store(in: &cancellables)
+
+        UsageDataManager.shared.$claudeCodeAccountMetrics
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.updateStatusItem(metrics: UsageDataManager.shared.metrics)
+                }
+            }
+            .store(in: &cancellables)
+
+        ClaudeCodeAccountStore.shared.$customAccounts
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.updateStatusItem(metrics: UsageDataManager.shared.metrics)
+                }
+            }
+            .store(in: &cancellables)
+
+        updateStatusItem(metrics: UsageDataManager.shared.metrics)
+    }
+
+    @MainActor
+    private func updateStatusItem(metrics: [ServiceType: UsageMetrics]) {
+        guard let button = statusItem?.button else { return }
+
+        guard let status = selectedStatus(in: metrics), let limit = status.limit else {
+            button.title = ""
+            button.imagePosition = .imageOnly
+            button.toolTip = "MeterBar"
+            return
+        }
+
+        let percent = percentLeft(for: limit)
+        button.imagePosition = .imageLeft
+        button.title = " \(percent)%"
+        button.toolTip = "MeterBar: \(percent)% left · \(status.label)"
+        button.setAccessibilityLabel("MeterBar \(percent)% left, \(status.label)")
+    }
+
+    @MainActor
+    private func selectedStatus(in metrics: [ServiceType: UsageMetrics]) -> (label: String, limit: UsageLimit?)? {
+        ("overview primary quota", mostConstrainedPrimaryLimit(in: metrics))
+    }
+
+    @MainActor
+    private func mostConstrainedPrimaryLimit(in metrics: [ServiceType: UsageMetrics]) -> UsageLimit? {
+        let claudeLimits = ClaudeCodeAccountStore.shared.accounts.compactMap {
+            claudeMetrics(for: $0, metrics: metrics)?.sessionLimit
+        }
+        let limits = ([
+            metrics[.codexCli]?.sessionLimit,
+            metrics[.cursor]?.weeklyLimit
+        ] + claudeLimits).compactMap { $0 }
+
+        return limits.min { lhs, rhs in
+            percentLeft(for: lhs) < percentLeft(for: rhs)
+        }
+    }
+
+    @MainActor
+    private func claudeMetrics(for account: ClaudeCodeAccount, metrics: [ServiceType: UsageMetrics]) -> UsageMetrics? {
+        UsageDataManager.shared.claudeCodeAccountMetrics[account.id] ?? (account.isDefault ? metrics[.claudeCode] : nil)
+    }
+
+    private func percentLeft(for limit: UsageLimit) -> Int {
+        guard limit.total > 0 else { return 100 }
+        let rawPercentage = max(0, (limit.used / limit.total) * 100)
+        return Int(max(0, 100 - rawPercentage).rounded())
+    }
+
     private func createMenuBarIcon() -> NSImage {
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size, flipped: false) { rect in
@@ -171,4 +261,3 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return image
     }
 }
-

@@ -1,782 +1,608 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 
-// Which card is currently expanded (accordion behavior - only one at a time)
-enum ExpandedCard: Equatable {
-    case none
-    case claudeCode
-    case codexCli
+enum ProviderLogoKind: Equatable {
+    case overview
+    case codex
+    case claude
     case cursor
+
+    var resourceName: String? {
+        switch self {
+        case .overview:
+            return nil
+        case .codex:
+            return "ProviderIcon-codex"
+        case .claude:
+            return "ProviderIcon-claude"
+        case .cursor:
+            return "ProviderIcon-cursor"
+        }
+    }
+
+    var fallbackSystemName: String {
+        switch self {
+        case .overview:
+            return "square.grid.2x2"
+        case .codex:
+            return ServiceType.codexCli.iconName
+        case .claude:
+            return ServiceType.claudeCode.iconName
+        case .cursor:
+            return ServiceType.cursor.iconName
+        }
+    }
 }
 
 struct MenuBarView: View {
+    private let popoverWidth: CGFloat = 430
+    private let maxPopoverHeight: CGFloat = 560
+    private let minPopoverHeight: CGFloat = 180
+    private let chromeHeight: CGFloat = 56
+
+    let onContentSizeChange: (NSSize) -> Void
+
     @StateObject private var dataManager = UsageDataManager.shared
-    @StateObject private var authManager = AuthenticationManager.shared
     @StateObject private var claudeCodeService = ClaudeCodeLocalService.shared
     @StateObject private var codexCliService = CodexCliLocalService.shared
     @StateObject private var cursorService = CursorLocalService.shared
+    @StateObject private var claudeAccountStore = ClaudeCodeAccountStore.shared
 
-    // Track which card is expanded (only one at a time)
-    @State private var expandedCard: ExpandedCard = .none
+    @State private var contentHeight: CGFloat = 320
+
+    init(onContentSizeChange: @escaping (NSSize) -> Void = { _ in }) {
+        self.onContentSizeChange = onContentSizeChange
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack {
+            popoverHeader
+
+            Divider()
+                .opacity(0.35)
+
+            ScrollView {
+                PopoverOverviewPanel(
+                    metrics: dataManager.metrics,
+                    claudeAccounts: claudeAccountStore.accounts,
+                    claudeAccountMetrics: dataManager.claudeCodeAccountMetrics,
+                    claudeCodeHasAccess: claudeCodeService.hasAccess,
+                    codexCliHasAccess: codexCliService.hasAccess,
+                    cursorHasAccess: cursorService.hasAccess,
+                    openDashboard: openDashboard
+                )
+                    .padding(10)
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: MenuContentHeightPreferenceKey.self,
+                                value: proxy.size.height
+                            )
+                        }
+                    )
+            }
+            .frame(height: scrollHeight)
+        }
+        .frame(width: popoverWidth, height: popoverHeight)
+        .background {
+            ZStack {
+                Color(red: 0.075, green: 0.080, blue: 0.080).opacity(0.74)
+                Rectangle().fill(.ultraThinMaterial)
+            }
+        }
+        .onAppear {
+            notifyContentSize()
+        }
+        .onPreferenceChange(MenuContentHeightPreferenceKey.self) { height in
+            guard height > 0, abs(height - contentHeight) > 1 else { return }
+            contentHeight = height
+            notifyContentSize(height: height)
+        }
+    }
+
+    private var scrollHeight: CGFloat {
+        min(max(80, contentHeight), maxPopoverHeight - chromeHeight)
+    }
+
+    private var popoverHeight: CGFloat {
+        min(max(chromeHeight + scrollHeight, minPopoverHeight), maxPopoverHeight)
+    }
+
+    private func notifyContentSize(height: CGFloat? = nil) {
+        let measuredHeight = height ?? contentHeight
+        let targetScrollHeight = min(max(80, measuredHeight), maxPopoverHeight - chromeHeight)
+        let targetHeight = min(max(chromeHeight + targetScrollHeight, minPopoverHeight), maxPopoverHeight)
+        onContentSizeChange(NSSize(width: popoverWidth, height: targetHeight))
+    }
+
+    private var popoverHeader: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 9) {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.cyan)
                 Text("MeterBar")
                     .font(.headline)
-                Spacer()
-                Button(action: {
-                    Task {
-                        await dataManager.refreshAll()
-                    }
-                }) {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.plain)
-            }
-            .padding()
-            .background(Color(NSColor.controlBackgroundColor))
-
-            Divider()
-
-            // Service Cards
-            ScrollView {
-                VStack(spacing: 12) {
-                    // Claude: Show Claude Code if available, otherwise Claude API
-                    // Priority: Claude Code (easier setup) > Claude API (requires admin key)
-                    if claudeCodeService.hasAccess {
-                        // User has Claude Code logged in - show that
-                        ClaudeCodeServiceRow(
-                            hasAccess: claudeCodeService.hasAccess,
-                            metrics: dataManager.metrics[.claudeCode],
-                            expandedCard: $expandedCard
-                        )
-                    } else if authManager.isClaudeAuthenticated {
-                        // User has Claude API key configured - show that
-                        ServiceRowView(
-                            service: .claude,
-                            isAuthenticated: authManager.isClaudeAuthenticated,
-                            metrics: dataManager.metrics[.claude]
-                        )
-                    } else {
-                        // Neither configured - show Claude Code with login prompt
-                        ClaudeCodeServiceRow(
-                            hasAccess: false,
-                            metrics: nil,
-                            expandedCard: $expandedCard
-                        )
-                    }
-
-                    // Codex CLI (local auth from ~/.codex/auth.json)
-                    CodexCliServiceRow(
-                        hasAccess: codexCliService.hasAccess,
-                        metrics: dataManager.metrics[.codexCli],
-                        expandedCard: $expandedCard
-                    )
-
-                    // Cursor (Local)
-                    CursorServiceRow(
-                        hasAccess: cursorService.hasAccess,
-                        metrics: dataManager.metrics[.cursor],
-                        expandedCard: $expandedCard
-                    )
-                }
-                .padding()
+                    .fontWeight(.semibold)
             }
 
-            Divider()
+            Spacer()
 
-            // Footer Actions
-            HStack {
-                Button("Quit") {
-                    NSApplication.shared.terminate(nil)
-                }
-                .buttonStyle(.bordered)
-                .foregroundColor(.red)
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
-        }
-        .frame(width: 320, height: 500)
-    }
-}
-
-// MARK: - Service Row View
-
-struct ServiceRowView: View {
-    let service: ServiceType
-    let isAuthenticated: Bool
-    let metrics: UsageMetrics?
-
-    @StateObject private var authManager = AuthenticationManager.shared
-    @State private var isExpanded: Bool = false
-    @State private var apiKeyInput: String = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header
-            HStack {
-                Image(systemName: service.iconName)
-                    .foregroundColor(headerColor)
-                Text(service.displayName)
-                    .font(.headline)
-                Spacer()
-
-                if isAuthenticated {
-                    if let metrics = metrics {
-                        StatusIndicator(status: metrics.overallStatus)
-                    }
-
-                    // Show gear button to manage key when authenticated
-                    Button(action: { isExpanded.toggle() }) {
-                        Image(systemName: isExpanded ? "chevron.up" : "gearshape")
-                            .font(.caption)
-                            .frame(width: 24, height: 24)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundColor(.secondary)
-                } else {
-                    Button(action: { isExpanded.toggle() }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: isExpanded ? "chevron.up" : "gearshape")
-                            Text(isExpanded ? "Close" : "Configure")
-                        }
-                        .font(.caption)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-            }
-
-            if isAuthenticated, let metrics = metrics {
-                Divider()
-
-                // Show usage data
-                if let sessionLimit = metrics.sessionLimit {
-                    LimitRow(title: "Session", limit: sessionLimit)
-                }
-
-                if let weeklyLimit = metrics.weeklyLimit {
-                    LimitRow(title: "Weekly", limit: weeklyLimit)
-                }
-
-                if let codeReviewLimit = metrics.codeReviewLimit {
-                    LimitRow(title: "Code Review", limit: codeReviewLimit)
-                }
-
-                Text("Updated: \(formatDate(metrics.lastUpdated))")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            } else if !isAuthenticated && !isExpanded {
-                Text("Not configured")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            // Inline settings section
-            if isExpanded {
-                Divider()
-
-                VStack(alignment: .leading, spacing: 8) {
-                    if isAuthenticated {
-                        // Show masked key and remove button
-                        HStack {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.green)
-                            Text("API Key configured")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-
-                        Button(action: {
-                            removeApiKey()
-                            isExpanded = false
-                        }) {
-                            HStack {
-                                Image(systemName: "trash")
-                                Text("Remove Key")
-                            }
-                            .font(.caption)
-                        }
-                        .buttonStyle(.bordered)
-                        .foregroundColor(.red)
-                    } else {
-                        // Show input field for new key
-                        Text(keyPlaceholder)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-
-                        SecureField("Paste API key here...", text: $apiKeyInput)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.caption)
-
-                        HStack {
-                            Button(action: {
-                                saveApiKey()
-                            }) {
-                                HStack {
-                                    Image(systemName: "checkmark")
-                                    Text("Save")
-                                }
-                                .font(.caption)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(apiKeyInput.isEmpty)
-
-                            Button(action: {
-                                openHelpUrl()
-                            }) {
-                                HStack {
-                                    Image(systemName: "questionmark.circle")
-                                    Text("Help")
-                                }
-                                .font(.caption)
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
-                }
-            }
-        }
-        .padding()
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(8)
-    }
-
-    private var headerColor: Color {
-        if isAuthenticated, let metrics = metrics {
-            return metrics.overallStatus.color
-        }
-        return .gray
-    }
-
-    private var keyPlaceholder: String {
-        switch service {
-        case .claude:
-            return "Admin API Key (sk-ant-admin...)"
-        case .claudeCode, .codexCli, .cursor:
-            return ""
-        case .openai:
-            return "Admin API Key"
-        }
-    }
-
-    private func saveApiKey() {
-        switch service {
-        case .claude:
-            _ = authManager.setClaudeAdminKey(apiKeyInput)
-        case .claudeCode, .codexCli, .cursor:
-            break // These use local auth, not API key
-        case .openai:
-            _ = authManager.setOpenAIAdminKey(apiKeyInput)
-        }
-        apiKeyInput = ""
-        isExpanded = false
-    }
-
-    private func removeApiKey() {
-        switch service {
-        case .claude:
-            authManager.removeClaudeAdminKey()
-        case .claudeCode, .codexCli, .cursor:
-            break // These use local auth
-        case .openai:
-            authManager.removeOpenAIAdminKey()
-        }
-    }
-
-    private func openHelpUrl() {
-        let urlString: String
-        switch service {
-        case .claude:
-            urlString = "https://console.anthropic.com/settings/admin-keys"
-        case .claudeCode, .codexCli, .cursor:
-            return // No help URL for local auth services
-        case .openai:
-            urlString = "https://platform.openai.com/settings/organization/admin-keys"
-        }
-
-        if let url = URL(string: urlString) {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    private func formatDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
-    }
-}
-
-// MARK: - Cursor Service Row (Local)
-
-struct CursorServiceRow: View {
-    let hasAccess: Bool
-    let metrics: UsageMetrics?
-    @Binding var expandedCard: ExpandedCard
-
-    @StateObject private var cursorService = CursorLocalService.shared
-    @StateObject private var dataManager = UsageDataManager.shared
-
-    private var isExpanded: Bool { expandedCard == .cursor }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header - entire row is tappable
-            Button(action: {
-                expandedCard = isExpanded ? .none : .cursor
-            }) {
-                HStack {
-                    Image(systemName: ServiceType.cursor.iconName)
-                        .foregroundColor(headerColor)
-                    Text(ServiceType.cursor.displayName)
-                        .font(.headline)
-                        .foregroundColor(.primary)
-
-                    // Show compact progress bar when collapsed
-                    if !isExpanded, hasAccess, let metrics = metrics, let session = metrics.weeklyLimit {
-                        CompactProgressBar(percentage: session.percentage, color: session.statusColor.color)
-                    }
-
-                    Spacer()
-
-                    if hasAccess {
-                        if let metrics = metrics {
-                            StatusIndicator(status: metrics.overallStatus)
-                        }
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .contentShape(Rectangle())
+            Button(action: openDashboard) {
+                Image(systemName: "rectangle.split.2x1")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-
-            if !hasAccess {
-                Text("Log in to Cursor IDE to enable")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
-                Button(action: {
-                    cursorService.checkAccess()
-                    if cursorService.hasAccess {
-                        Task { await dataManager.refreshAll() }
-                    }
-                }) {
-                    HStack {
-                        Image(systemName: "arrow.clockwise")
-                        Text("Check Again")
-                    }
-                    .font(.caption)
-                }
-                .buttonStyle(.bordered)
+            .foregroundColor(MeterBarTheme.toolbarIconForeground)
+            .background(MeterBarTheme.toolbarIconBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(MeterBarTheme.toolbarIconBorder, lineWidth: 1)
             }
+            .help("Open Usage Dashboard")
 
-            // Expanded content
-            if isExpanded, hasAccess, let metrics = metrics {
-                Divider()
-
-                if let weeklyLimit = metrics.weeklyLimit {
-                    LimitRow(title: "Monthly", limit: weeklyLimit)
-                }
-
-                if let subscriptionType = cursorService.subscriptionType {
-                    HStack {
-                        Text(formatSubscriptionType(subscriptionType))
-                            .font(.caption)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.blue.opacity(0.2))
-                            .cornerRadius(4)
-                        Spacer()
-                        Text("Updated: \(formatDate(metrics.lastUpdated))")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                } else {
-                    Text("Updated: \(formatDate(metrics.lastUpdated))")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+            RefreshIconButton(help: "Refresh usage") {
+                Task {
+                    await dataManager.refreshAll()
                 }
             }
         }
-        .padding()
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(8)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial)
     }
 
-    private var headerColor: Color {
-        if hasAccess, let metrics = metrics {
-            return metrics.overallStatus.color
-        }
-        return .gray
-    }
-
-    private func formatDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
-    }
-
-    private func formatSubscriptionType(_ type: String) -> String {
-        switch type.lowercased() {
-        case "pro_plus":
-            return "Pro+"
-        default:
-            return type.replacingOccurrences(of: "_", with: " ").capitalized
-        }
-    }
-}
-
-// MARK: - Claude Code Service Row (Local Files)
-
-struct ClaudeCodeServiceRow: View {
-    let hasAccess: Bool
-    let metrics: UsageMetrics?
-    @Binding var expandedCard: ExpandedCard
-
-    @StateObject private var claudeCodeService = ClaudeCodeLocalService.shared
-    @StateObject private var dataManager = UsageDataManager.shared
-
-    private var isExpanded: Bool { expandedCard == .claudeCode }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header - entire row is tappable
-            Button(action: {
-                expandedCard = isExpanded ? .none : .claudeCode
-            }) {
-                HStack {
-                    Image(systemName: ServiceType.claudeCode.iconName)
-                        .foregroundColor(headerColor)
-                    Text(ServiceType.claudeCode.displayName)
-                        .font(.headline)
-                        .foregroundColor(.primary)
-
-                    // Show compact progress bar when collapsed
-                    if !isExpanded, hasAccess, let metrics = metrics, let session = metrics.sessionLimit {
-                        CompactProgressBar(percentage: session.percentage, color: session.statusColor.color)
-                    }
-
-                    Spacer()
-
-                    if hasAccess {
-                        if let metrics = metrics {
-                            StatusIndicator(status: metrics.overallStatus)
-                        }
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if !hasAccess {
-                Text("Log in to Claude Code CLI to enable")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
-                Button(action: {
-                    claudeCodeService.checkAccess()
-                    if claudeCodeService.hasAccess {
-                        Task { await dataManager.refreshAll() }
-                    }
-                }) {
-                    HStack {
-                        Image(systemName: "arrow.clockwise")
-                        Text("Check Again")
-                    }
-                    .font(.caption)
-                }
-                .buttonStyle(.bordered)
-            }
-
-            // Expanded content
-            if isExpanded, hasAccess, let metrics = metrics {
-                Divider()
-
-                if let sessionLimit = metrics.sessionLimit {
-                    LimitRow(title: "Session (5h)", limit: sessionLimit)
-                }
-
-                if let weeklyLimit = metrics.weeklyLimit {
-                    LimitRow(title: "All Models (7d)", limit: weeklyLimit)
-                }
-
-                if let sonnetLimit = metrics.codeReviewLimit {
-                    LimitRow(title: "Sonnet (7d)", limit: sonnetLimit)
-                }
-
-                if let subscriptionType = claudeCodeService.subscriptionType {
-                    HStack {
-                        Text(subscriptionType.capitalized)
-                            .font(.caption)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.purple.opacity(0.2))
-                            .cornerRadius(4)
-                        Spacer()
-                        Text("Updated: \(formatDate(metrics.lastUpdated))")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                } else {
-                    Text("Updated: \(formatDate(metrics.lastUpdated))")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-        }
-        .padding()
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(8)
-    }
-
-    private var headerColor: Color {
-        if hasAccess, let metrics = metrics {
-            return metrics.overallStatus.color
-        }
-        return .gray
-    }
-
-    private func formatDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
-    }
-}
-
-// MARK: - Codex CLI Service Row (Local Files)
-
-struct CodexCliServiceRow: View {
-    let hasAccess: Bool
-    let metrics: UsageMetrics?
-    @Binding var expandedCard: ExpandedCard
-
-    @StateObject private var codexCliService = CodexCliLocalService.shared
-    @StateObject private var dataManager = UsageDataManager.shared
-
-    private var isExpanded: Bool { expandedCard == .codexCli }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header - entire row is tappable
-            Button(action: {
-                expandedCard = isExpanded ? .none : .codexCli
-            }) {
-                HStack {
-                    Image(systemName: ServiceType.codexCli.iconName)
-                        .foregroundColor(headerColor)
-                    Text(ServiceType.codexCli.displayName)
-                        .font(.headline)
-                        .foregroundColor(.primary)
-
-                    // Show compact progress bar when collapsed
-                    if !isExpanded, hasAccess, let metrics = metrics, let session = metrics.sessionLimit {
-                        CompactProgressBar(percentage: session.percentage, color: session.statusColor.color)
-                    }
-
-                    Spacer()
-
-                    if hasAccess {
-                        if let metrics = metrics {
-                            StatusIndicator(status: metrics.overallStatus)
-                        }
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if !hasAccess {
-                Text("Log in to Codex CLI to enable")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
-                Button(action: {
-                    codexCliService.checkAccess()
-                    if codexCliService.hasAccess {
-                        Task { await dataManager.refreshAll() }
-                    }
-                }) {
-                    HStack {
-                        Image(systemName: "arrow.clockwise")
-                        Text("Check Again")
-                    }
-                    .font(.caption)
-                }
-                .buttonStyle(.bordered)
-            }
-
-            // Expanded content
-            if isExpanded, hasAccess, let metrics = metrics {
-                Divider()
-
-                if let sessionLimit = metrics.sessionLimit {
-                    LimitRow(title: "5 Hour Limit", limit: sessionLimit)
-                }
-
-                if let weeklyLimit = metrics.weeklyLimit {
-                    LimitRow(title: "Weekly Limit", limit: weeklyLimit)
-                }
-
-                if let codeReviewLimit = metrics.codeReviewLimit {
-                    LimitRow(title: "Code Review", limit: codeReviewLimit)
-                }
-
-                if let subscriptionType = codexCliService.subscriptionType {
-                    HStack {
-                        Text(subscriptionType.replacingOccurrences(of: "_", with: " ").capitalized)
-                            .font(.caption)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.green.opacity(0.2))
-                            .cornerRadius(4)
-                        Spacer()
-                        Text("Updated: \(formatDate(metrics.lastUpdated))")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                } else {
-                    Text("Updated: \(formatDate(metrics.lastUpdated))")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-        }
-        .padding()
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(8)
-    }
-
-    private var headerColor: Color {
-        if hasAccess, let metrics = metrics {
-            return metrics.overallStatus.color
-        }
-        return .gray
-    }
-
-    private func formatDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+    private func openDashboard() {
+        UsageDashboardWindowController.shared.show()
     }
 }
 
 // MARK: - Reusable Components
 
-struct ServiceCard: View {
-    let metrics: UsageMetrics
+struct PopoverOverviewPanel: View {
+    let metrics: [ServiceType: UsageMetrics]
+    let claudeAccounts: [ClaudeCodeAccount]
+    let claudeAccountMetrics: [UUID: UsageMetrics]
+    let claudeCodeHasAccess: Bool
+    let codexCliHasAccess: Bool
+    let cursorHasAccess: Bool
+    let openDashboard: () -> Void
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: metrics.service.iconName)
-                    .foregroundColor(metrics.overallStatus.color)
-                Text(metrics.service.displayName)
-                    .font(.headline)
-                Spacer()
-                StatusIndicator(status: metrics.overallStatus)
+    private var snapshots: [PopoverProviderSnapshot] {
+        var result: [PopoverProviderSnapshot] = []
+
+        result.append(PopoverProviderSnapshot(
+            title: "Codex",
+            logoKind: .codex,
+            accentColor: .cyan,
+            metrics: metrics[.codexCli],
+            emptyDetail: codexCliHasAccess ? "Waiting for refresh" : "Run codex login"
+        ))
+
+        let accountMetrics = claudeAccountMetrics
+        if !accountMetrics.isEmpty {
+            for account in claudeAccounts {
+                let title = account.isDefault && claudeAccounts.count == 1 ? "Claude" : account.name
+                result.append(PopoverProviderSnapshot(
+                    title: title,
+                    logoKind: .claude,
+                    accentColor: MeterBarTheme.claudeAccent,
+                    metrics: accountMetrics[account.id],
+                    emptyDetail: account.isDefault ? "Waiting for refresh" : "Run claude login"
+                ))
             }
-
-            Divider()
-
-            if let sessionLimit = metrics.sessionLimit {
-                LimitRow(title: "Session", limit: sessionLimit)
-            }
-
-            if let weeklyLimit = metrics.weeklyLimit {
-                LimitRow(title: "Weekly", limit: weeklyLimit)
-            }
-
-            if let codeReviewLimit = metrics.codeReviewLimit {
-                LimitRow(title: "Code Review", limit: codeReviewLimit)
-            }
-
-            Text("Updated: \(formatDate(metrics.lastUpdated))")
-                .font(.caption)
-                .foregroundColor(.secondary)
+        } else {
+            result.append(PopoverProviderSnapshot(
+                title: "Claude",
+                logoKind: .claude,
+                accentColor: MeterBarTheme.claudeAccent,
+                metrics: metrics[.claudeCode],
+                emptyDetail: claudeCodeHasAccess ? "Waiting for refresh" : "Run claude login"
+            ))
         }
-        .padding()
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(8)
+
+        result.append(PopoverProviderSnapshot(
+            title: "Cursor",
+            logoKind: .cursor,
+            accentColor: .green,
+            metrics: metrics[.cursor],
+            emptyDetail: cursorHasAccess ? "Waiting for refresh" : "Log in to Cursor"
+        ))
+
+        return result
     }
 
-    private func formatDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+    private var tightestLimit: PopoverLimit? {
+        snapshots.compactMap(\.primaryLimit).min { $0.percentLeft < $1.percentLeft }
+    }
+
+    private var statusColor: Color {
+        guard let tightestLimit else { return .secondary }
+        if tightestLimit.percentLeft <= 10 { return .red }
+        if tightestLimit.percentLeft <= 25 { return MeterBarTheme.warning }
+        return .green
+    }
+
+    private var statusTitle: String {
+        guard let tightestLimit else { return "Waiting for usage" }
+        if tightestLimit.percentLeft <= 10 { return "Quota needs attention" }
+        if tightestLimit.percentLeft <= 25 { return "Quota is tight" }
+        return "All tracked quotas look healthy"
+    }
+
+    private var statusDetail: String {
+        guard let tightestLimit else {
+            return "Refresh to load Codex, Claude, and Cursor."
+        }
+        return "\(tightestLimit.title) has \(tightestLimit.percentLeft)% left across \(snapshots.count) sources."
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(statusColor.opacity(0.20))
+                        .frame(width: 34, height: 34)
+                    Image(systemName: "checkmark.shield.fill")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundColor(statusColor)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(statusTitle)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                    Text(statusDetail)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .popoverGlassCard()
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {
+                ForEach(snapshots) { snapshot in
+                    PopoverProviderStatusCard(snapshot: snapshot)
+                }
+            }
+
+            Button(action: openDashboard) {
+                HStack {
+                    Label("Open Usage Dashboard", systemImage: "rectangle.split.2x1")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .popoverGlassCard()
+        }
     }
 }
 
-struct LimitRow: View {
+private struct PopoverProviderSnapshot: Identifiable {
+    let id: String
     let title: String
-    let limit: UsageLimit
+    let logoKind: ProviderLogoKind
+    let accentColor: Color
+    let updatedAt: Date?
+    let limits: [PopoverLimit]
+    let emptyDetail: String
+
+    init(
+        title: String,
+        logoKind: ProviderLogoKind,
+        accentColor: Color,
+        metrics: UsageMetrics?,
+        emptyDetail: String
+    ) {
+        self.id = "\(title)-\(logoKind)"
+        self.title = title
+        self.logoKind = logoKind
+        self.accentColor = accentColor
+        self.updatedAt = metrics?.lastUpdated
+        self.emptyDetail = emptyDetail
+        self.limits = [
+            PopoverLimit(title: "Session", limit: metrics?.sessionLimit),
+            PopoverLimit(title: "Weekly", limit: metrics?.weeklyLimit),
+            PopoverLimit(title: logoKind == .codex ? "Code Review" : "Sonnet", limit: metrics?.codeReviewLimit)
+        ].compactMap { $0 }
+    }
+
+    var primaryLimit: PopoverLimit? {
+        limits.min { $0.percentLeft < $1.percentLeft }
+    }
+}
+
+private struct PopoverLimit: Identifiable {
+    let id = UUID()
+    let title: String
+    let usageLimit: UsageLimit
+
+    init?(title: String, limit: UsageLimit?) {
+        guard let limit else { return nil }
+        self.title = title
+        self.usageLimit = limit
+    }
+
+    var usedPercent: Double {
+        usageLimit.rawPercentage
+    }
+
+    var percentLeft: Int {
+        Int(max(0, 100 - usedPercent).rounded())
+    }
+}
+
+private struct PopoverProviderStatusCard: View {
+    let snapshot: PopoverProviderSnapshot
+
+    private var primaryLimit: PopoverLimit? {
+        snapshot.primaryLimit
+    }
+
+    private var statusColor: Color {
+        guard let primaryLimit else { return .secondary }
+        if primaryLimit.percentLeft <= 10 { return .red }
+        if primaryLimit.percentLeft <= 25 { return MeterBarTheme.warning }
+        return .green
+    }
+
+    private var statusText: String {
+        guard let primaryLimit else { return "Offline" }
+        if primaryLimit.percentLeft <= 10 { return "Critical" }
+        if primaryLimit.percentLeft <= 25 { return "Tight" }
+        return "Healthy"
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(title)
-                    .font(.subheadline)
-                Spacer()
-                Text("\(Int(limit.percentage))%")
-                    .font(.subheadline)
-                    .bold()
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 7) {
+                ProviderLogoView(kind: snapshot.logoKind, size: 17, foregroundColor: snapshot.accentColor)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(snapshot.title)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .lineLimit(1)
+                    Text(updatedText)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
             }
 
-            ProgressView(value: min(max(limit.used, 0), limit.total), total: limit.total)
-                .tint(limit.statusColor.color)
+            if let primaryLimit {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text("\(primaryLimit.percentLeft)%")
+                        .font(.system(size: 25, weight: .bold))
+                        .foregroundColor(statusColor)
+                    Text("left")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Spacer(minLength: 0)
+                    Text(primaryLimit.title)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
 
-            if let resetTime = limit.resetTime {
-                Text("Resets: \(formatResetTime(resetTime))")
+                UsageBar(
+                    usedPercentage: primaryLimit.usedPercent,
+                    accentColor: snapshot.accentColor,
+                    pace: primaryLimit.usageLimit.pace(),
+                    paceContext: primaryLimit.title.localizedCaseInsensitiveContains("weekly") ? .weekly : .session
+                )
+
+                VStack(spacing: 5) {
+                    ForEach(snapshot.limits.prefix(2)) { limit in
+                        HStack {
+                            Text(limit.title)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text("\(limit.percentLeft)%")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                        }
+                    }
+                }
+            } else {
+                Text(snapshot.emptyDetail)
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 54, alignment: .topLeading)
             }
+
+            Text(statusText)
+                .font(.caption2)
+                .fontWeight(.semibold)
+                .foregroundColor(statusColor)
         }
+        .padding(11)
+        .frame(maxWidth: .infinity, minHeight: 142, alignment: .topLeading)
+        .popoverGlassCard()
     }
 
-    private func formatResetTime(_ date: Date) -> String {
+    private var updatedText: String {
+        guard let updatedAt = snapshot.updatedAt else { return "No data" }
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        return "Updated \(formatter.localizedString(for: updatedAt, relativeTo: Date()))"
     }
 }
 
-struct StatusIndicator: View {
-    let status: UsageStatus
+struct ProviderLogoView: View {
+    let kind: ProviderLogoKind
+    let size: CGFloat
+    let foregroundColor: Color
 
     var body: some View {
-        Circle()
-            .fill(status.color)
-            .frame(width: 8, height: 8)
-    }
-}
-
-// MARK: - Compact Progress Bar (for collapsed headers)
-
-struct CompactProgressBar: View {
-    let percentage: Double
-    let color: Color
-
-    var body: some View {
-        ZStack(alignment: .leading) {
-            // Background track
-            RoundedRectangle(cornerRadius: 2)
-                .fill(Color.gray.opacity(0.3))
-                .frame(width: 40, height: 4)
-
-            // Progress fill
-            RoundedRectangle(cornerRadius: 2)
-                .fill(color)
-                .frame(width: 40 * min(max(percentage, 0), 100) / 100, height: 4)
+        if let resourceName = kind.resourceName,
+           let image = ProviderLogoImageCache.image(named: resourceName) {
+            Image(nsImage: image)
+                .resizable()
+                .renderingMode(.template)
+                .foregroundColor(foregroundColor)
+                .frame(width: size, height: size)
+        } else {
+            Image(systemName: kind.fallbackSystemName)
+                .font(.system(size: size, weight: .semibold))
+                .foregroundColor(foregroundColor)
+                .frame(width: size, height: size)
         }
+    }
+}
+
+enum ProviderLogoImageCache {
+    private static var cache: [String: NSImage] = [:]
+
+    static func image(named name: String) -> NSImage? {
+        if let cached = cache[name] {
+            return cached
+        }
+
+        if let image = NSImage(named: name) ?? bundledSVGImage(named: name) {
+            image.isTemplate = true
+            cache[name] = image
+            return image
+        }
+
+        return nil
+    }
+
+    private static func bundledSVGImage(named name: String) -> NSImage? {
+        let bundle = Bundle.main
+        let url = bundle.url(forResource: name, withExtension: "svg") ??
+            bundle.url(forResource: name, withExtension: "svg", subdirectory: "Resources")
+
+        guard let url else { return nil }
+        return NSImage(contentsOf: url)
+    }
+}
+
+struct UsageBar: View {
+    let usedPercentage: Double
+    let accentColor: Color
+    let pace: UsagePace?
+    let paceContext: PaceLabelContext
+
+    private var clampedUsedPercentage: Double {
+        min(max(usedPercentage, 0), 100)
+    }
+
+    private var clampedRemainingPercentage: Double {
+        max(0, 100 - clampedUsedPercentage)
+    }
+
+    private var tooltipText: String? {
+        guard let pace else { return nil }
+
+        var lines = [
+            pace.leftLabel,
+            "Actual: \(Int(clampedUsedPercentage.rounded()))% used",
+            "Left: \(Int(clampedRemainingPercentage.rounded()))%",
+            "Expected by now: \(Int(pace.expectedUsedPercent.rounded()))% used",
+            "Expected left: \(Int(max(0, 100 - pace.expectedUsedPercent).rounded()))%",
+            "Colored fill is current quota left."
+        ]
+
+        if pace.stage == .deficit {
+            lines.append("Red is quota you should still have at this pace.")
+        }
+
+        if let rightLabel = pace.rightLabel(context: paceContext) {
+            lines.append(rightLabel)
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.gray.opacity(0.22))
+                    .frame(height: 7)
+                    .offset(y: 4)
+
+                if let pace, pace.stage != .onPace {
+                    let expectedRemainingPercent = max(0, 100 - min(max(pace.expectedUsedPercent, 0), 100))
+                    let expectedX = proxy.size.width * expectedRemainingPercent / 100
+                    let actualX = proxy.size.width * clampedRemainingPercentage / 100
+
+                    ZStack(alignment: .leading) {
+                        Rectangle()
+                            .fill(accentColor)
+                            .frame(width: actualX, height: 7)
+
+                        if pace.stage == .deficit {
+                            Rectangle()
+                                .fill(Color.red.opacity(0.82))
+                                .frame(width: max(0, expectedX - actualX), height: 7)
+                                .offset(x: actualX)
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                    .offset(y: 4)
+
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(markerColor(for: pace))
+                        .frame(width: 2, height: 13)
+                        .offset(x: min(max(0, expectedX - 1), max(0, proxy.size.width - 2)), y: 1)
+                } else {
+                    Rectangle()
+                        .fill(accentColor)
+                        .frame(width: proxy.size.width * clampedRemainingPercentage / 100, height: 7)
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                        .offset(y: 4)
+                }
+            }
+        }
+        .frame(height: 15)
+        .help(tooltipText ?? "")
+    }
+
+    private func markerColor(for pace: UsagePace) -> Color {
+        switch pace.stage {
+        case .onPace:
+            return .white.opacity(0.85)
+        case .reserve:
+            return .green
+        case .deficit:
+            return .red
+        }
+    }
+}
+
+private extension View {
+    func popoverGlassCard() -> some View {
+        self
+            .background(.thinMaterial)
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+}
+
+private struct MenuContentHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }

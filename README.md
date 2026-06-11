@@ -91,7 +91,8 @@ open MeterBar.xcodeproj
 
 1. Install Claude Code CLI: `npm install -g @anthropic-ai/claude-code`
 2. Log in: `claude login`
-3. The app automatically reads credentials from `~/.claude/`
+3. The app runs `claude /usage` and parses the CLI usage output
+4. Add extra Claude accounts in Settings by pointing each one at a separate `CLAUDE_CONFIG_DIR`
 
 ### Codex CLI
 
@@ -157,20 +158,25 @@ The CLI is automatically installed when using Homebrew. For manual installs, it'
 
 ## How It Works
 
-MeterBar reads authentication tokens from local files created by CLI tools:
+MeterBar reads usage data from local CLI output, local credential stores, and provider APIs:
 
 ```
-~/.claude.ai/            # Claude Code OAuth
-~/.codex/auth.json       # Codex CLI OAuth
+claude /usage            # Claude Code usage
+macOS Keychain           # Legacy Claude Code OAuth fallback only
+~/.claude/               # Claude Code account metadata and local sessions
+~/.codex/auth.json       # Codex CLI OAuth token
 ~/Library/Application Support/Cursor/  # Cursor local DB
 ```
 
-It then calls the respective APIs to fetch current usage data:
+It then uses the respective local source or API to fetch current usage data:
 - Claude: `https://api.anthropic.com/settings/usage`
 - Codex: `https://chatgpt.com/backend-api/wham/usage`
+
+Claude Code usage uses `claude /usage` first so MeterBar does not need to read Claude Code's OAuth token during normal operation. A legacy OAuth fallback can be enabled with the `ClaudeCodeEnableOAuthFallback` UserDefaults key for local debugging.
+- Additional Claude accounts are tracked by running `claude /usage` with each account's configured `CLAUDE_CONFIG_DIR`.
 - Cursor: Local SQLite queries
 
-**No API keys are stored** - the app uses the same OAuth tokens as the CLI tools.
+**No provider API keys are required for CLI-backed services** - the app uses local CLI/session data where possible and does not read Claude Code's OAuth token during normal operation.
 
 ## Privacy & Security
 
@@ -188,13 +194,15 @@ It then calls the respective APIs to fetch current usage data:
 
 ## Troubleshooting
 
-### "Not configured" for a service
+### "Not Connected" or "Not configured" for a service
 
 Make sure you're logged into the CLI tool:
 ```bash
 claude login   # For Claude Code
 codex login    # For Codex CLI
 ```
+
+If the app still shows "Not Connected" or "Not configured", re-run the login command. MeterBar treats expired local OAuth tokens as disconnected so it does not keep making failing usage requests.
 
 ### Codex showing "Free" instead of Team
 

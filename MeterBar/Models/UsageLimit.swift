@@ -5,10 +5,22 @@ struct UsageLimit: Codable, Equatable {
     let used: Double
     let total: Double
     let resetTime: Date?
+    let windowSeconds: TimeInterval?
+
+    init(used: Double, total: Double, resetTime: Date?, windowSeconds: TimeInterval? = nil) {
+        self.used = used
+        self.total = total
+        self.resetTime = resetTime
+        self.windowSeconds = windowSeconds
+    }
+
+    var rawPercentage: Double {
+        guard total > 0 else { return 0 }
+        return max(0, (used / total) * 100)
+    }
     
     var percentage: Double {
-        guard total > 0 else { return 0 }
-        return min(100, max(0, (used / total) * 100))
+        return min(100, rawPercentage)
     }
     
     var remaining: Double {
@@ -32,6 +44,132 @@ struct UsageLimit: Codable, Equatable {
             return .good
         }
     }
+
+    func pace(now: Date = Date()) -> UsagePace? {
+        guard let resetTime,
+              let windowSeconds,
+              windowSeconds > 0 else {
+            return nil
+        }
+
+        let remainingSeconds = resetTime.timeIntervalSince(now)
+        guard remainingSeconds > 0, remainingSeconds <= windowSeconds else {
+            return nil
+        }
+
+        let elapsedSeconds = min(windowSeconds, max(0, windowSeconds - remainingSeconds))
+        let expectedUsedPercent = min(100, max(0, elapsedSeconds / windowSeconds * 100))
+        let deltaPercent = rawPercentage - expectedUsedPercent
+
+        if elapsedSeconds == 0, rawPercentage > 0 {
+            return nil
+        }
+
+        let etaSeconds: TimeInterval?
+        let willLastToReset: Bool
+        if rawPercentage >= 100 {
+            etaSeconds = 0
+            willLastToReset = false
+        } else if elapsedSeconds <= 0 || rawPercentage <= 0 {
+            etaSeconds = nil
+            willLastToReset = true
+        } else {
+            let burnRatePercentPerSecond = rawPercentage / elapsedSeconds
+            let secondsUntilEmpty = (100 - rawPercentage) / burnRatePercentPerSecond
+            etaSeconds = secondsUntilEmpty
+            willLastToReset = secondsUntilEmpty >= remainingSeconds
+        }
+
+        return UsagePace(
+            expectedUsedPercent: expectedUsedPercent,
+            deltaPercent: deltaPercent,
+            etaSeconds: etaSeconds,
+            willLastToReset: willLastToReset
+        )
+    }
+}
+
+struct UsagePace: Equatable {
+    enum Stage {
+        case onPace
+        case reserve
+        case deficit
+    }
+
+    let expectedUsedPercent: Double
+    let deltaPercent: Double
+    let etaSeconds: TimeInterval?
+    let willLastToReset: Bool
+
+    var stage: Stage {
+        if abs(deltaPercent) <= 2 {
+            return .onPace
+        }
+        return deltaPercent > 0 ? .deficit : .reserve
+    }
+
+    var leftLabel: String {
+        let roundedDelta = Int(abs(deltaPercent).rounded())
+        switch stage {
+        case .onPace:
+            return "On pace"
+        case .reserve:
+            return "\(roundedDelta)% in reserve"
+        case .deficit:
+            return "\(roundedDelta)% in deficit"
+        }
+    }
+
+    func rightLabel(context: PaceLabelContext = .session) -> String? {
+        if willLastToReset {
+            return "Lasts until reset"
+        }
+
+        guard let etaSeconds else {
+            return nil
+        }
+
+        if etaSeconds <= 30 {
+            return context.emptyNowLabel
+        }
+
+        return "\(context.emptyPrefix) \(Self.durationText(seconds: etaSeconds))"
+    }
+
+    private static func durationText(seconds: TimeInterval) -> String {
+        let wholeSeconds = max(0, Int(seconds.rounded()))
+        let hours = wholeSeconds / 3600
+        let minutes = (wholeSeconds % 3600) / 60
+
+        if hours > 0 {
+            return minutes > 0 ? "\(hours)h \(minutes)m" : "\(hours)h"
+        }
+
+        return "\(max(1, minutes))m"
+    }
+}
+
+enum PaceLabelContext {
+    case session
+    case weekly
+
+    var emptyNowLabel: String {
+        switch self {
+        case .session:
+            return "Projected empty now"
+        case .weekly:
+            return "Runs out now"
+        }
+    }
+
+    var emptyPrefix: String {
+        switch self {
+        case .session:
+            return "Projected empty in"
+        case .weekly:
+            return "Runs out in"
+        }
+    }
 }
 
 enum UsageStatus {
@@ -47,4 +185,3 @@ enum UsageStatus {
         }
     }
 }
-

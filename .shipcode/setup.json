@@ -1,8 +1,10 @@
 {
-	"envFiles": [],
-	"setupBeforeVerify": false,
-	"setupCommands": ["xcodebuild -resolvePackageDependencies"],
-	"testingContext": "Detected an Xcode project. Confirm the exact xcodebuild test command with scheme and destination before relying on automated verification.",
-	"verifyCommands": [],
-	"version": 1
+  "version": 1,
+  "setupCommands": [
+    "xcodebuild -resolvePackageDependencies"
+  ],
+  "verifyCommands": [],
+  "envFiles": [],
+  "setupBeforeVerify": false,
+  "testingContext": "Detected an Xcode project. Confirm the exact xcodebuild test command with scheme and destination before relying on automated verification."
 }

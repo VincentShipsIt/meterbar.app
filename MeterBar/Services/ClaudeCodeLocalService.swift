@@ -10,6 +10,8 @@ class ClaudeCodeLocalService: ObservableObject {
 
     private let baseURL = "https://api.anthropic.com"
     private let keychainService = "Claude Code-credentials"
+    private let cliUsageService = ClaudeCodeCLIUsageService.shared
+    private let oauthFallbackUserDefaultsKey = "ClaudeCodeEnableOAuthFallback"
 
     // URLSession with timeout configuration
     private lazy var urlSession: URLSession = {
@@ -24,18 +26,40 @@ class ClaudeCodeLocalService: ObservableObject {
     @Published private(set) var subscriptionType: String?
     @Published private(set) var rateLimitTier: String?
     @Published private(set) var lastError: ServiceError?
+    @Published private(set) var authState: ClaudeCodeAuthState = .unavailable
 
     private init() {
         // Check if we have Claude Code credentials on init
-        if let _ = getOAuthToken() {
-            hasAccess = true
-        }
+        checkAccess()
     }
 
     // MARK: - Keychain Access
 
     /// Get OAuth token from Claude Code's keychain storage
     func getOAuthToken() -> String? {
+        guard let credentials = getCredentials() else {
+            return nil
+        }
+
+        guard !OAuthTokenExpiry.isExpired(unixTimestamp: credentials.claudeAiOauth.expiresAt) else {
+            DispatchQueue.main.async {
+                self.subscriptionType = credentials.claudeAiOauth.subscriptionType
+                self.rateLimitTier = credentials.claudeAiOauth.rateLimitTier
+                self.hasAccess = false
+            }
+            return nil
+        }
+
+        DispatchQueue.main.async {
+            self.subscriptionType = credentials.claudeAiOauth.subscriptionType
+            self.rateLimitTier = credentials.claudeAiOauth.rateLimitTier
+            self.hasAccess = true
+        }
+
+        return credentials.claudeAiOauth.accessToken
+    }
+
+    private func getCredentials() -> ClaudeCodeCredentials? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -52,41 +76,65 @@ class ClaudeCodeLocalService: ObservableObject {
             return nil
         }
 
-        // Parse the JSON to extract the access token
         guard let jsonData = jsonString.data(using: .utf8),
               let credentials = try? JSONDecoder().decode(ClaudeCodeCredentials.self, from: jsonData) else {
             return nil
         }
 
-        // Update subscription info
-        DispatchQueue.main.async {
-            self.subscriptionType = credentials.claudeAiOauth.subscriptionType
-            self.rateLimitTier = credentials.claudeAiOauth.rateLimitTier
-            self.hasAccess = true
-        }
-
-        return credentials.claudeAiOauth.accessToken
+        return credentials
     }
 
     /// Check and update access status
     func checkAccess() {
-        if let _ = getOAuthToken() {
+        if cliUsageService.isAvailable() {
             hasAccess = true
+            authState = .cliAvailable
+        } else if isOAuthFallbackEnabled, let _ = getOAuthToken() {
+            hasAccess = true
+            authState = .connected(.legacyOAuth)
         } else {
             hasAccess = false
-            subscriptionType = nil
-            rateLimitTier = nil
+            authState = .unavailable
+            if !isOAuthFallbackEnabled || getCredentials() == nil {
+                subscriptionType = nil
+                rateLimitTier = nil
+            }
         }
     }
 
     // MARK: - Usage Fetching
 
-    func fetchUsageMetrics() async throws -> UsageMetrics {
+    func fetchUsageMetrics(account: ClaudeCodeAccount = .defaultAccount) async throws -> UsageMetrics {
+        do {
+            let metrics = try await cliUsageService.fetchUsageMetrics(account: account)
+            await MainActor.run {
+                self.lastError = nil
+                self.hasAccess = true
+                if account.isDefault || self.authState == .unavailable {
+                    self.authState = .connected(.cli)
+                }
+            }
+            return metrics
+        } catch {
+            if !account.isDefault || !isOAuthFallbackEnabled {
+                let serviceError = serviceError(from: error)
+                await MainActor.run {
+                    self.lastError = serviceError
+                    if account.isDefault {
+                        self.hasAccess = false
+                        self.authState = authState(from: error)
+                    }
+                }
+                throw serviceError
+            }
+        }
+
         guard let token = getOAuthToken() else {
             let error = ServiceError.notAuthenticated
             await MainActor.run {
                 self.lastError = error
                 self.hasAccess = false
+                self.authState = .needsLogin
             }
             throw error
         }
@@ -114,6 +162,7 @@ class ClaudeCodeLocalService: ObservableObject {
                 await MainActor.run {
                     self.hasAccess = false
                     self.lastError = ServiceError.notAuthenticated
+                    self.authState = .needsLogin
                 }
                 throw ServiceError.notAuthenticated
             }
@@ -129,20 +178,24 @@ class ClaudeCodeLocalService: ObservableObject {
 
             await MainActor.run {
                 self.lastError = nil
+                self.hasAccess = true
+                self.authState = .connected(.legacyOAuth)
             }
 
             // Session limit = 5-hour window
             let sessionLimit = UsageLimit(
                 used: usageResponse.fiveHour.utilization,
                 total: 100.0,
-                resetTime: usageResponse.fiveHour.resetsAt
+                resetTime: usageResponse.fiveHour.resetsAt,
+                windowSeconds: 5 * 60 * 60
             )
 
             // Weekly limit = 7-day window (all models)
             let weeklyLimit = UsageLimit(
                 used: usageResponse.sevenDay.utilization,
                 total: 100.0,
-                resetTime: usageResponse.sevenDay.resetsAt
+                resetTime: usageResponse.sevenDay.resetsAt,
+                windowSeconds: 7 * 24 * 60 * 60
             )
 
             // Sonnet-only weekly limit (if available)
@@ -151,7 +204,8 @@ class ClaudeCodeLocalService: ObservableObject {
                 sonnetLimit = UsageLimit(
                     used: sonnet.utilization,
                     total: 100.0,
-                    resetTime: sonnet.resetsAt
+                    resetTime: sonnet.resetsAt,
+                    windowSeconds: 7 * 24 * 60 * 60
                 )
             }
 
@@ -174,14 +228,107 @@ class ClaudeCodeLocalService: ObservableObject {
                 errorMessage = urlError.localizedDescription
             }
             let error = ServiceError.apiError(errorMessage)
-            await MainActor.run { self.lastError = error }
+            await MainActor.run {
+                self.lastError = error
+                self.authState = .error(errorMessage)
+            }
             throw error
         } catch let error as ServiceError {
             throw error
         } catch {
             let serviceError = ServiceError.parsingError
-            await MainActor.run { self.lastError = serviceError }
+            await MainActor.run {
+                self.lastError = serviceError
+                self.authState = .error(serviceError.localizedDescription)
+            }
             throw serviceError
+        }
+    }
+
+    private var isOAuthFallbackEnabled: Bool {
+        UserDefaults.standard.bool(forKey: oauthFallbackUserDefaultsKey)
+    }
+
+    private func serviceError(from error: Error) -> ServiceError {
+        if let serviceError = error as? ServiceError {
+            return serviceError
+        }
+
+        if let cliError = error as? ClaudeCodeCLIUsageError {
+            switch cliError {
+            case .cliNotFound:
+                return .notAuthenticated
+            case .parsingFailed:
+                return .parsingError
+            case .timedOut, .launchFailed, .commandFailed:
+                return .apiError(cliError.localizedDescription)
+            }
+        }
+
+        return .apiError(error.localizedDescription)
+    }
+
+    private func authState(from error: Error) -> ClaudeCodeAuthState {
+        guard let cliError = error as? ClaudeCodeCLIUsageError else {
+            return .error(error.localizedDescription)
+        }
+
+        switch cliError {
+        case .cliNotFound:
+            return .unavailable
+        case let .commandFailed(message):
+            let lowercased = message.lowercased()
+            if lowercased.contains("login") || lowercased.contains("auth") || lowercased.contains("unauthorized") {
+                return .needsLogin
+            }
+            return .error(cliError.localizedDescription)
+        case .timedOut, .launchFailed, .parsingFailed:
+            return .error(cliError.localizedDescription)
+        }
+    }
+}
+
+enum ClaudeCodeUsageSource: String {
+    case cli = "Claude CLI"
+    case legacyOAuth = "Legacy OAuth"
+}
+
+enum ClaudeCodeAuthState: Equatable {
+    case unavailable
+    case cliAvailable
+    case connected(ClaudeCodeUsageSource)
+    case needsLogin
+    case error(String)
+
+    var statusText: String {
+        switch self {
+        case .unavailable:
+            return "Not Connected"
+        case .cliAvailable:
+            return "Ready (Claude CLI)"
+        case let .connected(source):
+            return "Connected (\(source.rawValue))"
+        case .needsLogin:
+            return "Login Required"
+        case .error:
+            return "Needs Attention"
+        }
+    }
+
+    var guidanceText: String {
+        switch self {
+        case .unavailable:
+            return "Install Claude Code and run 'claude login'."
+        case .cliAvailable:
+            return "Using Claude CLI usage output; refresh to update."
+        case .connected(.cli):
+            return "Using Claude CLI usage output."
+        case .connected(.legacyOAuth):
+            return "Using legacy OAuth fallback."
+        case .needsLogin:
+            return "Run 'claude login' again."
+        case let .error(message):
+            return message
         }
     }
 }
