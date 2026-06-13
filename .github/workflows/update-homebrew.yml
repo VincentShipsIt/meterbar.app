@@ -40,7 +40,7 @@ jobs:
         id: sha
 
       - name: Checkout homebrew-tap
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: shipshitdev/homebrew-tap
           token: ${{ secrets.TAP_GITHUB_TOKEN }}
