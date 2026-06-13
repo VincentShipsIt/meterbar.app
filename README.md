@@ -67,7 +67,7 @@ brew upgrade --cask meterbar
 
 ### Manual Download
 
-Download the latest release from the [Releases](https://github.com/shipshitdev/meterbar.app/releases) page.
+Download the latest release from the [Releases](https://github.com/VincentShipsIt/meterbar.app/releases) page.
 
 > **Note**: Since the app isn't notarized, you may need to right-click and select "Open" the first time, or run:
 > ```bash
@@ -79,7 +79,7 @@ Download the latest release from the [Releases](https://github.com/shipshitdev/m
 Prerequisites: macOS 13.0+, Xcode 15.0+
 
 ```bash
-git clone https://github.com/shipshitdev/meterbar.app.git
+git clone https://github.com/VincentShipsIt/meterbar.app.git
 cd meterbarapp
 open MeterBar.xcodeproj
 # Build and run (Cmd+R)

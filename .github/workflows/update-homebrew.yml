@@ -33,7 +33,7 @@ jobs:
       - name: Download SHA256
         run: |
           VERSION="${{ steps.version.outputs.tag }}"
-          curl -sL "https://github.com/shipshitdev/meterbar.app/releases/download/${VERSION}/MeterBar-${VERSION}.zip.sha256" -o sha256.txt
+          curl -sL "https://github.com/VincentShipsIt/meterbar.app/releases/download/${VERSION}/MeterBar-${VERSION}.zip.sha256" -o sha256.txt
           SHA256=$(cat sha256.txt)
           echo "SHA256: $SHA256"
           echo "sha256=$SHA256" >> $GITHUB_OUTPUT
