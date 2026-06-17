@@ -204,9 +204,9 @@ enum UsageStatus {
 
     var color: Color {
         switch self {
-        case .good: return .green
-        case .warning: return .orange
-        case .critical: return .red
+        case .good: return MeterBarTheme.success
+        case .warning: return MeterBarTheme.warning
+        case .critical: return MeterBarTheme.danger
         }
     }
 }

@@ -15,12 +15,15 @@ final class ClaudeCodeCLIUsageParserTests: XCTestCase {
         let metrics = try ClaudeCodeCLIUsageParser.parseMetrics(from: output, now: now)
 
         XCTAssertEqual(metrics.service, .claudeCode)
-        XCTAssertEqual(try XCTUnwrap(metrics.sessionLimit).percentage, 36, accuracy: 0.01)
-        XCTAssertEqual(try XCTUnwrap(metrics.weeklyLimit).percentage, 100, accuracy: 0.01)
-        XCTAssertEqual(try XCTUnwrap(metrics.codeReviewLimit).percentage, 83, accuracy: 0.01)
-        XCTAssertNotNil(metrics.sessionLimit?.resetTime)
-        XCTAssertNotNil(metrics.weeklyLimit?.resetTime)
-        XCTAssertNotNil(metrics.codeReviewLimit?.resetTime)
+        let sessionLimit = try XCTUnwrap(metrics.sessionLimit)
+        let weeklyLimit = try XCTUnwrap(metrics.weeklyLimit)
+        let codeReviewLimit = try XCTUnwrap(metrics.codeReviewLimit)
+        XCTAssertEqual(sessionLimit.percentage, 36, accuracy: 0.01)
+        XCTAssertEqual(weeklyLimit.percentage, 100, accuracy: 0.01)
+        XCTAssertEqual(codeReviewLimit.percentage, 83, accuracy: 0.01)
+        XCTAssertNotNil(sessionLimit.resetTime)
+        XCTAssertNotNil(weeklyLimit.resetTime)
+        XCTAssertNotNil(codeReviewLimit.resetTime)
     }
 
     func testParsesRemainingPercentAsUsedPercent() throws {
@@ -33,8 +36,10 @@ final class ClaudeCodeCLIUsageParserTests: XCTestCase {
             from: output,
             now: Date(timeIntervalSince1970: 1_781_154_000))
 
-        XCTAssertEqual(try XCTUnwrap(metrics.sessionLimit).percentage, 36, accuracy: 0.01)
-        XCTAssertEqual(try XCTUnwrap(metrics.weeklyLimit).percentage, 75, accuracy: 0.01)
+        let sessionLimit = try XCTUnwrap(metrics.sessionLimit)
+        let weeklyLimit = try XCTUnwrap(metrics.weeklyLimit)
+        XCTAssertEqual(sessionLimit.percentage, 36, accuracy: 0.01)
+        XCTAssertEqual(weeklyLimit.percentage, 75, accuracy: 0.01)
     }
 
     func testThrowsWhenNoUsageWindowsArePresent() {
