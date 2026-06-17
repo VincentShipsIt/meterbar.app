@@ -82,17 +82,17 @@ struct UsageDashboardView: View {
                 }
                 .padding(22)
             }
-            .background(Color.white.opacity(0.018))
+            .background(MeterBarTheme.graphiteSurface.opacity(0.48))
             .clipShape(RoundedRectangle(cornerRadius: 14))
             .overlay {
                 RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color.white.opacity(0.055), lineWidth: 1)
+                    .stroke(MeterBarTheme.border.opacity(0.72), lineWidth: 1)
             }
         }
         .padding(10)
         .background {
             ZStack {
-                Color(red: 0.075, green: 0.080, blue: 0.080)
+                MeterBarTheme.graphiteBackground
                 Rectangle().fill(.ultraThinMaterial).opacity(0.42)
             }
         }
@@ -103,7 +103,7 @@ struct UsageDashboardView: View {
             HStack(spacing: 10) {
                 Image(systemName: "chart.line.uptrend.xyaxis")
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(.cyan)
+                    .foregroundColor(MeterBarTheme.appAccent)
                 Text("MeterBar")
                     .font(.headline)
                     .fontWeight(.semibold)
@@ -127,12 +127,12 @@ struct UsageDashboardView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
-                        .foregroundColor(selectedSection == section ? .white : .secondary)
-                        .background(selectedSection == section ? Color.white.opacity(0.10) : Color.clear)
+                        .foregroundColor(selectedSection == section ? .primary : .secondary)
+                        .background(selectedSection == section ? MeterBarTheme.graphiteElevated : Color.clear)
                         .overlay(alignment: .leading) {
                             if selectedSection == section {
                                 RoundedRectangle(cornerRadius: 2)
-                                    .fill(Color.cyan)
+                                    .fill(MeterBarTheme.appAccent)
                                     .frame(width: 3)
                                     .padding(.vertical, 7)
                             }
@@ -169,7 +169,7 @@ struct UsageDashboardView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay {
             RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(MeterBarTheme.border, lineWidth: 1)
         }
     }
 
@@ -386,10 +386,7 @@ struct UsageDashboardView: View {
         guard let limit = providerSnapshots.flatMap(\.limits).min(by: { $0.percentLeft < $1.percentLeft }) else {
             return .secondary
         }
-        if limit.percentLeft <= 0 { return .red.opacity(0.72) }
-        if limit.percentLeft <= 10 { return .red }
-        if limit.percentLeft <= 25 { return MeterBarTheme.warning }
-        return .green
+        return MeterBarTheme.quotaStatusColor(percentLeft: limit.percentLeft)
     }
 
     private var overviewStatusTitle: String {
@@ -438,14 +435,7 @@ struct UsageDashboardView: View {
     }
 
     private func color(for service: ServiceType) -> Color {
-        switch service {
-        case .claude, .claudeCode:
-            return MeterBarTheme.claudeAccent
-        case .codexCli, .openai:
-            return .cyan
-        case .cursor:
-            return .green
-        }
+        MeterBarTheme.accent(for: service)
     }
 
     private func relativeDate(_ date: Date) -> String {
@@ -579,14 +569,7 @@ private struct ProviderOverviewStatusCard: View {
     let snapshot: DashboardProviderSnapshot
 
     private var accentColor: Color {
-        switch snapshot.service {
-        case .claude, .claudeCode:
-            return MeterBarTheme.claudeAccent
-        case .codexCli, .openai:
-            return .cyan
-        case .cursor:
-            return .green
-        }
+        MeterBarTheme.accent(for: snapshot.service)
     }
 
     private var primaryLimit: DashboardLimit? {
@@ -601,8 +584,9 @@ private struct ProviderOverviewStatusCard: View {
         return "Healthy"
     }
 
-    private var isOut: Bool {
-        primaryLimit?.percentLeft ?? 100 <= 0
+    private var metricColor: Color {
+        guard let primaryLimit else { return .primary }
+        return MeterBarTheme.metricColor(percentLeft: primaryLimit.percentLeft)
     }
 
     var body: some View {
@@ -628,7 +612,7 @@ private struct ProviderOverviewStatusCard: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text("\(primaryLimit.percentLeft)%")
                         .font(.system(size: 34, weight: .bold))
-                        .foregroundColor(statusColor)
+                        .foregroundColor(metricColor)
                     Text("left")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
@@ -668,16 +652,12 @@ private struct ProviderOverviewStatusCard: View {
             }
         }
         .padding(14)
-        .opacity(isOut ? 0.72 : 1)
         .dashboardCardBackground()
     }
 
     private var statusColor: Color {
         guard let primaryLimit else { return .secondary }
-        if primaryLimit.percentLeft <= 0 { return .red.opacity(0.72) }
-        if primaryLimit.percentLeft <= 10 { return .red }
-        if primaryLimit.percentLeft <= 25 { return MeterBarTheme.warning }
-        return .green
+        return MeterBarTheme.quotaStatusColor(percentLeft: primaryLimit.percentLeft)
     }
 
     private func relativeDate(_ date: Date) -> String {
@@ -697,7 +677,7 @@ private struct CostOverviewStatusCard: View {
             HStack(alignment: .center, spacing: 9) {
                 Image(systemName: "dollarsign.circle.fill")
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(.green)
+                    .foregroundColor(MeterBarTheme.success)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("API-Rate Estimate")
                         .font(.headline)
@@ -715,14 +695,14 @@ private struct CostOverviewStatusCard: View {
                         .controlSize(.small)
                     Text("Scanning...")
                         .font(.system(size: 28, weight: .bold))
-                        .foregroundColor(.green)
+                        .foregroundColor(.primary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
                 }
             } else {
                 Text(summary?.formattedTotalCost ?? "Scan needed")
                     .font(.system(size: 34, weight: .bold))
-                    .foregroundColor(.green)
+                    .foregroundColor(.primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
             }
@@ -822,6 +802,7 @@ private struct DashboardLimitRow: View {
                 Text(isOut ? "Out" : "\(limit.percentLeft)% left")
                     .font(.subheadline)
                     .bold()
+                    .foregroundColor(isOut ? MeterBarTheme.danger : .primary)
             }
 
             UsageBar(
@@ -852,16 +833,15 @@ private struct DashboardLimitRow: View {
                 }
             }
         }
-        .opacity(isOut ? 0.68 : 1)
     }
 
     private func paceLabelColor(_ pace: UsagePace) -> Color {
         if pace.isExhausted {
-            return .red.opacity(0.78)
+            return MeterBarTheme.danger
         }
         switch pace.stage {
         case .reserve:
-            return .green
+            return MeterBarTheme.success
         case .deficit:
             return MeterBarTheme.warning
         case .onPace:
@@ -911,8 +891,8 @@ private struct CostScanLoadingChart: View {
                                     .fill(
                                         LinearGradient(
                                             colors: [
-                                                Color.cyan.opacity(0.22 + wave * 0.18),
-                                                Color.green.opacity(0.18 + seed * 0.25)
+                                                MeterBarTheme.codexAccent.opacity(0.18 + wave * 0.16),
+                                                MeterBarTheme.cursorAccent.opacity(0.16 + seed * 0.20)
                                             ],
                                             startPoint: .bottom,
                                             endPoint: .top
@@ -1135,14 +1115,7 @@ private struct DailyUsageChart: View {
     }
 
     private func color(for provider: ServiceType) -> Color {
-        switch provider {
-        case .claude, .claudeCode:
-            return MeterBarTheme.claudeAccent
-        case .codexCli, .openai:
-            return .cyan
-        case .cursor:
-            return .green
-        }
+        MeterBarTheme.accent(for: provider)
     }
 
     private func fullDateLabel(_ date: Date) -> String {
@@ -1404,14 +1377,7 @@ private struct ProviderCostBreakdown: View {
     }
 
     private var logoColor: Color {
-        switch cost.provider {
-        case .codexCli, .openai:
-            return .cyan
-        case .claude, .claudeCode:
-            return MeterBarTheme.claudeAccent
-        case .cursor:
-            return .green
-        }
+        MeterBarTheme.accent(for: cost.provider)
     }
 
     var body: some View {
@@ -1568,23 +1534,21 @@ private func logoKind(for provider: ServiceType) -> ProviderLogoKind {
 }
 
 private func color(for provider: ServiceType) -> Color {
-    switch provider {
-    case .claude, .claudeCode:
-        return MeterBarTheme.claudeAccent
-    case .codexCli, .openai:
-        return .cyan
-    case .cursor:
-        return .green
-    }
+    MeterBarTheme.accent(for: provider)
 }
 
 private extension View {
     func dashboardCardBackground() -> some View {
         self
-            .background(.thinMaterial)
+            .background {
+                ZStack {
+                    MeterBarTheme.graphiteSurface.opacity(0.78)
+                    Rectangle().fill(.thinMaterial).opacity(0.30)
+                }
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                    .stroke(MeterBarTheme.border, lineWidth: 1)
             }
             .clipShape(RoundedRectangle(cornerRadius: 8))
     }

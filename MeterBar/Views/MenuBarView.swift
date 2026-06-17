@@ -88,7 +88,7 @@ struct MenuBarView: View {
         .frame(width: popoverWidth, height: popoverHeight)
         .background {
             ZStack {
-                Color(red: 0.075, green: 0.080, blue: 0.080).opacity(0.74)
+                MeterBarTheme.graphiteBackground.opacity(0.86)
                 Rectangle().fill(.ultraThinMaterial)
             }
         }
@@ -122,7 +122,7 @@ struct MenuBarView: View {
             HStack(spacing: 9) {
                 Image(systemName: "chart.line.uptrend.xyaxis")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.cyan)
+                    .foregroundColor(MeterBarTheme.appAccent)
                 Text("MeterBar")
                     .font(.headline)
                     .fontWeight(.semibold)
@@ -180,7 +180,7 @@ struct PopoverOverviewPanel: View {
             result.append(PopoverProviderSnapshot(
                 title: "Codex",
                 logoKind: .codex,
-                accentColor: .cyan,
+                accentColor: MeterBarTheme.codexAccent,
                 metrics: metrics[.codexCli],
                 emptyDetail: codexCliHasAccess ? "Waiting for refresh" : "Run codex login"
             ))
@@ -214,7 +214,7 @@ struct PopoverOverviewPanel: View {
             result.append(PopoverProviderSnapshot(
                 title: "Cursor",
                 logoKind: .cursor,
-                accentColor: .green,
+                accentColor: MeterBarTheme.cursorAccent,
                 metrics: metrics[.cursor],
                 emptyDetail: cursorHasAccess ? "Waiting for refresh" : "Log in to Cursor"
             ))
@@ -233,10 +233,7 @@ struct PopoverOverviewPanel: View {
 
     private var statusColor: Color {
         guard let tightestLimit else { return .secondary }
-        if tightestLimit.percentLeft <= 0 { return .red.opacity(0.72) }
-        if tightestLimit.percentLeft <= 10 { return .red }
-        if tightestLimit.percentLeft <= 25 { return MeterBarTheme.warning }
-        return .green
+        return MeterBarTheme.quotaStatusColor(percentLeft: tightestLimit.percentLeft)
     }
 
     private var statusTitle: String {
@@ -394,10 +391,7 @@ private struct PopoverProviderStatusCard: View {
 
     private var statusColor: Color {
         guard let primaryLimit else { return .secondary }
-        if primaryLimit.percentLeft <= 0 { return .red.opacity(0.72) }
-        if primaryLimit.percentLeft <= 10 { return .red }
-        if primaryLimit.percentLeft <= 25 { return MeterBarTheme.warning }
-        return .green
+        return MeterBarTheme.quotaStatusColor(percentLeft: primaryLimit.percentLeft)
     }
 
     private var statusText: String {
@@ -408,8 +402,9 @@ private struct PopoverProviderStatusCard: View {
         return "Healthy"
     }
 
-    private var isOut: Bool {
-        primaryLimit?.percentLeft ?? 100 <= 0
+    private var metricColor: Color {
+        guard let primaryLimit else { return .primary }
+        return MeterBarTheme.metricColor(percentLeft: primaryLimit.percentLeft)
     }
 
     var body: some View {
@@ -433,7 +428,7 @@ private struct PopoverProviderStatusCard: View {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text("\(primaryLimit.percentLeft)%")
                         .font(.system(size: 25, weight: .bold))
-                        .foregroundColor(statusColor)
+                        .foregroundColor(metricColor)
                     Text("left")
                         .font(.caption2)
                         .foregroundColor(.secondary)
@@ -484,7 +479,6 @@ private struct PopoverProviderStatusCard: View {
         }
         .padding(11)
         .frame(maxWidth: .infinity, minHeight: 142, alignment: .topLeading)
-        .opacity(isOut ? 0.72 : 1)
         .popoverGlassCard()
     }
 
@@ -680,17 +674,17 @@ struct UsageBar: View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 3)
-                    .fill(Color.gray.opacity(0.22))
+                    .fill(MeterBarTheme.barTrack)
                     .frame(height: 7)
                     .offset(y: 4)
 
                 if isExhausted {
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(Color.red.opacity(0.26))
+                        .fill(MeterBarTheme.danger.opacity(0.16))
                         .frame(width: proxy.size.width, height: 7)
                         .offset(y: 4)
                     RoundedRectangle(cornerRadius: 1)
-                        .fill(Color.red.opacity(0.82))
+                        .fill(MeterBarTheme.danger)
                         .frame(width: 2, height: 13)
                         .offset(x: max(0, proxy.size.width - 2), y: 1)
                 } else if let pace, pace.stage != .onPace {
@@ -705,7 +699,7 @@ struct UsageBar: View {
 
                         if pace.stage == .deficit {
                             Rectangle()
-                                .fill(Color.red.opacity(0.82))
+                                .fill(MeterBarTheme.danger.opacity(0.86))
                                 .frame(width: max(0, expectedX - actualX), height: 7)
                                 .offset(x: actualX)
                         }
@@ -735,9 +729,9 @@ struct UsageBar: View {
         case .onPace:
             return .white.opacity(0.85)
         case .reserve:
-            return .green
+            return MeterBarTheme.success
         case .deficit:
-            return .red
+            return MeterBarTheme.danger
         }
     }
 }
@@ -745,10 +739,15 @@ struct UsageBar: View {
 private extension View {
     func popoverGlassCard() -> some View {
         self
-            .background(.thinMaterial)
+            .background {
+                ZStack {
+                    MeterBarTheme.graphiteSurface.opacity(0.78)
+                    Rectangle().fill(.thinMaterial).opacity(0.35)
+                }
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                    .stroke(MeterBarTheme.border, lineWidth: 1)
             }
             .clipShape(RoundedRectangle(cornerRadius: 8))
     }

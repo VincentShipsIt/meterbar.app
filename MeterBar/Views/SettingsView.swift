@@ -67,7 +67,7 @@ struct SettingsView: View {
     }
 
     private var trackedProvidersSection: some View {
-        SettingsPanelSection(title: "Tracked Providers", systemImage: "switch.2", color: .cyan) {
+        SettingsPanelSection(title: "Tracked Providers", systemImage: "switch.2", color: MeterBarTheme.appAccent) {
             providerToggleRow(
                 title: "Claude Code",
                 detail: "Track Pro/Max quota via Claude CLI profiles.",
@@ -228,7 +228,7 @@ struct SettingsView: View {
     }
 
     private var openAISection: some View {
-        SettingsPanelSection(title: "OpenAI", logoKind: .codex, color: .cyan) {
+        SettingsPanelSection(title: "OpenAI", logoKind: .codex, color: MeterBarTheme.codexAccent) {
             SettingsRowView(title: "Connection") {
                 StatusPill(
                     title: authManager.isOpenAIAuthenticated ? "Connected" : "Not Connected",
@@ -267,7 +267,7 @@ struct SettingsView: View {
     }
 
     private var cursorSection: some View {
-        SettingsPanelSection(title: "Cursor", logoKind: .cursor, color: .green) {
+        SettingsPanelSection(title: "Cursor", logoKind: .cursor, color: MeterBarTheme.cursorAccent) {
             SettingsRowView(title: "Connection") {
                 HStack(spacing: 8) {
                     StatusPill(
@@ -301,7 +301,7 @@ struct SettingsView: View {
     }
 
     private var costTrackingSection: some View {
-        SettingsPanelSection(title: "Cost Tracking", systemImage: "chart.bar.xaxis", color: .green) {
+        SettingsPanelSection(title: "Cost Tracking", systemImage: "chart.bar.xaxis", color: MeterBarTheme.success) {
             if costTracker.isScanning {
                 SettingsRowView(title: "Status") {
                     HStack(spacing: 8) {
@@ -374,7 +374,7 @@ struct SettingsView: View {
     }
 
     private var refreshSection: some View {
-        SettingsPanelSection(title: "Refresh", systemImage: "arrow.clockwise", color: .cyan) {
+        SettingsPanelSection(title: "Refresh", systemImage: "arrow.clockwise", color: MeterBarTheme.appAccent) {
             SettingsRowView(title: "Auto-refresh interval") {
                 Picker("", selection: Binding(
                     get: { dataManager.refreshInterval },
@@ -463,11 +463,11 @@ struct SettingsView: View {
 }
 
 private enum SettingsDesign {
-    static let background = Color(red: 0.02, green: 0.024, blue: 0.028)
-    static let surface = Color(red: 0.075, green: 0.082, blue: 0.094)
-    static let row = Color.white.opacity(0.025)
-    static let border = Color.white.opacity(0.08)
-    static let borderStrong = Color.white.opacity(0.14)
+    static let background = MeterBarTheme.graphiteBackground
+    static let surface = MeterBarTheme.graphiteSurface
+    static let row = Color.white.opacity(0.035)
+    static let border = MeterBarTheme.border.opacity(0.82)
+    static let borderStrong = MeterBarTheme.borderStrong
 }
 
 private struct SettingsPanelSection<Content: View>: View {
@@ -616,7 +616,7 @@ private struct StatusPill: View {
     var body: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(isConnected ? Color.green : Color.secondary)
+                .fill(isConnected ? MeterBarTheme.success : Color.secondary)
                 .frame(width: 7, height: 7)
             Text(title)
                 .font(.caption)
@@ -624,11 +624,11 @@ private struct StatusPill: View {
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 5)
-        .background((isConnected ? Color.green : Color.secondary).opacity(0.14))
+        .background((isConnected ? MeterBarTheme.success : Color.secondary).opacity(0.14))
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay {
             RoundedRectangle(cornerRadius: 6)
-                .stroke((isConnected ? Color.green : Color.secondary).opacity(0.18), lineWidth: 1)
+                .stroke((isConnected ? MeterBarTheme.success : Color.secondary).opacity(0.18), lineWidth: 1)
         }
     }
 }
@@ -699,32 +699,32 @@ private struct SettingsButtonStyle: ButtonStyle {
     }
 
     private var textColor: Color {
-        if prominent { return .black }
+        if prominent { return .white }
         switch role {
         case .normal:
             return .primary
         case .destructive:
-            return .red
+            return MeterBarTheme.danger
         }
     }
 
     private var backgroundColor: Color {
-        if prominent { return .cyan }
+        if prominent { return MeterBarTheme.appAccent }
         switch role {
         case .normal:
             return Color.white.opacity(0.06)
         case .destructive:
-            return Color.red.opacity(0.12)
+            return MeterBarTheme.danger.opacity(0.12)
         }
     }
 
     private var borderColor: Color {
-        if prominent { return Color.cyan.opacity(0.7) }
+        if prominent { return MeterBarTheme.appAccent.opacity(0.7) }
         switch role {
         case .normal:
             return SettingsDesign.borderStrong
         case .destructive:
-            return Color.red.opacity(0.22)
+            return MeterBarTheme.danger.opacity(0.22)
         }
     }
 }

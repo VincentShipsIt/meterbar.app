@@ -3,11 +3,44 @@ import SwiftUI
 enum MeterBarTheme {
     static let anthropicDark = Color(red: 20 / 255, green: 20 / 255, blue: 19 / 255)
     static let anthropicLight = Color(red: 250 / 255, green: 249 / 255, blue: 245 / 255)
-    static let claudeAccent = Color(red: 217 / 255, green: 119 / 255, blue: 87 / 255)
-    static let warning = Color(red: 234 / 255, green: 179 / 255, blue: 8 / 255)
+    static let graphiteBackground = Color(red: 28 / 255, green: 28 / 255, blue: 30 / 255)
+    static let graphiteSurface = Color(red: 36 / 255, green: 36 / 255, blue: 38 / 255)
+    static let graphiteElevated = Color(red: 44 / 255, green: 44 / 255, blue: 46 / 255)
+    static let graphiteHover = Color(red: 58 / 255, green: 58 / 255, blue: 60 / 255)
+    static let appAccent = Color(red: 0 / 255, green: 110 / 255, blue: 219 / 255)
+    static let codexAccent = Color(red: 100 / 255, green: 210 / 255, blue: 255 / 255)
+    static let claudeAccent = Color(red: 209 / 255, green: 134 / 255, blue: 101 / 255)
+    static let cursorAccent = Color(red: 99 / 255, green: 210 / 255, blue: 151 / 255)
+    static let success = Color(red: 48 / 255, green: 209 / 255, blue: 88 / 255)
+    static let warning = Color(red: 255 / 255, green: 214 / 255, blue: 10 / 255)
+    static let danger = Color(red: 255 / 255, green: 69 / 255, blue: 58 / 255)
+    static let barTrack = Color.white.opacity(0.14)
+    static let border = Color.white.opacity(0.10)
+    static let borderStrong = Color.white.opacity(0.16)
     static let toolbarIconForeground = Color.white.opacity(0.92)
-    static let toolbarIconBackground = Color(red: 32 / 255, green: 35 / 255, blue: 42 / 255)
-    static let toolbarIconBorder = Color.white.opacity(0.14)
+    static let toolbarIconBackground = graphiteElevated
+    static let toolbarIconBorder = borderStrong
+
+    static func accent(for service: ServiceType) -> Color {
+        switch service {
+        case .claude, .claudeCode:
+            return claudeAccent
+        case .codexCli, .openai:
+            return codexAccent
+        case .cursor:
+            return cursorAccent
+        }
+    }
+
+    static func quotaStatusColor(percentLeft: Int) -> Color {
+        if percentLeft <= 10 { return danger }
+        if percentLeft <= 25 { return warning }
+        return success
+    }
+
+    static func metricColor(percentLeft: Int) -> Color {
+        percentLeft <= 0 ? danger : .primary
+    }
 }
 
 enum LucideSymbol {

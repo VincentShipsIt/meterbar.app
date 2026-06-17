@@ -3,23 +3,23 @@ version: alpha
 name: MeterBar Native Utility
 description: Compact macOS utility UI for AI quota, usage, and local token spend.
 colors:
-  primary: "#F4F4F5"
-  secondary: "#B4B4BC"
-  muted: "#6B6B78"
-  background: "#050607"
-  surface: "#0C0D10"
-  surface-elevated: "#131518"
-  surface-hover: "#20232A"
+  primary: "#F2F2F7"
+  secondary: "#AEAEB2"
+  muted: "#8E8E93"
+  background: "#1C1C1E"
+  surface: "#242426"
+  surface-elevated: "#2C2C2E"
+  surface-hover: "#3A3A3C"
   border: "rgba(255,255,255,0.10)"
-  border-strong: "rgba(255,255,255,0.18)"
-  accent: "#38BDF8"
-  accent-foreground: "#050607"
-  codex: "#45D6F0"
-  claude: "#D97757"
-  cursor: "#35E66B"
-  success: "#10B981"
-  warning: "#EAB308"
-  danger: "#EF4444"
+  border-strong: "rgba(255,255,255,0.16)"
+  accent: "#006EDB"
+  accent-foreground: "#FFFFFF"
+  codex: "#64D2FF"
+  claude: "#D18665"
+  cursor: "#63D297"
+  success: "#30D158"
+  warning: "#FFD60A"
+  danger: "#FF453A"
 typography:
   title:
     fontFamily: "-apple-system, BlinkMacSystemFont, SF Pro Display, system-ui, sans-serif"
@@ -73,23 +73,63 @@ components:
     rounded: "{rounded.md}"
     padding: "8px 14px"
   sidebar-item-active:
-    backgroundColor: "{colors.accent}"
-    textColor: "{colors.accent-foreground}"
+    backgroundColor: "{colors.surface-elevated}"
+    textColor: "{colors.primary}"
     rounded: "{rounded.md}"
     padding: "8px 14px"
+  sidebar-active-indicator:
+    backgroundColor: "{colors.accent}"
+    rounded: "{rounded.sm}"
+    width: "3px"
+    height: "18px"
+  hairline-border:
+    backgroundColor: "{colors.border}"
+    height: "1px"
+  strong-hairline-border:
+    backgroundColor: "{colors.border-strong}"
+    height: "1px"
   usage-bar-track:
-    backgroundColor: "rgba(255,255,255,0.16)"
+    backgroundColor: "{colors.border-strong}"
+    rounded: "{rounded.sm}"
+    height: "7px"
+  usage-bar-fill-codex:
+    backgroundColor: "{colors.codex}"
+    rounded: "{rounded.sm}"
+    height: "7px"
+  usage-bar-fill-claude:
+    backgroundColor: "{colors.claude}"
+    rounded: "{rounded.sm}"
+    height: "7px"
+  usage-bar-fill-cursor:
+    backgroundColor: "{colors.cursor}"
     rounded: "{rounded.sm}"
     height: "7px"
   usage-bar-deficit:
     backgroundColor: "{colors.danger}"
     rounded: "{rounded.sm}"
     height: "7px"
+  status-success:
+    textColor: "{colors.success}"
+    backgroundColor: "transparent"
+    rounded: "{rounded.sm}"
+  status-warning:
+    textColor: "{colors.warning}"
+    backgroundColor: "transparent"
+    rounded: "{rounded.sm}"
   icon-button:
     backgroundColor: "{colors.surface-hover}"
     textColor: "{colors.primary}"
     rounded: "{rounded.md}"
     size: "32px"
+  accent-button:
+    backgroundColor: "{colors.accent}"
+    textColor: "{colors.accent-foreground}"
+    rounded: "{rounded.md}"
+    padding: "6px 10px"
+  helper-text:
+    textColor: "{colors.muted}"
+    backgroundColor: "transparent"
+    rounded: "{rounded.sm}"
 ---
 
 ## Overview
@@ -105,17 +145,17 @@ Both surfaces must stay lean. Avoid decorative hero layouts, big cards, nested p
 
 ## Colors
 
-Use Shipcode-style dark tokens as the default. Surfaces are near-black graphite with subtle elevation, not blue-purple gradients. Borders should remain quiet at 10-18% white.
+Use Apple-style dark graphite tokens as the default. Surfaces are charcoal graphite with subtle elevation, not blue-purple gradients or near-black voids. Borders should remain quiet at 10-16% white.
 
 Provider accents are semantic and stable:
 
 - Codex: cyan.
-- Claude: Anthropic orange `#d97757`.
-- Cursor: green.
+- Claude: muted Anthropic orange `#d18665`.
+- Cursor: softened green.
 - Deficit: red only where quota is missing versus expected pace.
 - Reserve: green only for positive pace state.
 
-Do not let provider colors take over the whole UI. They are indicators, not themes.
+Do not let provider colors take over the whole UI. They are indicators, not themes. Large percentage and cost metrics should use primary text unless the value is exhausted; color belongs on icons, bars, markers, and compact status labels.
 
 ## Typography
 
