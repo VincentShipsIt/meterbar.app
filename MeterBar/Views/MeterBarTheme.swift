@@ -12,7 +12,7 @@ enum MeterBarTheme {
     static let claudeAccent = Color(red: 209 / 255, green: 134 / 255, blue: 101 / 255)
     static let cursorAccent = Color(red: 99 / 255, green: 210 / 255, blue: 151 / 255)
     static let success = Color(red: 48 / 255, green: 209 / 255, blue: 88 / 255)
-    static let warning = Color(red: 255 / 255, green: 214 / 255, blue: 10 / 255)
+    static let warning = Color(red: 255 / 255, green: 159 / 255, blue: 10 / 255)
     static let danger = Color(red: 255 / 255, green: 69 / 255, blue: 58 / 255)
     static let barTrack = Color.white.opacity(0.14)
     static let border = Color.white.opacity(0.10)
@@ -39,7 +39,10 @@ enum MeterBarTheme {
     }
 
     static func metricColor(percentLeft: Int) -> Color {
-        percentLeft <= 0 ? danger : .primary
+        // Match the danger threshold of quotaStatusColor so the prominent "N%"
+        // metric turns red across the whole critical band, agreeing with the
+        // adjacent status label, while staying neutral for healthy quotas.
+        percentLeft <= 10 ? danger : .primary
     }
 }
 
