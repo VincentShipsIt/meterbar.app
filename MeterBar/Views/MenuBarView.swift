@@ -48,6 +48,7 @@ struct MenuBarView: View {
     @StateObject private var cursorService = CursorLocalService.shared
     @StateObject private var claudeAccountStore = ClaudeCodeAccountStore.shared
     @StateObject private var providerVisibility = ProviderVisibilityStore.shared
+    @StateObject private var dockVisibility = DockVisibilityStore.shared
 
     @State private var contentHeight: CGFloat = 320
 
@@ -60,7 +61,6 @@ struct MenuBarView: View {
             popoverHeader
 
             Divider()
-                .opacity(0.35)
 
             ScrollView {
                 PopoverOverviewPanel(
@@ -86,12 +86,6 @@ struct MenuBarView: View {
             .frame(height: scrollHeight)
         }
         .frame(width: popoverWidth, height: popoverHeight)
-        .background {
-            ZStack {
-                MeterBarTheme.graphiteBackground.opacity(0.86)
-                Rectangle().fill(.ultraThinMaterial)
-            }
-        }
         .onAppear {
             notifyContentSize()
         }
@@ -122,7 +116,7 @@ struct MenuBarView: View {
             HStack(spacing: 9) {
                 Image(systemName: "chart.line.uptrend.xyaxis")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(MeterBarTheme.appAccent)
+                    .foregroundStyle(MeterBarTheme.appAccent)
                 Text("MeterBar")
                     .font(.headline)
                     .fontWeight(.semibold)
@@ -131,29 +125,44 @@ struct MenuBarView: View {
             Spacer()
 
             Button(action: openDashboard) {
-                LucideIcon(.panelRight, size: 17, lineWidth: 2.25)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
+                Image(systemName: "sidebar.right")
             }
-            .buttonStyle(.plain)
-            .foregroundColor(MeterBarTheme.toolbarIconForeground)
-            .background(MeterBarTheme.toolbarIconBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(MeterBarTheme.toolbarIconBorder, lineWidth: 1)
-            }
+            .buttonStyle(.borderless)
             .help("Open Usage Dashboard")
 
-            RefreshIconButton(help: "Refresh usage") {
-                Task {
-                    await dataManager.refreshAll()
-                }
+            Button {
+                Task { await dataManager.refreshAll() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
             }
+            .buttonStyle(.borderless)
+            .help("Refresh usage")
+
+            optionsMenu
         }
+        .font(.body)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(.ultraThinMaterial)
+    }
+
+    private var optionsMenu: some View {
+        Menu {
+            Toggle("Show in Dock", isOn: Binding(
+                get: { dockVisibility.showInDock },
+                set: { dockVisibility.setShowInDock($0) }
+            ))
+            Button("Open Usage Dashboard", action: openDashboard)
+            Divider()
+            Button("Quit MeterBar") {
+                NSApp.terminate(nil)
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("More options")
     }
 
     private func openDashboard() {
@@ -270,11 +279,11 @@ struct PopoverOverviewPanel: View {
             HStack(alignment: .center, spacing: 10) {
                 ZStack {
                     Circle()
-                        .fill(statusColor.opacity(0.20))
+                        .fill(.quaternary)
                         .frame(width: 34, height: 34)
                     Image(systemName: statusIconName)
                         .font(.system(size: 17, weight: .bold))
-                        .foregroundColor(statusColor)
+                        .foregroundStyle(statusColor)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -289,7 +298,7 @@ struct PopoverOverviewPanel: View {
                 Spacer(minLength: 0)
             }
             .padding(12)
-            .popoverGlassCard()
+            .cardSurface()
 
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {
                 ForEach(snapshots) { snapshot in
@@ -312,7 +321,7 @@ struct PopoverOverviewPanel: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .popoverGlassCard()
+            .cardSurface()
         }
     }
 }
@@ -445,7 +454,7 @@ private struct PopoverProviderStatusCard: View {
         }
         .padding(11)
         .frame(maxWidth: .infinity, minHeight: 124, alignment: .topLeading)
-        .popoverGlassCard()
+        .cardSurface()
     }
 
     private var updatedText: String {
@@ -499,6 +508,15 @@ struct ResetCountdownWindow: Identifiable {
     let limit: UsageLimit
 }
 
+/// Shared tick schedule for all reset-countdown labels. Anchoring to a fixed
+/// reference date (a whole-minute boundary) keeps every label in phase so ticks
+/// land on real minute boundaries instead of drifting per-view. A 60s cadence is
+/// sufficient since the displayed granularity is minutes.
+private enum ResetCountdownSchedule {
+    static let anchor = Date(timeIntervalSinceReferenceDate: 0)
+    static let interval: TimeInterval = 60
+}
+
 struct ResetCountdownLabel: View {
     let title: String?
     let limit: UsageLimit
@@ -507,7 +525,7 @@ struct ResetCountdownLabel: View {
     var iconSize: CGFloat = 10
 
     var body: some View {
-        TimelineView(.periodic(from: Date(), by: 30)) { timeline in
+        TimelineView(.periodic(from: ResetCountdownSchedule.anchor, by: ResetCountdownSchedule.interval)) { timeline in
             Group {
                 if let text = Self.counterText(title: title, limit: limit, now: timeline.date) {
                     HStack(spacing: 4) {
@@ -540,10 +558,15 @@ struct NextResetCountdownLabel: View {
     var foregroundColor: Color = .secondary
     var iconSize: CGFloat = 10
 
+    /// How long after a window's reset time we keep showing "reset due" before
+    /// treating the data as stale and hiding the label (until a refresh repopulates
+    /// a future reset time). Prevents a perpetual "reset due" when a provider goes offline.
+    static let resetDueGracePeriod: TimeInterval = 5 * 60
+
     var body: some View {
-        TimelineView(.periodic(from: Date(), by: 30)) { timeline in
+        TimelineView(.periodic(from: ResetCountdownSchedule.anchor, by: ResetCountdownSchedule.interval)) { timeline in
             Group {
-                if let window = nextWindow(now: timeline.date),
+                if let window = Self.selectNextWindow(windows, now: timeline.date),
                    let text = ResetCountdownLabel.counterText(
                        title: window.title,
                        limit: window.limit,
@@ -564,7 +587,16 @@ struct NextResetCountdownLabel: View {
         }
     }
 
-    private func nextWindow(now: Date) -> ResetCountdownWindow? {
+    /// Picks the window each provider card should count down to: the soonest
+    /// upcoming reset, or — if every window has already passed — the most recently
+    /// due one, but only while it is within `gracePeriod` of now. Beyond that the
+    /// data is treated as stale and `nil` is returned so the label hides instead of
+    /// showing "reset due" indefinitely.
+    static func selectNextWindow(
+        _ windows: [ResetCountdownWindow],
+        now: Date,
+        gracePeriod: TimeInterval = resetDueGracePeriod
+    ) -> ResetCountdownWindow? {
         let candidates = windows.compactMap { window -> (window: ResetCountdownWindow, seconds: TimeInterval)? in
             guard let seconds = window.limit.secondsUntilReset(now: now) else { return nil }
             return (window, seconds)
@@ -575,7 +607,12 @@ struct NextResetCountdownLabel: View {
             return next.window
         }
 
-        return candidates.max(by: { $0.seconds < $1.seconds })?.window
+        if let mostRecent = candidates.max(by: { $0.seconds < $1.seconds }),
+           mostRecent.seconds >= -gracePeriod {
+            return mostRecent.window
+        }
+
+        return nil
     }
 }
 
@@ -676,13 +713,13 @@ struct UsageBar: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(MeterBarTheme.barTrack)
+                Capsule()
+                    .fill(.quaternary)
                     .frame(height: 7)
                     .offset(y: 4)
 
                 if isExhausted {
-                    RoundedRectangle(cornerRadius: 3)
+                    Capsule()
                         .fill(MeterBarTheme.danger.opacity(0.16))
                         .frame(width: proxy.size.width, height: 7)
                         .offset(y: 4)
@@ -707,7 +744,7 @@ struct UsageBar: View {
                                 .offset(x: actualX)
                         }
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                    .clipShape(Capsule())
                     .offset(y: 4)
 
                     RoundedRectangle(cornerRadius: 1)
@@ -740,21 +777,15 @@ struct UsageBar: View {
 }
 
 private extension View {
-    func popoverGlassCard() -> some View {
-        self
-            .background {
-                ZStack {
-                    MeterBarTheme.graphiteSurface.opacity(0.78)
-                    Rectangle().fill(.thinMaterial).opacity(0.35)
-                }
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(MeterBarTheme.border, lineWidth: 1)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+    /// A content surface for cards that sit on the popover's glass chrome.
+    /// Uses an opaque system control background (not a material) so it never
+    /// stacks glass on glass, with concentric continuous corners.
+    func cardSurface() -> some View {
+        background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
     }
-
 }
 
 private struct MenuContentHeightPreferenceKey: PreferenceKey {
