@@ -25,7 +25,6 @@ let package = Package(
                 "App/MeterBarApp.swift",
                 "Info.plist",
                 "MeterBar.entitlements",
-                "App/MeterBar.entitlements",
                 "Assets.xcassets",
                 "Resources"
             ],
