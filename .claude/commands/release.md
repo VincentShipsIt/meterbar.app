@@ -12,14 +12,16 @@ one tag push. Run this after the version-bumping PR has merged to `master`.
    - Local `master` must equal `origin/master` (fast-forward if behind; stop if diverged).
 
 2. **Read the version to release** (whatever the merged PRs set):
-   - `VERSION=$(grep -m1 'MARKETING_VERSION' MeterBar.xcodeproj/project.pbxproj | sed -E 's/.*= *([0-9.]+).*/\1/')`
+   - `VERSIONS=$(grep 'MARKETING_VERSION' MeterBar.xcodeproj/project.pbxproj | sed -E 's/.*= *([0-9.]+).*/\1/' | sort -u)`
+   - `[[ $(echo "$VERSIONS" | wc -l | tr -d ' ') -eq 1 ]] || { echo "MARKETING_VERSION entries differ:"; echo "$VERSIONS"; exit 1; }`
+   - `VERSION=$(echo "$VERSIONS" | head -n 1)`
    - `TAG="v$VERSION"`
 
 3. **Guard against double-release.**
    - If `git ls-remote --tags origin "$TAG"` returns the tag, STOP: this `MARKETING_VERSION` is already released. Tell the user to bump `MARKETING_VERSION` (all 4 configs in `MeterBar.xcodeproj/project.pbxproj`) in a PR, merge it, then re-run `/release`.
 
 4. **Tag + push (this triggers everything).**
-   - `git tag -a "$TAG" origin/master -m "MeterBar $TAG"`
+   - `git tag -a "$TAG" -m "MeterBar $TAG"`
    - `git push origin "$TAG"`
    - Fires `.github/workflows/release.yml`: build (unsigned) → publish GitHub Release with `MeterBar-$TAG.zip` + `.sha256` → its `update-homebrew` job calls `update-homebrew.yml`, which bumps `version` + `sha256` in the tap's `Casks/meterbar.rb`.
 

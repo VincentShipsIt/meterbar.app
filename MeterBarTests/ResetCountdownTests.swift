@@ -125,6 +125,20 @@ final class ResetCountdownTests: XCTestCase {
         XCTAssertEqual(BlockingLimitResetCounter.selectBlockingWindow([session, weekly], now: epoch)?.id, "w")
     }
 
+    func testBlockingResetReturnsNilWhenExhaustedWindowHasUnknownReset() {
+        let session = window("s", "Session", resetIn: 2 * 3_600, used: 100)
+        let weekly = window("w", "Weekly", resetIn: nil, used: 100)
+
+        XCTAssertNil(BlockingLimitResetCounter.selectBlockingWindow([session, weekly], now: epoch))
+    }
+
+    func testBlockingResetIgnoresHealthyWindowWithUnknownReset() {
+        let session = window("s", "Session", resetIn: 2 * 3_600, used: 100)
+        let weekly = window("w", "Weekly", resetIn: nil, used: 25)
+
+        XCTAssertEqual(BlockingLimitResetCounter.selectBlockingWindow([session, weekly], now: epoch)?.id, "s")
+    }
+
     func testBlockingResetIgnoresHealthyWindows() {
         let session = window("s", "Session", resetIn: 900, used: 25)
         let weekly = window("w", "Weekly", resetIn: 4 * 86_400, used: 80)

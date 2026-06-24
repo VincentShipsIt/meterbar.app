@@ -714,20 +714,22 @@ struct BlockingLimitResetCounter: View {
         }
     }
 
-    /// Selects the exhausted window that actually gates usage. When multiple
-    /// windows are exhausted, the latest future reset is the practical unlock.
+    /// Selects the exhausted window that actually gates usage. Unknown reset
+    /// times are treated as blocking because they may outlast known reset windows.
     static func selectBlockingWindow(
         _ windows: [ResetCountdownWindow],
         now: Date,
         gracePeriod: TimeInterval = NextResetCountdownLabel.resetDueGracePeriod
     ) -> ResetCountdownWindow? {
-        let candidates = windows.compactMap { window -> (window: ResetCountdownWindow, seconds: TimeInterval)? in
-            guard window.limit.isAtLimit,
-                  let seconds = window.limit.secondsUntilReset(now: now) else {
-                return nil
-            }
+        let exhaustedWindows = windows.filter { $0.limit.isAtLimit }
+        guard !exhaustedWindows.isEmpty else { return nil }
+
+        let candidates = exhaustedWindows.compactMap { window -> (window: ResetCountdownWindow, seconds: TimeInterval)? in
+            guard let seconds = window.limit.secondsUntilReset(now: now) else { return nil }
             return (window, seconds)
         }
+
+        guard candidates.count == exhaustedWindows.count else { return nil }
 
         let futureCandidates = candidates.filter { $0.seconds > 0 }
         if let blocking = futureCandidates.max(by: { $0.seconds < $1.seconds }) {
