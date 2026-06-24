@@ -6,10 +6,35 @@ struct MeterBarCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "meterbar",
         abstract: "Track AI coding assistant usage from the command line",
-        version: "1.0.0",
+        version: MeterBarCLIVersion.current,
         subcommands: [Usage.self, Cost.self],
         defaultSubcommand: Usage.self
     )
+}
+
+private enum MeterBarCLIVersion {
+    static var current: String {
+        appBundleVersion ?? "development"
+    }
+
+    private static var appBundleVersion: String? {
+        let executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+            .resolvingSymlinksInPath()
+
+        let contentsURL = executableURL
+            .deletingLastPathComponent() // meterbar
+            .deletingLastPathComponent() // Helpers
+
+        let infoURL = contentsURL.appendingPathComponent("Info.plist")
+        guard let data = try? Data(contentsOf: infoURL),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let version = plist["CFBundleShortVersionString"] as? String,
+              !version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        return version
+    }
 }
 
 struct Usage: ParsableCommand {
