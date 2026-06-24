@@ -1,7 +1,7 @@
 # User Preferences
 
 **Purpose:** Document user-specific preferences that AI agents should follow.
-**Last Updated:** 2025-12-29
+**Last Updated:** 2026-06-24
 
 ---
 
@@ -37,6 +37,8 @@ Add your personal preferences and instructions here. AI agents should read this 
 
 - Document sessions in `SESSIONS/`
 - Track tasks in `TASKS/`
+- Use three-part SemVer for future MeterBar releases. `v1.5` is accepted as the already-published release, but follow-up bugfixes should be `1.5.1`, `1.5.2`, etc. instead of bumping to `1.6`.
+- Do not rewrite or delete an already-published release tag unless explicitly requested.
 
 ---
 
@@ -63,6 +65,13 @@ Add your personal preferences and instructions here. AI agents should read this 
 ## Past Corrections
 
 <!-- Document corrections here so AI remembers -->
+
+### [2026-06-24] - Release Versioning
+
+- `v1.5` was published using the existing two-part project convention.
+- Going forward, prefer three-part SemVer for releases.
+- For bugfix releases after `v1.5`, use patch versions such as `1.5.1`.
+- Avoid rewriting published tags/releases unless explicitly requested.
 
 ### [2025-12-29] - Initial Setup
 
