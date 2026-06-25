@@ -27,6 +27,21 @@ enum MeterBarTheme {
     /// The app's own accent. Follows the user's system accent color.
     static let appAccent = Color.accentColor
 
+    // MARK: - Dashboard detail surface
+
+    static let detailBackgroundTop = Color.adaptive(
+        light: NSColor(srgbRed: 0.965, green: 0.970, blue: 0.966, alpha: 1),
+        dark: NSColor(srgbRed: 0.080, green: 0.086, blue: 0.084, alpha: 1)
+    )
+    static let detailBackgroundMid = Color.adaptive(
+        light: NSColor(srgbRed: 0.942, green: 0.948, blue: 0.944, alpha: 1),
+        dark: NSColor(srgbRed: 0.052, green: 0.058, blue: 0.056, alpha: 1)
+    )
+    static let detailBackgroundBottom = Color.adaptive(
+        light: NSColor(srgbRed: 0.922, green: 0.928, blue: 0.924, alpha: 1),
+        dark: NSColor(srgbRed: 0.034, green: 0.038, blue: 0.038, alpha: 1)
+    )
+
     // MARK: - Quota status (system colors; adapt to appearance + Increase Contrast)
 
     static let success = Color(nsColor: .systemGreen)
@@ -57,6 +72,37 @@ enum MeterBarTheme {
         // metric turns red across the whole critical band, agreeing with the
         // adjacent status label, while staying neutral for healthy quotas.
         percentLeft <= 10 ? danger : .primary
+    }
+}
+
+struct MeterBarDetailBackground: View {
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    MeterBarTheme.detailBackgroundTop,
+                    MeterBarTheme.detailBackgroundMid,
+                    MeterBarTheme.detailBackgroundBottom
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            VStack(spacing: 0) {
+                LinearGradient(
+                    colors: [
+                        MeterBarTheme.cursorAccent.opacity(0.13),
+                        MeterBarTheme.codexAccent.opacity(0.04),
+                        .clear
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(height: 1)
+
+                Spacer()
+            }
+        }
     }
 }
 

@@ -12,17 +12,20 @@ final class UsageDashboardWindowController {
     func show() {
         if window == nil {
             let hostingController = NSHostingController(rootView: UsageDashboardView())
-            // Surface the SwiftUI NavigationSplitView's toolbar and title (and the
-            // Liquid Glass they carry) through the AppKit window.
+            // Surface the SwiftUI NavigationSplitView title and toolbar through the
+            // AppKit window while the full-size content view keeps the sidebar glass
+            // running behind the titlebar.
             hostingController.sceneBridgingOptions = [.all]
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 1080, height: 720),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                contentRect: NSRect(x: 0, y: 0, width: 1040, height: 700),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
             )
             window.title = "MeterBar Usage"
-            window.toolbarStyle = .unified
+            window.titleVisibility = .visible
+            window.titlebarAppearsTransparent = true
+            window.isRestorable = false
             window.contentMinSize = NSSize(width: 900, height: 600)
             window.contentViewController = hostingController
             window.isReleasedWhenClosed = false
@@ -63,51 +66,72 @@ struct UsageDashboardView: View {
     @StateObject private var claudeAccountStore = ClaudeCodeAccountStore.shared
     @StateObject private var providerVisibility = ProviderVisibilityStore.shared
 
-    @State private var selectedSection: DashboardSection? = .overview
+    @State private var selectedSection: DashboardSection = .overview
+    @State private var columnVisibility = NavigationSplitViewVisibility.all
 
-    private var activeSection: DashboardSection { selectedSection ?? .overview }
+    private var activeSection: DashboardSection { selectedSection }
 
     var body: some View {
-        NavigationSplitView {
-            List(selection: $selectedSection) {
-                ForEach(DashboardSection.allCases) { section in
-                    Label(section.rawValue, systemImage: section.iconName)
-                        .tag(section)
-                }
-            }
-            .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 190, ideal: 212, max: 280)
-            .safeAreaInset(edge: .bottom) { sourcesFooter }
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            sidebar
+                .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
         } detail: {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    switch activeSection {
-                    case .overview:
-                        overviewContent
-                    case .limits:
-                        limitsContent
-                    case .costs:
-                        costsContent
-                    case .settings:
-                        settingsContent
-                    }
-                }
-                .padding(22)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            ZStack {
+                MeterBarDetailBackground()
+                    .ignoresSafeArea()
+
+                detailContent
             }
             .navigationTitle(activeSection.rawValue)
             .navigationSubtitle(sectionSubtitle)
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItem(placement: .navigation) {
                     Button {
                         Task { await refreshDashboard() }
                     } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
+                        Image(systemName: "arrow.clockwise")
                     }
                     .help("Refresh usage")
                     .disabled(isRefreshButtonDisabled)
                 }
             }
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+
+    private var sidebar: some View {
+        List(selection: $selectedSection) {
+            ForEach(DashboardSection.allCases) { section in
+                Label(section.rawValue, systemImage: section.iconName)
+                    .tag(section)
+            }
+        }
+        .listStyle(.sidebar)
+        // Keep the sidebar system-owned. Custom backgrounds belong in the detail
+        // pane so the native Liquid Glass sidebar material and selection remain intact.
+        .safeAreaInset(edge: .bottom) { sourcesFooter }
+    }
+
+    private var detailContent: some View {
+        // Keep a real scroll backing in the detail column while the sidebar
+        // remains a plain native List.
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                switch activeSection {
+                case .overview:
+                    overviewContent
+                case .limits:
+                    limitsContent
+                case .costs:
+                    costsContent
+                case .settings:
+                    settingsContent
+                }
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 18)
+            .padding(.bottom, 22)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -457,6 +481,8 @@ private struct DashboardLimit: Identifiable {
     }
 }
 
+private let overviewTileHeight: CGFloat = 260
+
 private struct DashboardStatusHero: View {
     let title: String
     let detail: String
@@ -552,6 +578,12 @@ private struct ProviderOverviewStatusCard: View {
             }
         }
         .padding(14)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: overviewTileHeight,
+            maxHeight: overviewTileHeight,
+            alignment: .topLeading
+        )
         .dashboardCardBackground()
     }
 
@@ -635,6 +667,12 @@ private struct CostOverviewStatusCard: View {
             }
         }
         .padding(14)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: overviewTileHeight,
+            maxHeight: overviewTileHeight,
+            alignment: .topLeading
+        )
         .dashboardCardBackground()
     }
 }

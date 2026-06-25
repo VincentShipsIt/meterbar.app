@@ -11,6 +11,10 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: write
+    env:
+      # Keep the pushed tag out of inline shell interpolation. A malicious tag
+      # such as v1$(...) must be data, never executable script.
+      REF_NAME: ${{ github.ref_name }}
 
     steps:
       - name: Checkout
@@ -43,14 +47,16 @@ jobs:
 
       - name: Create release package
         run: |
-          VERSION="${{ github.ref_name }}"
+          set -euo pipefail
+          VERSION="$REF_NAME"
 
           # Find the built app
           APP_PATH=$(find build -name "MeterBar.app" -type d | head -1)
+          [[ -n "$APP_PATH" ]] || { echo "::error::MeterBar.app not found under build/"; exit 1; }
           echo "Found app at: $APP_PATH"
 
           # Create zip using ditto (preserves attributes better than zip)
-          cd $(dirname "$APP_PATH")
+          cd "$(dirname "$APP_PATH")"
           ditto -c -k --keepParent "MeterBar.app" "MeterBar-${VERSION}.zip"
 
           # Compute SHA256
@@ -63,7 +69,7 @@ jobs:
           mv "MeterBar-${VERSION}.zip.sha256" "${{ github.workspace }}/"
 
           # Set output for later steps
-          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
         id: package
 
       - name: Create Release
@@ -80,9 +86,11 @@ jobs:
 
       - name: Output SHA256
         run: |
-          echo "### Release Artifacts" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**SHA256:** \`$(cat MeterBar-${{ github.ref_name }}.zip.sha256)\`" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### Release Artifacts"
+            echo ""
+            echo "**SHA256:** \`$(cat "MeterBar-${REF_NAME}.zip.sha256")\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # After the release is published, bump the Homebrew cask in VincentShipsIt/homebrew-tap.
   # Called directly (not via `release: published`) because GITHUB_TOKEN-created releases
