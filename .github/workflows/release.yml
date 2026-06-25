@@ -52,6 +52,7 @@ jobs:
 
           # Find the built app
           APP_PATH=$(find build -name "MeterBar.app" -type d | head -1)
+          [[ -n "$APP_PATH" ]] || { echo "::error::MeterBar.app not found under build/"; exit 1; }
           echo "Found app at: $APP_PATH"
 
           # Create zip using ditto (preserves attributes better than zip)
