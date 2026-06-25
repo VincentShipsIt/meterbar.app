@@ -47,7 +47,9 @@ jobs:
 
       - name: Verify bundled CLI version
         run: |
+          set -euo pipefail
           APP_PATH=$(find build -name "MeterBar.app" -type d | head -1)
+          [[ -n "$APP_PATH" ]] || { echo "::error::MeterBar.app not found under build/"; exit 1; }
           APP_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Contents/Info.plist")
           CLI_VERSION=$("$APP_PATH/Contents/Helpers/meterbar" --version)
 

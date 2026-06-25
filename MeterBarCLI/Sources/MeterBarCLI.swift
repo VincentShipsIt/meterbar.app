@@ -1,4 +1,5 @@
 import ArgumentParser
+import Darwin
 import Foundation
 
 @main
@@ -18,8 +19,9 @@ private enum MeterBarCLIVersion {
     }
 
     private static var appBundleVersion: String? {
-        let executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
-            .resolvingSymlinksInPath()
+        guard let executableURL = processExecutableURL else {
+            return nil
+        }
 
         let contentsURL = executableURL
             .deletingLastPathComponent() // meterbar
@@ -34,6 +36,21 @@ private enum MeterBarCLIVersion {
         }
 
         return version
+    }
+
+    private static var processExecutableURL: URL? {
+        var size = UInt32(PATH_MAX)
+        var buffer = [CChar](repeating: 0, count: Int(size))
+
+        if _NSGetExecutablePath(&buffer, &size) == -1 {
+            buffer = [CChar](repeating: 0, count: Int(size))
+            guard _NSGetExecutablePath(&buffer, &size) == 0 else {
+                return nil
+            }
+        }
+
+        return URL(fileURLWithPath: String(cString: buffer))
+            .resolvingSymlinksInPath()
     }
 }
 
