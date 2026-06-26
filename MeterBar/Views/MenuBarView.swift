@@ -127,7 +127,8 @@ struct MenuBarView: View {
             Button(action: openDashboard) {
                 Image(systemName: "sidebar.right")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.glass)
+            .controlSize(.small)
             .help("Open Usage Dashboard")
 
             Button {
@@ -135,7 +136,8 @@ struct MenuBarView: View {
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.glass)
+            .controlSize(.small)
             .help("Refresh usage")
 
             optionsMenu
@@ -159,7 +161,9 @@ struct MenuBarView: View {
         } label: {
             Image(systemName: "ellipsis")
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.glass)
+        .controlSize(.small)
         .menuIndicator(.hidden)
         .fixedSize()
         .help("More options")
@@ -991,14 +995,9 @@ struct UsageBar: View {
 }
 
 private extension View {
-    /// A content surface for cards that sit on the popover's glass chrome.
-    /// Uses an opaque system control background (not a material) so it never
-    /// stacks glass on glass, with concentric continuous corners.
+    /// Shared content card surface for popover cards.
     func cardSurface() -> some View {
-        background(
-            Color(nsColor: .controlBackgroundColor),
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
+        meterBarPanelSurface()
     }
 }
 

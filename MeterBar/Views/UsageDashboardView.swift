@@ -25,6 +25,10 @@ final class UsageDashboardWindowController {
             window.title = "MeterBar Usage"
             window.titleVisibility = .visible
             window.titlebarAppearsTransparent = true
+            window.toolbarStyle = .unified
+            window.titlebarSeparatorStyle = .none
+            window.isOpaque = false
+            window.backgroundColor = .clear
             window.isRestorable = false
             window.contentMinSize = NSSize(width: 900, height: 600)
             window.contentViewController = hostingController
@@ -85,7 +89,7 @@ struct UsageDashboardView: View {
         } detail: {
             ZStack {
                 MeterBarDetailBackground()
-                    .ignoresSafeArea()
+                    .ignoresSafeArea(edges: [.horizontal, .bottom])
 
                 detailContent
             }
@@ -112,11 +116,22 @@ struct UsageDashboardView: View {
                 Label(section.rawValue, systemImage: section.iconName)
                     .tag(section)
             }
+
+            Section("Local Sources") {
+                if enabledSourceLabels.isEmpty {
+                    Label("No sources enabled", systemImage: "circle")
+                } else {
+                    ForEach(enabledSourceLabels, id: \.self) { label in
+                        Label(label, systemImage: "checkmark.circle.fill")
+                    }
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
         .listStyle(.sidebar)
-        // Keep the sidebar system-owned. Custom backgrounds belong in the detail
-        // pane so the native Liquid Glass sidebar material and selection remain intact.
-        .safeAreaInset(edge: .bottom) { sourcesFooter }
+        // No background overrides: the native sidebar owns its glass material,
+        // section rendering, and selected-row highlight.
     }
 
     private var detailContent: some View {
@@ -140,26 +155,6 @@ struct UsageDashboardView: View {
             .padding(.bottom, 22)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    private var sourcesFooter: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Local Sources")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if enabledSourceLabels.isEmpty {
-                Text("No sources enabled")
-            } else {
-                ForEach(enabledSourceLabels, id: \.self) { label in
-                    Label(label, systemImage: "checkmark.circle.fill")
-                }
-            }
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
     }
 
     private var overviewContent: some View {
@@ -1557,12 +1552,8 @@ private func color(for provider: ServiceType) -> Color {
 }
 
 private extension View {
-    /// A content surface for dashboard cards. Opaque system control background
-    /// (not a material) on the window's content layer, with concentric corners.
+    /// Shared content card surface for the companion dashboard.
     func dashboardCardBackground() -> some View {
-        background(
-            Color(nsColor: .controlBackgroundColor),
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
+        meterBarPanelSurface()
     }
 }

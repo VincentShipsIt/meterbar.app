@@ -66,6 +66,31 @@ struct MeterBarDetailBackground: View {
     }
 }
 
+private struct MeterBarPanelSurfaceModifier: ViewModifier {
+    let cornerRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                Color(nsColor: .controlBackgroundColor),
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 0.5)
+            }
+    }
+}
+
+extension View {
+    /// Shared MeterBar content panel surface. Chrome glass belongs to the window,
+    /// sidebar, popover, and toolbar; cards use a native content fill plus a
+    /// subtle separator so companion and popover panels read as one system.
+    func meterBarPanelSurface(cornerRadius: CGFloat = 12) -> some View {
+        modifier(MeterBarPanelSurfaceModifier(cornerRadius: cornerRadius))
+    }
+}
+
 extension Color {
     /// An appearance-adaptive color backed by a dynamic `NSColor`, resolving the
     /// correct value for light / dark (and optionally high-contrast) appearances.
