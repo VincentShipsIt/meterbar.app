@@ -112,6 +112,12 @@ struct UsageDashboardView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .task {
+            await refreshCostsIfMissingDays()
+        }
+        .onChange(of: selectedSection) {
+            Task { await refreshCostsIfMissingDays() }
+        }
     }
 
     private var sidebar: some View {
@@ -178,12 +184,13 @@ struct UsageDashboardView: View {
                 CostOverviewStatusCard(
                     summary: visibleCostSummary,
                     isScanning: costTracker.isScanning,
+                    isRefreshingMissingDays: costTracker.isRefreshingMissingDays,
                     formattedTokens: UsageFormat.tokens(visibleCostSummary?.totalTokens ?? 0)
                 )
             }
             .frame(maxWidth: .infinity)
 
-            DashboardCard(title: "Last 30 Days", trailing: costTracker.isScanning ? "Scanning..." : nil) {
+            DashboardCard(title: "Last 30 Days", trailing: costRefreshStatusText) {
                 costScanChart(height: 180, compact: true)
             }
         }
@@ -224,7 +231,7 @@ struct UsageDashboardView: View {
 
     private var costsContent: some View {
         VStack(alignment: .leading, spacing: 14) {
-            DashboardCard(title: "30 Day API-Rate Token Spend", trailing: costTracker.isScanning ? "Scanning..." : nil) {
+            DashboardCard(title: "30 Day API-Rate Token Spend", trailing: costRefreshStatusText) {
                 VStack(alignment: .leading, spacing: 18) {
                     Text("Local subscription logs are estimated using API token rates so Codex and Claude can be compared.")
                         .font(.caption)
@@ -247,7 +254,7 @@ struct UsageDashboardView: View {
                                 Label("Scan 30 Days", systemImage: "magnifyingglass")
                             }
                             .buttonStyle(.bordered)
-                            .disabled(costTracker.isScanning)
+                            .disabled(costTracker.isRefreshInProgress)
                         }
                         .frame(height: 220, alignment: .center)
                     }
@@ -396,6 +403,16 @@ struct UsageDashboardView: View {
         }
     }
 
+    private var costRefreshStatusText: String? {
+        if costTracker.isScanning {
+            return "Scanning..."
+        }
+        if costTracker.isRefreshingMissingDays {
+            return "Updating..."
+        }
+        return nil
+    }
+
     private var isRefreshButtonDisabled: Bool {
         isRefreshButtonAnimating
     }
@@ -403,7 +420,7 @@ struct UsageDashboardView: View {
     private var isRefreshButtonAnimating: Bool {
         switch activeSection {
         case .costs:
-            return costTracker.isScanning
+            return costTracker.isRefreshInProgress
         case .overview, .limits, .settings:
             return dataManager.isLoading
         }
@@ -415,6 +432,11 @@ struct UsageDashboardView: View {
         } else {
             await dataManager.refreshAll()
         }
+    }
+
+    private func refreshCostsIfMissingDays() async {
+        guard activeSection == .overview || activeSection == .costs else { return }
+        await costTracker.refreshMissingDaysInBackground(days: 30)
     }
 
     private func color(for service: ServiceType) -> Color {
@@ -593,7 +615,14 @@ private struct ProviderOverviewStatusCard: View {
 private struct CostOverviewStatusCard: View {
     let summary: CostSummary?
     let isScanning: Bool
+    let isRefreshingMissingDays: Bool
     let formattedTokens: String
+
+    private var subtitle: String {
+        if isScanning { return "Scanning local logs" }
+        if isRefreshingMissingDays { return "Updating…" }
+        return "Last 30 days"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -605,7 +634,7 @@ private struct CostOverviewStatusCard: View {
                     Text("API-Rate Estimate")
                         .font(.headline)
                         .fontWeight(.semibold)
-                    Text(isScanning ? "Scanning local logs" : "Last 30 days")
+                    Text(subtitle)
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -1225,6 +1254,8 @@ private struct DailyUsageProviderSegment: Identifiable {
 private struct DailyUsageBreakdownList: View {
     let dailyUsage: [DailyTokenUsage]
 
+    @State private var expandedDayIDs: Set<Date> = []
+
     private var days: [DailyProviderUsageDay] {
         let grouped = Dictionary(grouping: dailyUsage) { Calendar.current.startOfDay(for: $0.date) }
         return grouped.map { day, rows in
@@ -1248,8 +1279,22 @@ private struct DailyUsageBreakdownList: View {
 
             VStack(spacing: 8) {
                 ForEach(days) { day in
-                    DailyUsageDetailRow(day: day)
+                    DailyUsageDetailRow(
+                        day: day,
+                        isExpanded: expandedDayIDs.contains(day.id),
+                        toggle: { toggleExpansion(for: day.id) }
+                    )
                 }
+            }
+        }
+    }
+
+    private func toggleExpansion(for dayID: Date) {
+        withAnimation(.snappy(duration: 0.18)) {
+            if expandedDayIDs.contains(dayID) {
+                expandedDayIDs.remove(dayID)
+            } else {
+                expandedDayIDs.insert(dayID)
             }
         }
     }
@@ -1303,49 +1348,96 @@ private struct DailyProviderUsageSummary: Identifiable {
 
 private struct DailyUsageDetailRow: View {
     let day: DailyProviderUsageDay
+    let isExpanded: Bool
+    let toggle: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(dateLabel(day.date))
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                Spacer()
-                Text(UsageFormat.tokens(day.totalTokens))
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                Text(UsageFormat.cost(day.estimatedCostUSD))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
+        VStack(alignment: .leading, spacing: isExpanded ? 8 : 0) {
+            Button(action: toggle) {
+                HStack(spacing: 8) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.secondary)
+                        .frame(width: 12)
 
-            ForEach(day.providers) { provider in
-                HStack(spacing: 10) {
-                    ProviderLogoView(
-                        kind: providerLogoKind(for: provider.provider),
-                        size: 14,
-                        foregroundColor: color(for: provider.provider)
-                    )
-                    Text(provider.provider.displayName)
-                        .font(.caption)
+                    Text(dateLabel(day.date))
+                        .font(.subheadline)
                         .fontWeight(.semibold)
-                        .frame(width: 110, alignment: .leading)
-                    UsageDetailMetric(label: "Input", value: UsageFormat.tokens(provider.inputTokens))
-                    UsageDetailMetric(label: "Output", value: UsageFormat.tokens(provider.outputTokens))
-                    UsageDetailMetric(label: "Cache", value: UsageFormat.tokens(provider.cacheReadTokens))
+
+                    Text(providerCountLabel)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
                     Spacer()
-                    Text(UsageFormat.cost(provider.estimatedCostUSD))
+
+                    Text("\(UsageFormat.tokens(day.totalTokens)) tokens")
                         .font(.caption)
                         .fontWeight(.semibold)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+
+                    Text(UsageFormat.cost(day.estimatedCostUSD))
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
                 }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(accessibilitySummary)
+            .accessibilityHint(isExpanded ? "Collapse day details" : "Show day details")
+
+            if isExpanded {
+                VStack(spacing: 8) {
+                    ForEach(day.providers) { provider in
+                        DailyProviderUsageSummaryRow(provider: provider)
+                    }
+                }
+                .padding(.top, 6)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(10)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
+    private var providerCountLabel: String {
+        let count = day.providers.count
+        return count == 1 ? "1 source" : "\(count) sources"
+    }
+
+    private var accessibilitySummary: String {
+        "\(dateLabel(day.date)), \(UsageFormat.tokens(day.totalTokens)) tokens, \(UsageFormat.cost(day.estimatedCostUSD))"
+    }
+
     private func dateLabel(_ date: Date) -> String {
         DashboardDateFormat.weekdayMonthDay(date)
+    }
+}
+
+private struct DailyProviderUsageSummaryRow: View {
+    let provider: DailyProviderUsageSummary
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProviderLogoView(
+                kind: providerLogoKind(for: provider.provider),
+                size: 14,
+                foregroundColor: color(for: provider.provider)
+            )
+            Text(provider.provider.displayName)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .frame(width: 110, alignment: .leading)
+            UsageDetailMetric(label: "Input", value: UsageFormat.tokens(provider.inputTokens))
+            UsageDetailMetric(label: "Output", value: UsageFormat.tokens(provider.outputTokens))
+            UsageDetailMetric(label: "Cache", value: UsageFormat.tokens(provider.cacheReadTokens))
+            Spacer()
+            Text(UsageFormat.cost(provider.estimatedCostUSD))
+                .font(.caption)
+                .fontWeight(.semibold)
+        }
     }
 }
 
