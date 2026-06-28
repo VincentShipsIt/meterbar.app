@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import os
 import SQLite3
 
 class CostTracker: ObservableObject {
@@ -7,10 +8,16 @@ class CostTracker: ObservableObject {
 
     @Published var costSummary: CostSummary?
     @Published var isScanning: Bool = false
+    @Published var isRefreshingMissingDays: Bool = false
     @Published var lastScanDate: Date?
 
     private let providerVisibilityStore = ProviderVisibilityStore.shared
     private let cacheFileName = "cost-summary-v1.json"
+
+    /// True while either a manual scan or a background missing-day backfill runs.
+    var isRefreshInProgress: Bool {
+        isScanning || isRefreshingMissingDays
+    }
 
     // API-rate estimates per million tokens for local log usage.
     private let pricing: [String: TokenPricing] = [
@@ -29,29 +36,55 @@ class CostTracker: ObservableObject {
         "default": TokenPricing(input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30)
     ]
 
+    /// Non-optional fallback so pricing lookups never need a force-unwrap of
+    /// `pricing["default"]`. Mirrors the `"default"` entry above.
+    private let defaultPricing = TokenPricing(input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30)
+
+    // Cached formatters/regexes. The scan parses tens of thousands of log lines,
+    // so allocating an ISO8601DateFormatter/NSRegularExpression per call was a
+    // measurable hot-path cost. `ISO8601DateFormatter.date(from:)` and
+    // `NSRegularExpression` are safe to share across reads.
+    private static let fractionalISO8601Formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let plainISO8601Formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static let codexLogValueRegexes: [String: NSRegularExpression] = {
+        let keys = [
+            "event.timestamp", "input_token_count", "output_token_count",
+            "cached_token_count", "reasoning_token_count", "conversation.id",
+            "thread.id", "model", "slug", "originator"
+        ]
+        var result: [String: NSRegularExpression] = [:]
+        for key in keys {
+            let pattern = NSRegularExpression.escapedPattern(for: key) + #"=([^\s}]+)"#
+            if let regex = try? NSRegularExpression(pattern: pattern) {
+                result[key] = regex
+            }
+        }
+        return result
+    }()
+
     private init() {
         loadCachedSummary()
     }
 
     func scanCosts(days: Int = 30) async {
         let shouldStart = await MainActor.run {
-            guard !isScanning else { return false }
+            guard !isRefreshInProgress else { return false }
             isScanning = true
             return true
         }
         guard shouldStart else { return }
 
-        let includeClaudeCode = providerVisibilityStore.isEnabled(.claudeCode)
-        let includeCodexCli = providerVisibilityStore.isEnabled(.codexCli)
-        let claudeAccounts = ClaudeCodeAccountStore.shared.accounts
-        let summary = await Task.detached(priority: .userInitiated) { [self] in
-            buildCostSummary(
-                days: days,
-                includeClaudeCode: includeClaudeCode,
-                includeCodexCli: includeCodexCli,
-                claudeAccounts: claudeAccounts
-            )
-        }.value
+        let summary = await makeCostSummary(days: days, priority: .userInitiated)
 
         await MainActor.run {
             costSummary = summary
@@ -59,6 +92,45 @@ class CostTracker: ObservableObject {
             saveCachedSummary()
             isScanning = false
         }
+    }
+
+    /// Quietly backfills missing daily rows when Overview/Costs opens, without the
+    /// visible "Scanning" UI a manual scan shows. No-ops unless the cached summary
+    /// actually has gaps in the visible window (see `needsMissingDailyUsageRefresh`).
+    func refreshMissingDaysInBackground(days: Int = 30) async {
+        let shouldStart = await MainActor.run {
+            guard !isRefreshInProgress,
+                  let visibleSummary = costSummary?.filtered(to: providerVisibilityStore.enabledServices),
+                  visibleSummary.needsMissingDailyUsageRefresh(days: days, lastScanDate: lastScanDate) else {
+                return false
+            }
+            isRefreshingMissingDays = true
+            return true
+        }
+        guard shouldStart else { return }
+
+        let summary = await makeCostSummary(days: days, priority: .utility)
+
+        await MainActor.run {
+            costSummary = summary
+            lastScanDate = Date()
+            saveCachedSummary()
+            isRefreshingMissingDays = false
+        }
+    }
+
+    private func makeCostSummary(days: Int, priority: TaskPriority) async -> CostSummary {
+        let includeClaudeCode = providerVisibilityStore.isEnabled(.claudeCode)
+        let includeCodexCli = providerVisibilityStore.isEnabled(.codexCli)
+        let claudeAccounts = ClaudeCodeAccountStore.shared.accounts
+        return await Task.detached(priority: priority) { [self] in
+            buildCostSummary(
+                days: days,
+                includeClaudeCode: includeClaudeCode,
+                includeCodexCli: includeCodexCli,
+                claudeAccounts: claudeAccounts
+            )
+        }.value
     }
 
     private func buildCostSummary(
@@ -127,7 +199,7 @@ class CostTracker: ObservableObject {
             costSummary = cache.summary
             lastScanDate = cache.lastScanDate
         } catch {
-            print("MeterBar: failed to load cost summary cache: \(error.localizedDescription)")
+            AppLog.cost.error("Failed to load cost summary cache: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -148,7 +220,7 @@ class CostTracker: ObservableObject {
             let data = try encoder.encode(CostSummaryCache(summary: costSummary, lastScanDate: lastScanDate))
             try data.write(to: cacheURL, options: [.atomic])
         } catch {
-            print("MeterBar: failed to save cost summary cache: \(error.localizedDescription)")
+            AppLog.cost.error("Failed to save cost summary cache: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -216,7 +288,7 @@ class CostTracker: ObservableObject {
 
         guard totalInput > 0 || totalOutput > 0 || totalCacheCreation > 0 || totalCacheRead > 0 else { return nil }
 
-        let pricing = self.pricing["claude-sonnet"] ?? self.pricing["default"]!
+        let pricing = self.pricing["claude-sonnet"] ?? defaultPricing
         let fallbackCost = calculateCost(
             input: totalInput,
             output: totalOutput,
@@ -407,15 +479,10 @@ class CostTracker: ObservableObject {
     }
 
     private func parseISO8601(_ value: String) -> Date? {
-        let fractionalFormatter = ISO8601DateFormatter()
-        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractionalFormatter.date(from: value) {
+        if let date = Self.fractionalISO8601Formatter.date(from: value) {
             return date
         }
-
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: value)
+        return Self.plainISO8601Formatter.date(from: value)
     }
 
     private func claudeOneHourCacheCreationTokens(in usage: [String: Any]) -> Int {
@@ -427,7 +494,7 @@ class CostTracker: ObservableObject {
 
     private func claudePricing(for model: String?) -> TokenPricing {
         guard let model else {
-            return pricing["claude-sonnet"] ?? pricing["default"]!
+            return pricing["claude-sonnet"] ?? defaultPricing
         }
 
         let normalized = normalizeClaudeModel(model)
@@ -436,27 +503,27 @@ class CostTracker: ObservableObject {
         }
 
         if normalized.contains("fable") {
-            return pricing["claude-fable-5"] ?? pricing["default"]!
+            return pricing["claude-fable-5"] ?? defaultPricing
         }
         if normalized.contains("opus") {
-            if normalized.contains("4-8") { return pricing["claude-opus-4-8"] ?? pricing["claude-opus"]! }
-            if normalized.contains("4-7") { return pricing["claude-opus-4-7"] ?? pricing["claude-opus"]! }
-            if normalized.contains("4-6") { return pricing["claude-opus-4-6"] ?? pricing["claude-opus"]! }
-            return pricing["claude-opus"] ?? pricing["default"]!
+            if normalized.contains("4-8") { return pricing["claude-opus-4-8"] ?? (pricing["claude-opus"] ?? defaultPricing) }
+            if normalized.contains("4-7") { return pricing["claude-opus-4-7"] ?? (pricing["claude-opus"] ?? defaultPricing) }
+            if normalized.contains("4-6") { return pricing["claude-opus-4-6"] ?? (pricing["claude-opus"] ?? defaultPricing) }
+            return pricing["claude-opus"] ?? defaultPricing
         }
         if normalized.contains("haiku") {
             return normalized.contains("4-5")
-                ? pricing["claude-haiku-4-5"] ?? pricing["claude-haiku"]!
-                : pricing["claude-haiku"] ?? pricing["default"]!
+                ? pricing["claude-haiku-4-5"] ?? (pricing["claude-haiku"] ?? defaultPricing)
+                : pricing["claude-haiku"] ?? defaultPricing
         }
         if normalized.contains("sonnet") {
-            if normalized.contains("4-6") { return pricing["claude-sonnet-4-6"] ?? pricing["claude-sonnet"]! }
-            if normalized.contains("4-5") { return pricing["claude-sonnet-4-5"] ?? pricing["claude-sonnet"]! }
-            if normalized.contains("4") { return pricing["claude-sonnet-4"] ?? pricing["claude-sonnet"]! }
-            return pricing["claude-sonnet"] ?? pricing["default"]!
+            if normalized.contains("4-6") { return pricing["claude-sonnet-4-6"] ?? (pricing["claude-sonnet"] ?? defaultPricing) }
+            if normalized.contains("4-5") { return pricing["claude-sonnet-4-5"] ?? (pricing["claude-sonnet"] ?? defaultPricing) }
+            if normalized.contains("4") { return pricing["claude-sonnet-4"] ?? (pricing["claude-sonnet"] ?? defaultPricing) }
+            return pricing["claude-sonnet"] ?? defaultPricing
         }
 
-        return pricing["default"]!
+        return defaultPricing
     }
 
     private func normalizeClaudeModel(_ raw: String) -> String {
@@ -474,11 +541,12 @@ class CostTracker: ObservableObject {
         if let versionRange = trimmed.range(of: #"-v\d+:\d+$"#, options: .regularExpression) {
             trimmed.removeSubrange(versionRange)
         }
+        // Strip a trailing `-YYYYMMDD` release-date suffix so dated model ids
+        // (e.g. `claude-opus-4-8-20260101`) normalize to their base id. This keeps
+        // display names clean and lets pricing match new dated models too, not
+        // only the ones already present in the pricing table.
         if let dateRange = trimmed.range(of: #"-\d{8}$"#, options: .regularExpression) {
-            let base = String(trimmed[..<dateRange.lowerBound])
-            if pricing[base] != nil {
-                return base
-            }
+            return String(trimmed[..<dateRange.lowerBound])
         }
         return trimmed
     }
@@ -487,43 +555,15 @@ class CostTracker: ObservableObject {
         let codexDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
         let archivedDir = codexDir.appendingPathComponent("archived_sessions")
         let logsDatabase = codexDir.appendingPathComponent("logs_2.sqlite")
-        var totals = TokenAccumulator()
-        var dailyTotals: [Date: TokenAccumulator] = [:]
-        var modelTotals: [String: TokenAccumulator] = [:]
-        var originTotals: [String: TokenAccumulator] = [:]
-        var eventKeys = Set<String>()
-        var sessionIDs = Set<String>()
-        var earliestDate = Date()
-        var latestDate = cutoffDate
+        var context = CodexScanContext(earliestDate: Date(), latestDate: cutoffDate)
 
-        scanCodexArchivedSessions(
-            directory: archivedDir,
-            since: cutoffDate,
-            totals: &totals,
-            dailyTotals: &dailyTotals,
-            modelTotals: &modelTotals,
-            originTotals: &originTotals,
-            eventKeys: &eventKeys,
-            sessionIDs: &sessionIDs,
-            earliestDate: &earliestDate,
-            latestDate: &latestDate
-        )
-        scanCodexSQLiteLogs(
-            database: logsDatabase,
-            since: cutoffDate,
-            totals: &totals,
-            dailyTotals: &dailyTotals,
-            modelTotals: &modelTotals,
-            originTotals: &originTotals,
-            eventKeys: &eventKeys,
-            sessionIDs: &sessionIDs,
-            earliestDate: &earliestDate,
-            latestDate: &latestDate
-        )
+        scanCodexArchivedSessions(directory: archivedDir, since: cutoffDate, context: &context)
+        scanCodexSQLiteLogs(database: logsDatabase, since: cutoffDate, context: &context)
 
+        let totals = context.totals
         guard totals.input > 0 || totals.output > 0 || totals.cacheRead > 0 else { return nil }
 
-        let pricing = self.pricing["codex"] ?? self.pricing["default"]!
+        let pricing = self.pricing["codex"] ?? defaultPricing
         let billableInput = max(0, totals.input - totals.cacheRead)
         let output = totals.output + totals.reasoning
         let cost = calculateCost(
@@ -541,25 +581,18 @@ class CostTracker: ObservableObject {
             cacheCreationTokens: 0,
             cacheReadTokens: totals.cacheRead,
             estimatedCostUSD: cost,
-            sessionCount: sessionIDs.count,
-            periodStart: earliestDate,
-            periodEnd: latestDate,
-            modelBreakdowns: makeBreakdowns(from: modelTotals, provider: .codexCli, pricing: pricing),
-            originBreakdowns: makeBreakdowns(from: originTotals, provider: .codexCli, pricing: pricing)
-        ), makeDailyUsage(from: dailyTotals, provider: .codexCli, pricing: pricing))
+            sessionCount: context.sessionIDs.count,
+            periodStart: context.earliestDate,
+            periodEnd: context.latestDate,
+            modelBreakdowns: makeBreakdowns(from: context.modelTotals, provider: .codexCli, pricing: pricing),
+            originBreakdowns: makeBreakdowns(from: context.originTotals, provider: .codexCli, pricing: pricing)
+        ), makeDailyUsage(from: context.dailyTotals, provider: .codexCli, pricing: pricing))
     }
 
     private func scanCodexArchivedSessions(
         directory: URL,
         since cutoffDate: Date,
-        totals: inout TokenAccumulator,
-        dailyTotals: inout [Date: TokenAccumulator],
-        modelTotals: inout [String: TokenAccumulator],
-        originTotals: inout [String: TokenAccumulator],
-        eventKeys: inout Set<String>,
-        sessionIDs: inout Set<String>,
-        earliestDate: inout Date,
-        latestDate: inout Date
+        context: inout CodexScanContext
     ) {
         guard let enumerator = FileManager.default.enumerator(
             at: directory,
@@ -569,8 +602,7 @@ class CostTracker: ObservableObject {
             return
         }
 
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let formatter = Self.fractionalISO8601Formatter
 
         for case let fileURL as URL in enumerator where fileURL.pathExtension == "jsonl" {
             guard let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]),
@@ -602,14 +634,7 @@ class CostTracker: ObservableObject {
                     sessionID: sessionID,
                     modelName: codexModelName(from: info, payload: payload),
                     originName: "Codex CLI",
-                    totals: &totals,
-                    dailyTotals: &dailyTotals,
-                    modelTotals: &modelTotals,
-                    originTotals: &originTotals,
-                    eventKeys: &eventKeys,
-                    sessionIDs: &sessionIDs,
-                    earliestDate: &earliestDate,
-                    latestDate: &latestDate
+                    context: &context
                 )
             }
         }
@@ -618,14 +643,7 @@ class CostTracker: ObservableObject {
     private func scanCodexSQLiteLogs(
         database: URL,
         since cutoffDate: Date,
-        totals: inout TokenAccumulator,
-        dailyTotals: inout [Date: TokenAccumulator],
-        modelTotals: inout [String: TokenAccumulator],
-        originTotals: inout [String: TokenAccumulator],
-        eventKeys: inout Set<String>,
-        sessionIDs: inout Set<String>,
-        earliestDate: inout Date,
-        latestDate: inout Date
+        context: inout CodexScanContext
     ) {
         guard FileManager.default.fileExists(atPath: database.path) else { return }
 
@@ -661,14 +679,7 @@ class CostTracker: ObservableObject {
                 sessionID: sessionID,
                 modelName: codexLogValue("model", in: body) ?? codexLogValue("slug", in: body),
                 originName: codexLogValue("originator", in: body) ?? "Codex CLI",
-                totals: &totals,
-                dailyTotals: &dailyTotals,
-                modelTotals: &modelTotals,
-                originTotals: &originTotals,
-                eventKeys: &eventKeys,
-                sessionIDs: &sessionIDs,
-                earliestDate: &earliestDate,
-                latestDate: &latestDate
+                context: &context
             )
         }
     }
@@ -679,14 +690,7 @@ class CostTracker: ObservableObject {
         sessionID: String,
         modelName: String?,
         originName: String?,
-        totals: inout TokenAccumulator,
-        dailyTotals: inout [Date: TokenAccumulator],
-        modelTotals: inout [String: TokenAccumulator],
-        originTotals: inout [String: TokenAccumulator],
-        eventKeys: inout Set<String>,
-        sessionIDs: inout Set<String>,
-        earliestDate: inout Date,
-        latestDate: inout Date
+        context: inout CodexScanContext
     ) {
         let input = intValue(usage["input_tokens"])
         let cached = intValue(usage["cached_input_tokens"])
@@ -694,32 +698,36 @@ class CostTracker: ObservableObject {
         let reasoning = intValue(usage["reasoning_output_tokens"])
         guard input > 0 || output > 0 || cached > 0 || reasoning > 0 else { return }
 
-        let key = "\(timestamp.timeIntervalSince1970)-\(sessionID)-\(input)-\(cached)-\(output)-\(reasoning)"
-        guard eventKeys.insert(key).inserted else { return }
+        // Use whole-millisecond precision for the dedup key so equivalent events
+        // produce a stable, collision-resistant string (raw Double formatting can
+        // vary and risks both false matches and false misses).
+        let timestampMillis = Int((timestamp.timeIntervalSince1970 * 1000).rounded())
+        let key = "\(timestampMillis)-\(sessionID)-\(input)-\(cached)-\(output)-\(reasoning)"
+        guard context.eventKeys.insert(key).inserted else { return }
 
-        sessionIDs.insert(sessionID)
-        totals.add(input: input, output: output, cacheCreation: 0, cacheRead: cached, reasoning: reasoning)
+        context.sessionIDs.insert(sessionID)
+        context.totals.add(input: input, output: output, cacheCreation: 0, cacheRead: cached, reasoning: reasoning)
         let day = Calendar.current.startOfDay(for: timestamp)
-        dailyTotals[day, default: TokenAccumulator()].add(
+        context.dailyTotals[day, default: TokenAccumulator()].add(
             input: input,
             output: output + reasoning,
             cacheCreation: 0,
             cacheRead: cached
         )
-        modelTotals[displayModelName(modelName), default: TokenAccumulator()].add(
+        context.modelTotals[displayModelName(modelName), default: TokenAccumulator()].add(
             input: input,
             output: output + reasoning,
             cacheCreation: 0,
             cacheRead: cached
         )
-        originTotals[displayOriginName(originName), default: TokenAccumulator()].add(
+        context.originTotals[displayOriginName(originName), default: TokenAccumulator()].add(
             input: input,
             output: output + reasoning,
             cacheCreation: 0,
             cacheRead: cached
         )
-        if timestamp < earliestDate { earliestDate = timestamp }
-        if timestamp > latestDate { latestDate = timestamp }
+        if timestamp < context.earliestDate { context.earliestDate = timestamp }
+        if timestamp > context.latestDate { context.latestDate = timestamp }
     }
 
     private func makeDailyUsage(
@@ -890,9 +898,7 @@ class CostTracker: ObservableObject {
 
     private func codexLogDate(in text: String) -> Date? {
         guard let value = codexLogValue("event.timestamp", in: text) else { return nil }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.date(from: value)
+        return Self.fractionalISO8601Formatter.date(from: value)
     }
 
     private func codexLogInt(_ key: String, in text: String) -> Int {
@@ -901,9 +907,16 @@ class CostTracker: ObservableObject {
     }
 
     private func codexLogValue(_ key: String, in text: String) -> String? {
-        let pattern = NSRegularExpression.escapedPattern(for: key) + #"=([^\s}]+)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+        let regex: NSRegularExpression
+        if let cached = Self.codexLogValueRegexes[key] {
+            regex = cached
+        } else {
+            let pattern = NSRegularExpression.escapedPattern(for: key) + #"=([^\s}]+)"#
+            guard let built = try? NSRegularExpression(pattern: pattern) else { return nil }
+            regex = built
+        }
+
+        guard let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
               let range = Range(match.range(at: 1), in: text) else {
             return nil
         }
@@ -914,6 +927,21 @@ class CostTracker: ObservableObject {
 private struct CostSummaryCache: Codable {
     let summary: CostSummary
     let lastScanDate: Date
+}
+
+/// Mutable accumulators threaded through the Codex scan. Bundling these into one
+/// value collapses `addCodexUsage`/`scanCodexArchivedSessions`/`scanCodexSQLiteLogs`
+/// from 10–13 parameters (a SwiftLint `function_parameter_count` error) down to
+/// a single `inout` argument.
+private struct CodexScanContext {
+    var totals = TokenAccumulator()
+    var dailyTotals: [Date: TokenAccumulator] = [:]
+    var modelTotals: [String: TokenAccumulator] = [:]
+    var originTotals: [String: TokenAccumulator] = [:]
+    var eventKeys: Set<String> = []
+    var sessionIDs: Set<String> = []
+    var earliestDate: Date
+    var latestDate: Date
 }
 
 private struct TokenPricing {

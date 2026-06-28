@@ -25,6 +25,12 @@ final class UsageDashboardWindowController {
             window.title = "MeterBar Usage"
             window.titleVisibility = .visible
             window.titlebarAppearsTransparent = true
+            // Unified transparent chrome so the native toolbar/titlebar glass
+            // reads as one surface with the sidebar (MacSweep-style native look).
+            window.toolbarStyle = .unified
+            window.titlebarSeparatorStyle = .none
+            window.isOpaque = false
+            window.backgroundColor = .clear
             window.isRestorable = false
             window.contentMinSize = NSSize(width: 900, height: 600)
             window.contentViewController = hostingController
@@ -84,8 +90,10 @@ struct UsageDashboardView: View {
                 .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
         } detail: {
             ZStack {
+                // Keep the detail fill out of the titlebar area so the native
+                // toolbar glass shows there instead of a flat content background.
                 MeterBarDetailBackground()
-                    .ignoresSafeArea()
+                    .ignoresSafeArea(edges: [.horizontal, .bottom])
 
                 detailContent
             }
@@ -96,14 +104,20 @@ struct UsageDashboardView: View {
                     Button {
                         Task { await refreshDashboard() }
                     } label: {
-                        Image(systemName: "arrow.clockwise")
+                        RefreshingIcon(isRefreshing: isRefreshButtonAnimating)
                     }
-                    .help("Refresh usage")
+                    .help(isRefreshButtonAnimating ? "Refreshing usage" : "Refresh usage")
                     .disabled(isRefreshButtonDisabled)
                 }
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .task {
+            await refreshCostsIfMissingDays()
+        }
+        .onChange(of: selectedSection) {
+            Task { await refreshCostsIfMissingDays() }
+        }
     }
 
     private var sidebar: some View {
@@ -112,11 +126,23 @@ struct UsageDashboardView: View {
                 Label(section.rawValue, systemImage: section.iconName)
                     .tag(section)
             }
+
+            Section("Local Sources") {
+                if enabledSourceLabels.isEmpty {
+                    Label("No sources enabled", systemImage: "circle")
+                } else {
+                    ForEach(enabledSourceLabels, id: \.self) { label in
+                        Label(label, systemImage: "checkmark.circle.fill")
+                    }
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
         .listStyle(.sidebar)
-        // Keep the sidebar system-owned. Custom backgrounds belong in the detail
-        // pane so the native Liquid Glass sidebar material and selection remain intact.
-        .safeAreaInset(edge: .bottom) { sourcesFooter }
+        // No background overrides: the native sidebar owns its glass material,
+        // section rendering, and selected-row highlight. Stacking a custom
+        // `.glassEffect` here would double up on the system material.
     }
 
     private var detailContent: some View {
@@ -142,26 +168,6 @@ struct UsageDashboardView: View {
         }
     }
 
-    private var sourcesFooter: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Local Sources")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if enabledSourceLabels.isEmpty {
-                Text("No sources enabled")
-            } else {
-                ForEach(enabledSourceLabels, id: \.self) { label in
-                    Label(label, systemImage: "checkmark.circle.fill")
-                }
-            }
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
-    }
-
     private var overviewContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             DashboardStatusHero(
@@ -178,12 +184,13 @@ struct UsageDashboardView: View {
                 CostOverviewStatusCard(
                     summary: visibleCostSummary,
                     isScanning: costTracker.isScanning,
-                    formattedTokens: formattedTokenCount(visibleCostSummary?.totalTokens ?? 0)
+                    isRefreshingMissingDays: costTracker.isRefreshingMissingDays,
+                    formattedTokens: UsageFormat.tokens(visibleCostSummary?.totalTokens ?? 0)
                 )
             }
             .frame(maxWidth: .infinity)
 
-            DashboardCard(title: "Last 30 Days", trailing: costTracker.isScanning ? "Scanning..." : nil) {
+            DashboardCard(title: "Last 30 Days", trailing: costRefreshStatusText) {
                 costScanChart(height: 180, compact: true)
             }
         }
@@ -224,7 +231,7 @@ struct UsageDashboardView: View {
 
     private var costsContent: some View {
         VStack(alignment: .leading, spacing: 14) {
-            DashboardCard(title: "30 Day API-Rate Token Spend", trailing: costTracker.isScanning ? "Scanning..." : nil) {
+            DashboardCard(title: "30 Day API-Rate Token Spend", trailing: costRefreshStatusText) {
                 VStack(alignment: .leading, spacing: 18) {
                     Text("Local subscription logs are estimated using API token rates so Codex and Claude can be compared.")
                         .font(.caption)
@@ -247,7 +254,7 @@ struct UsageDashboardView: View {
                                 Label("Scan 30 Days", systemImage: "magnifyingglass")
                             }
                             .buttonStyle(.bordered)
-                            .disabled(costTracker.isScanning)
+                            .disabled(costTracker.isRefreshInProgress)
                         }
                         .frame(height: 220, alignment: .center)
                     }
@@ -396,10 +403,24 @@ struct UsageDashboardView: View {
         }
     }
 
+    private var costRefreshStatusText: String? {
+        if costTracker.isScanning {
+            return "Scanning..."
+        }
+        if costTracker.isRefreshingMissingDays {
+            return "Updating..."
+        }
+        return nil
+    }
+
     private var isRefreshButtonDisabled: Bool {
+        isRefreshButtonAnimating
+    }
+
+    private var isRefreshButtonAnimating: Bool {
         switch activeSection {
         case .costs:
-            return costTracker.isScanning
+            return costTracker.isRefreshInProgress
         case .overview, .limits, .settings:
             return dataManager.isLoading
         }
@@ -413,27 +434,17 @@ struct UsageDashboardView: View {
         }
     }
 
+    private func refreshCostsIfMissingDays() async {
+        guard activeSection == .overview || activeSection == .costs else { return }
+        await costTracker.refreshMissingDaysInBackground(days: 30)
+    }
+
     private func color(for service: ServiceType) -> Color {
         MeterBarTheme.accent(for: service)
     }
 
     private func relativeDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
-    }
-
-    private func formattedTokenCount(_ value: Int) -> String {
-        if value >= 1_000_000_000 {
-            return String(format: "%.1fB", Double(value) / 1_000_000_000)
-        }
-        if value >= 1_000_000 {
-            return String(format: "%.1fM", Double(value) / 1_000_000)
-        }
-        if value >= 1_000 {
-            return String(format: "%.1fK", Double(value) / 1_000)
-        }
-        return "\(value)"
+        UsageFormat.relative(date)
     }
 }
 
@@ -449,24 +460,13 @@ private struct DashboardProviderSnapshot: Identifiable {
         self.id = "\(service.rawValue)-\(title)"
         self.title = title
         self.service = service
-        self.logoKind = Self.logoKind(for: service)
+        self.logoKind = providerLogoKind(for: service)
         self.lastUpdated = metrics.lastUpdated
         self.limits = [
             DashboardLimit(title: "Session", limit: metrics.sessionLimit),
             DashboardLimit(title: "Weekly", limit: metrics.weeklyLimit),
             DashboardLimit(title: service == .codexCli ? "Code Review" : "Sonnet", limit: metrics.codeReviewLimit)
         ].compactMap { $0 }
-    }
-
-    private static func logoKind(for service: ServiceType) -> ProviderLogoKind {
-        switch service {
-        case .codexCli, .openai:
-            return .codex
-        case .claude, .claudeCode:
-            return .claude
-        case .cursor:
-            return .cursor
-        }
     }
 }
 
@@ -505,6 +505,12 @@ private struct DashboardStatusHero: View {
         if title.localizedCaseInsensitiveContains("attention")
             || title.localizedCaseInsensitiveContains("tight") {
             return "exclamationmark.triangle.fill"
+        }
+        // Neutral states (no providers enabled / no usage yet) should not show the
+        // healthy green shield, which falsely implies tracked quotas look good.
+        if title.localizedCaseInsensitiveContains("no sources")
+            || title.localizedCaseInsensitiveContains("waiting") {
+            return "circle.dashed"
         }
         return "checkmark.shield.fill"
     }
@@ -602,16 +608,21 @@ private struct ProviderOverviewStatusCard: View {
     }
 
     private func relativeDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        UsageFormat.relative(date)
     }
 }
 
 private struct CostOverviewStatusCard: View {
     let summary: CostSummary?
     let isScanning: Bool
+    let isRefreshingMissingDays: Bool
     let formattedTokens: String
+
+    private var subtitle: String {
+        if isScanning { return "Scanning local logs" }
+        if isRefreshingMissingDays { return "Updating…" }
+        return "Last 30 days"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -623,7 +634,7 @@ private struct CostOverviewStatusCard: View {
                     Text("API-Rate Estimate")
                         .font(.headline)
                         .fontWeight(.semibold)
-                    Text(isScanning ? "Scanning local logs" : "Last 30 days")
+                    Text(subtitle)
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -982,13 +993,26 @@ private struct CostRefreshLockOverlay: View {
 
 private struct DailyUsageChart: View {
     let dailyUsage: [DailyTokenUsage]
-    var daysToShow: Int = 30
+    let daysToShow: Int
 
     private let barSpacing: CGFloat = 4
     private let labelHeight: CGFloat = 22
     private let legendHeight: CGFloat = 18
 
-    private var days: [DailyUsageDay] {
+    // Precomputed once at init instead of on every SwiftUI body access. The
+    // grouping + 30-day date arithmetic was previously re-run many times per
+    // render (from body, visibleProviders, maxTokens, barWidth, barHeight).
+    private let days: [DailyUsageDay]
+
+    init(dailyUsage: [DailyTokenUsage], daysToShow: Int = 30) {
+        self.dailyUsage = dailyUsage
+        self.daysToShow = daysToShow
+        self.days = Self.buildDays(from: dailyUsage, daysToShow: daysToShow)
+    }
+
+    private static let providerOrder: [ServiceType] = [.claudeCode, .codexCli, .cursor, .claude, .openai]
+
+    private static func buildDays(from dailyUsage: [DailyTokenUsage], daysToShow: Int) -> [DailyUsageDay] {
         let calendar = Calendar.current
         let normalizedDaysToShow = max(1, daysToShow)
         let endDate = calendar.startOfDay(for: Date())
@@ -1021,12 +1045,8 @@ private struct DailyUsageChart: View {
         }
     }
 
-    private var providerOrder: [ServiceType] {
-        [.claudeCode, .codexCli, .cursor, .claude, .openai]
-    }
-
     private var visibleProviders: [ServiceType] {
-        providerOrder.filter { provider in
+        Self.providerOrder.filter { provider in
             days.contains { day in
                 day.segments.contains { $0.provider == provider }
             }
@@ -1118,9 +1138,9 @@ private struct DailyUsageChart: View {
 
     private func helpText(for day: DailyUsageDay) -> String {
         var lines = [
-            fullDateLabel(day.date),
-            "\(formatTokens(day.totalTokens)) tokens",
-            String(format: "$%.2f", day.cost)
+            DashboardDateFormat.medium(day.date),
+            "\(UsageFormat.tokens(day.totalTokens)) tokens",
+            UsageFormat.cost(day.cost)
         ]
 
         if day.segments.isEmpty {
@@ -1128,7 +1148,7 @@ private struct DailyUsageChart: View {
         } else {
             lines.append("")
             for segment in day.segments {
-                lines.append("\(segment.provider.displayName): \(formatTokens(segment.tokens)) · \(String(format: "$%.2f", segment.cost))")
+                lines.append("\(segment.provider.displayName): \(UsageFormat.tokens(segment.tokens)) · \(UsageFormat.cost(segment.cost))")
             }
         }
 
@@ -1137,23 +1157,6 @@ private struct DailyUsageChart: View {
 
     private func color(for provider: ServiceType) -> Color {
         MeterBarTheme.accent(for: provider)
-    }
-
-    private func fullDateLabel(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .none
-        return formatter.string(from: date)
-    }
-
-    private func formatTokens(_ value: Int) -> String {
-        if value >= 1_000_000 {
-            return String(format: "%.1fM", Double(value) / 1_000_000)
-        }
-        if value >= 1_000 {
-            return String(format: "%.1fK", Double(value) / 1_000)
-        }
-        return "\(value)"
     }
 }
 
@@ -1222,16 +1225,11 @@ private struct DailyUsageDateLabel: View {
     }
 
     private var monthText: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM"
-        return formatter.string(from: date)
+        DashboardDateFormat.month(date)
     }
 
     private var fullDateText: String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .none
-        return formatter.string(from: date)
+        DashboardDateFormat.medium(date)
     }
 }
 
@@ -1256,6 +1254,8 @@ private struct DailyUsageProviderSegment: Identifiable {
 private struct DailyUsageBreakdownList: View {
     let dailyUsage: [DailyTokenUsage]
 
+    @State private var expandedDayIDs: Set<Date> = []
+
     private var days: [DailyProviderUsageDay] {
         let grouped = Dictionary(grouping: dailyUsage) { Calendar.current.startOfDay(for: $0.date) }
         return grouped.map { day, rows in
@@ -1279,8 +1279,22 @@ private struct DailyUsageBreakdownList: View {
 
             VStack(spacing: 8) {
                 ForEach(days) { day in
-                    DailyUsageDetailRow(day: day)
+                    DailyUsageDetailRow(
+                        day: day,
+                        isExpanded: expandedDayIDs.contains(day.id),
+                        toggle: { toggleExpansion(for: day.id) }
+                    )
                 }
+            }
+        }
+    }
+
+    private func toggleExpansion(for dayID: Date) {
+        withAnimation(.snappy(duration: 0.18)) {
+            if expandedDayIDs.contains(dayID) {
+                expandedDayIDs.remove(dayID)
+            } else {
+                expandedDayIDs.insert(dayID)
             }
         }
     }
@@ -1334,51 +1348,96 @@ private struct DailyProviderUsageSummary: Identifiable {
 
 private struct DailyUsageDetailRow: View {
     let day: DailyProviderUsageDay
+    let isExpanded: Bool
+    let toggle: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(dateLabel(day.date))
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                Spacer()
-                Text(UsageFormat.tokens(day.totalTokens))
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                Text(UsageFormat.cost(day.estimatedCostUSD))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
+        VStack(alignment: .leading, spacing: isExpanded ? 8 : 0) {
+            Button(action: toggle) {
+                HStack(spacing: 8) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.secondary)
+                        .frame(width: 12)
 
-            ForEach(day.providers) { provider in
-                HStack(spacing: 10) {
-                    ProviderLogoView(
-                        kind: logoKind(for: provider.provider),
-                        size: 14,
-                        foregroundColor: color(for: provider.provider)
-                    )
-                    Text(provider.provider.displayName)
-                        .font(.caption)
+                    Text(dateLabel(day.date))
+                        .font(.subheadline)
                         .fontWeight(.semibold)
-                        .frame(width: 110, alignment: .leading)
-                    UsageDetailMetric(label: "Input", value: UsageFormat.tokens(provider.inputTokens))
-                    UsageDetailMetric(label: "Output", value: UsageFormat.tokens(provider.outputTokens))
-                    UsageDetailMetric(label: "Cache", value: UsageFormat.tokens(provider.cacheReadTokens))
+
+                    Text(providerCountLabel)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
                     Spacer()
-                    Text(UsageFormat.cost(provider.estimatedCostUSD))
+
+                    Text("\(UsageFormat.tokens(day.totalTokens)) tokens")
                         .font(.caption)
                         .fontWeight(.semibold)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+
+                    Text(UsageFormat.cost(day.estimatedCostUSD))
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
                 }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(accessibilitySummary)
+            .accessibilityHint(isExpanded ? "Collapse day details" : "Show day details")
+
+            if isExpanded {
+                VStack(spacing: 8) {
+                    ForEach(day.providers) { provider in
+                        DailyProviderUsageSummaryRow(provider: provider)
+                    }
+                }
+                .padding(.top, 6)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(10)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
+    private var providerCountLabel: String {
+        let count = day.providers.count
+        return count == 1 ? "1 source" : "\(count) sources"
+    }
+
+    private var accessibilitySummary: String {
+        "\(dateLabel(day.date)), \(UsageFormat.tokens(day.totalTokens)) tokens, \(UsageFormat.cost(day.estimatedCostUSD))"
+    }
+
     private func dateLabel(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEE, MMM d"
-        return formatter.string(from: date)
+        DashboardDateFormat.weekdayMonthDay(date)
+    }
+}
+
+private struct DailyProviderUsageSummaryRow: View {
+    let provider: DailyProviderUsageSummary
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProviderLogoView(
+                kind: providerLogoKind(for: provider.provider),
+                size: 14,
+                foregroundColor: color(for: provider.provider)
+            )
+            Text(provider.provider.displayName)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .frame(width: 110, alignment: .leading)
+            UsageDetailMetric(label: "Input", value: UsageFormat.tokens(provider.inputTokens))
+            UsageDetailMetric(label: "Output", value: UsageFormat.tokens(provider.outputTokens))
+            UsageDetailMetric(label: "Cache", value: UsageFormat.tokens(provider.cacheReadTokens))
+            Spacer()
+            Text(UsageFormat.cost(provider.estimatedCostUSD))
+                .font(.caption)
+                .fontWeight(.semibold)
+        }
     }
 }
 
@@ -1386,14 +1445,7 @@ private struct ProviderCostBreakdown: View {
     let cost: TokenCost
 
     private var logoKind: ProviderLogoKind {
-        switch cost.provider {
-        case .codexCli, .openai:
-            return .codex
-        case .claude, .claudeCode:
-            return .claude
-        case .cursor:
-            return .cursor
-        }
+        providerLogoKind(for: cost.provider)
     }
 
     private var logoColor: Color {
@@ -1417,8 +1469,8 @@ private struct ProviderCostBreakdown: View {
 
             HStack(spacing: 14) {
                 CostMetric(label: "Tokens", value: cost.formattedTokens)
-                CostMetric(label: "Input", value: compact(cost.inputTokens))
-                CostMetric(label: "Output", value: compact(cost.outputTokens))
+                CostMetric(label: "Input", value: UsageFormat.tokens(cost.inputTokens))
+                CostMetric(label: "Output", value: UsageFormat.tokens(cost.outputTokens))
                 CostMetric(label: "Sessions", value: "\(cost.sessionCount)")
             }
 
@@ -1432,19 +1484,6 @@ private struct ProviderCostBreakdown: View {
         }
         .padding(12)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-
-    private func compact(_ value: Int) -> String {
-        if value >= 1_000_000_000 {
-            return String(format: "%.1fB", Double(value) / 1_000_000_000)
-        }
-        if value >= 1_000_000 {
-            return String(format: "%.1fM", Double(value) / 1_000_000)
-        }
-        if value >= 1_000 {
-            return String(format: "%.1fK", Double(value) / 1_000)
-        }
-        return "\(value)"
     }
 }
 
@@ -1522,26 +1561,34 @@ private struct UsageDetailMetric: View {
     }
 }
 
-private enum UsageFormat {
-    static func tokens(_ value: Int) -> String {
-        if value >= 1_000_000_000 {
-            return String(format: "%.1fB", Double(value) / 1_000_000_000)
-        }
-        if value >= 1_000_000 {
-            return String(format: "%.1fM", Double(value) / 1_000_000)
-        }
-        if value >= 1_000 {
-            return String(format: "%.1fK", Double(value) / 1_000)
-        }
-        return "\(value)"
-    }
+/// Cached date formatters for the dashboard. `DateFormatter` is expensive to
+/// allocate, so the daily chart/labels (30+ per render) share these instances.
+private enum DashboardDateFormat {
+    private static let mediumDate: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
 
-    static func cost(_ value: Double) -> String {
-        String(format: "$%.2f", value)
-    }
+    private static let month: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM"
+        return formatter
+    }()
+
+    private static let weekdayMonthDay: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE, MMM d"
+        return formatter
+    }()
+
+    static func medium(_ date: Date) -> String { mediumDate.string(from: date) }
+    static func month(_ date: Date) -> String { month.string(from: date) }
+    static func weekdayMonthDay(_ date: Date) -> String { weekdayMonthDay.string(from: date) }
 }
 
-private func logoKind(for provider: ServiceType) -> ProviderLogoKind {
+private func providerLogoKind(for provider: ServiceType) -> ProviderLogoKind {
     switch provider {
     case .codexCli, .openai:
         return .codex
@@ -1557,12 +1604,9 @@ private func color(for provider: ServiceType) -> Color {
 }
 
 private extension View {
-    /// A content surface for dashboard cards. Opaque system control background
-    /// (not a material) on the window's content layer, with concentric corners.
+    /// Dashboard content-card surface. Delegates to the shared `meterBarCardSurface`
+    /// so the dashboard and popover cards stay visually identical.
     func dashboardCardBackground() -> some View {
-        background(
-            Color(nsColor: .controlBackgroundColor),
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
+        meterBarCardSurface()
     }
 }

@@ -160,7 +160,7 @@ struct Usage: ParsableCommand {
         let status = statusEmoji(percent: percent)
 
         print("\(label): \(bar) \(String(format: "%.0f%%", percent)) \(status)")
-        print("    \(limit.used)/\(limit.total) used")
+        print("    \(Int(limit.used))/\(Int(limit.total)) used")
         if let reset = limit.resetTime {
             print("    Resets: \(formatDate(reset))")
         }
@@ -286,7 +286,7 @@ struct Cost: ParsableCommand {
         print()
         print("Provider: Claude Code")
         print("Period: Last \(costs.periodDays) days")
-        print("Sessions scanned: \(costs.sessionCount)")
+        print("Files scanned: \(costs.sessionCount)")
         print()
         print("Tokens:")
         print("  Input:          \(formatNumber(costs.inputTokens))")
@@ -298,10 +298,14 @@ struct Cost: ParsableCommand {
         print("Daily Average:  $\(String(format: "%.2f", costs.estimatedCostUSD / Double(costs.periodDays)))/day")
     }
 
-    private func formatNumber(_ num: Int) -> String {
+    private static let numberFormatter: NumberFormatter = {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: num)) ?? "\(num)"
+        return formatter
+    }()
+
+    private func formatNumber(_ num: Int) -> String {
+        Self.numberFormatter.string(from: NSNumber(value: num)) ?? "\(num)"
     }
 }
 
@@ -314,13 +318,15 @@ struct ServiceMetrics: Codable {
 }
 
 struct UsageLimit: Codable {
-    let used: Int
-    let total: Int
+    // The app serializes these as JSON doubles (e.g. 42.0). Decoding them as Int
+    // fails, which silently produced empty CLI output, so they must be Double.
+    let used: Double
+    let total: Double
     let resetTime: Date?
 
     var percentage: Double {
         guard total > 0 else { return 0 }
-        return (Double(used) / Double(total)) * 100
+        return (used / total) * 100
     }
 }
 

@@ -13,14 +13,7 @@ class ClaudeCodeLocalService: ObservableObject {
     private let cliUsageService = ClaudeCodeCLIUsageService.shared
     private let oauthFallbackUserDefaultsKey = "ClaudeCodeEnableOAuthFallback"
 
-    // URLSession with timeout configuration
-    private lazy var urlSession: URLSession = {
-        let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 30.0
-        configuration.timeoutIntervalForResource = 60.0
-        configuration.waitsForConnectivity = true
-        return URLSession(configuration: configuration)
-    }()
+    private let urlSession = ServiceSupport.makeUsageSession()
 
     @Published private(set) var hasAccess: Bool = false
     @Published private(set) var subscriptionType: String?
@@ -220,17 +213,7 @@ class ClaudeCodeLocalService: ObservableObject {
                 extraUsage: usageResponse.extraUsageStatus
             )
         } catch let urlError as URLError {
-            let errorMessage: String
-            switch urlError.code {
-            case .notConnectedToInternet:
-                errorMessage = "No internet connection"
-            case .cannotFindHost, .dnsLookupFailed:
-                errorMessage = "DNS lookup failed"
-            case .timedOut:
-                errorMessage = "Request timed out"
-            default:
-                errorMessage = urlError.localizedDescription
-            }
+            let errorMessage = ServiceSupport.message(for: urlError)
             let error = ServiceError.apiError(errorMessage)
             await MainActor.run {
                 self.lastError = error

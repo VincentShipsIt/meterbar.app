@@ -2,6 +2,11 @@ import Foundation
 
 enum OAuthTokenExpiry {
     static func isExpired(jwt token: String, graceInterval: TimeInterval = 60, now: Date = Date()) -> Bool {
+        // If the token has no parseable `exp` claim we cannot prove it is expired,
+        // so we treat it as not-expired and let the server be the source of truth
+        // (a truly invalid token simply 401s on the next request). This is a
+        // deliberate availability choice: failing to introspect a token must not
+        // lock out a session whose token format we don't fully understand.
         guard let expirationDate = expirationDate(fromJWT: token) else {
             return false
         }

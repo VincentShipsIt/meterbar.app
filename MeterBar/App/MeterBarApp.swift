@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import os
 import SwiftUI
 import UserNotifications
 
@@ -9,11 +10,9 @@ struct MeterBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
     init() {
-        print("═══════════════════════════════════════")
-        print("🎯 MeterBar: App Initializing")
-        print("═══════════════════════════════════════")
+        AppLog.app.info("MeterBar initializing")
     }
-    
+
     var body: some Scene {
         Settings {
             SettingsView()
@@ -27,6 +26,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let providerVisibilityStore = ProviderVisibilityStore.shared
     private let dockVisibilityStore = DockVisibilityStore.shared
     private var cancellables = Set<AnyCancellable>()
+    private var monitorTask: Task<Void, Never>?
+
+    /// Tracks which (service, limit, level) notifications have already fired so
+    /// the 5-minute monitor loop doesn't re-alert every cycle while usage stays
+    /// above a threshold. Keys are cleared when usage drops back below.
+    private var notifiedLimitKeys: Set<String> = []
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Apply the persisted Dock visibility as early as possible so users who
@@ -35,16 +40,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        print("🚀 MeterBar: Application did finish launching")
+        AppLog.app.info("MeterBar finished launching")
 
         // Keep Dock visibility in sync with the user's preference.
         observeDockVisibility()
-        
+
         // Create menu bar item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        
+
         guard let button = statusItem?.button else {
-            print("❌ Failed to create status item button")
+            AppLog.app.error("Failed to create status item button")
             return
         }
         
@@ -208,13 +213,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // Request permission only if not yet determined
                 UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
                     if let error = error {
-                        print("Notification permission error: \(error)")
+                        AppLog.app.error("Notification permission error: \(error.localizedDescription, privacy: .public)")
                     } else if !granted {
-                        print("Notification permission denied by user")
+                        AppLog.app.info("Notification permission denied by user")
                     }
                 }
             case .denied:
-                print("Notification permission was previously denied. User can enable in System Settings.")
+                AppLog.app.info("Notification permission previously denied; user can enable it in System Settings.")
             case .authorized, .provisional, .ephemeral:
                 // Already authorized, no action needed
                 break
@@ -222,57 +227,87 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 break
             }
         }
-        
-        // Monitor usage and send notifications
-        Task {
-            await monitorUsage()
+
+        // Monitor usage and send notifications. Store the task so it can be
+        // cancelled, and so it isn't an orphaned unstructured Task.
+        monitorTask?.cancel()
+        monitorTask = Task { @MainActor [weak self] in
+            await self?.monitorUsage()
         }
     }
-    
+
     @MainActor
     private func monitorUsage() async {
         // Initial refresh on app launch
         await UsageDataManager.shared.refreshAll()
 
-        // Check for approaching limits periodically
-        // Note: UsageDataManager handles its own 15-minute auto-refresh
-        // This loop just checks metrics for notification purposes
-        while true {
+        // Check for approaching limits periodically.
+        // Note: UsageDataManager handles its own auto-refresh; this loop only
+        // checks metrics for notification purposes.
+        while !Task.isCancelled {
             for (service, metrics) in UsageDataManager.shared.metrics where providerVisibilityStore.isEnabled(service) {
                 checkAndNotify(metrics: metrics)
             }
 
-            // Wait 5 minutes before next notification check
-            try? await Task.sleep(nanoseconds: 5 * 60 * 1_000_000_000)
-        }
-    }
-    
-    private func checkAndNotify(metrics: UsageMetrics) {
-        let limits = [metrics.sessionLimit, metrics.weeklyLimit, metrics.codeReviewLimit].compactMap { $0 }
-        
-        for limit in limits {
-            if limit.percentage >= 90 && limit.percentage < 100 {
-                sendNotification(
-                    title: "\(metrics.service.displayName) Usage Warning",
-                    body: "You're at \(Int(limit.percentage))% of your limit"
-                )
-            } else if limit.percentage >= 100 {
-                sendNotification(
-                    title: "\(metrics.service.displayName) Limit Reached",
-                    body: "You've reached your usage limit"
-                )
+            // Wait 5 minutes before next notification check. A thrown
+            // CancellationError exits the loop instead of busy-looping.
+            do {
+                try await Task.sleep(nanoseconds: 5 * 60 * 1_000_000_000)
+            } catch {
+                break
             }
         }
     }
-    
-    private func sendNotification(title: String, body: String) {
+
+    private func checkAndNotify(metrics: UsageMetrics) {
+        let limits: [(limit: UsageLimit, type: String)] = [
+            (metrics.sessionLimit, "session"),
+            (metrics.weeklyLimit, "weekly"),
+            (metrics.codeReviewLimit, "codeReview")
+        ].compactMap { pair in pair.0.map { ($0, pair.1) } }
+
+        for (limit, limitType) in limits {
+            let baseKey = "\(metrics.service.rawValue)-\(limitType)"
+            let warnKey = "\(baseKey)-warn"
+            let criticalKey = "\(baseKey)-critical"
+
+            if limit.percentage >= 100 {
+                // Only fire once per crossing; supersede any pending warn alert.
+                notifiedLimitKeys.remove(warnKey)
+                if notifiedLimitKeys.insert(criticalKey).inserted {
+                    sendNotification(
+                        identifier: criticalKey,
+                        title: "\(metrics.service.displayName) Limit Reached",
+                        body: "You've reached your usage limit"
+                    )
+                }
+            } else if limit.percentage >= 90 {
+                if notifiedLimitKeys.insert(warnKey).inserted {
+                    sendNotification(
+                        identifier: warnKey,
+                        title: "\(metrics.service.displayName) Usage Warning",
+                        body: "You're at \(Int(limit.percentage))% of your limit"
+                    )
+                }
+            } else {
+                // Usage fell back below the threshold; allow the next crossing to
+                // notify again.
+                notifiedLimitKeys.remove(warnKey)
+                notifiedLimitKeys.remove(criticalKey)
+            }
+        }
+    }
+
+    private func sendNotification(identifier: String, title: String, body: String) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
 
+        // Stable identifier: re-posting the same id replaces the pending request
+        // rather than stacking a new banner every check.
         let request = UNNotificationRequest(
-            identifier: UUID().uuidString,
+            identifier: identifier,
             content: content,
             trigger: nil
         )
