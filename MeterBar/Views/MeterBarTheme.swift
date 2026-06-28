@@ -66,6 +66,24 @@ struct MeterBarDetailBackground: View {
     }
 }
 
+extension View {
+    /// Shared content-card surface used by both the popover and the dashboard.
+    /// An opaque system control background (not a material) with concentric
+    /// continuous corners, so cards never stack glass-on-glass — chrome glass
+    /// belongs to the window, sidebar, toolbar, and popover controls. A hairline
+    /// separator keeps the card from disappearing into the companion background.
+    func meterBarCardSurface(cornerRadius: CGFloat = 12) -> some View {
+        background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 0.5)
+        }
+    }
+}
+
 extension Color {
     /// An appearance-adaptive color backed by a dynamic `NSColor`, resolving the
     /// correct value for light / dark (and optionally high-contrast) appearances.

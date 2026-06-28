@@ -9,6 +9,9 @@ class ClaudeService {
 
     private init() {}
 
+    /// Safety cap on pagination so a misbehaving API can never loop forever.
+    private let maxUsagePages = 50
+
     func fetchUsageMetrics() async throws -> UsageMetrics {
         guard let adminKey = authManager.claudeAdminKey else {
             throw ServiceError.notAuthenticated
@@ -16,7 +19,7 @@ class ClaudeService {
 
         // Calculate time range: last 7 days
         let endDate = Date()
-        let startDate = Calendar.current.date(byAdding: .day, value: -7, to: endDate)!
+        let startDate = Calendar.current.date(byAdding: .day, value: -7, to: endDate) ?? endDate
 
         let dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime]
@@ -24,54 +27,55 @@ class ClaudeService {
         let startingAt = dateFormatter.string(from: startDate)
         let endingAt = dateFormatter.string(from: endDate)
 
-        // Build URL with query parameters
-        var components = URLComponents(string: "\(baseURL)/v1/organizations/usage_report/messages")!
-        components.queryItems = [
+        let baseQueryItems = [
             URLQueryItem(name: "starting_at", value: startingAt),
             URLQueryItem(name: "ending_at", value: endingAt),
             URLQueryItem(name: "bucket_width", value: "1d"),
             URLQueryItem(name: "group_by[]", value: "model")
         ]
 
-        guard let url = components.url else {
-            throw ServiceError.invalidURL
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue(adminKey, forHTTPHeaderField: "x-api-key")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ServiceError.apiError("Invalid response")
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            if httpResponse.statusCode == 401 {
-                throw ServiceError.notAuthenticated
-            }
-            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw ServiceError.apiError("API error (\(httpResponse.statusCode)): \(errorMessage)")
-        }
-
-        // Parse response
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
 
-        let responseData = try decoder.decode(AnthropicUsageResponse.self, from: data)
+        // Follow pagination: the usage report can return multiple pages, and
+        // ignoring `has_more`/`next_page` silently under-counts usage.
+        var allBuckets: [AnthropicUsageBucket] = []
+        var nextPage: String?
+        var pagesFetched = 0
+
+        repeat {
+            guard var components = URLComponents(string: "\(baseURL)/v1/organizations/usage_report/messages") else {
+                throw ServiceError.invalidURL
+            }
+            var queryItems = baseQueryItems
+            if let nextPage {
+                queryItems.append(URLQueryItem(name: "page", value: nextPage))
+            }
+            components.queryItems = queryItems
+
+            guard let url = components.url else {
+                throw ServiceError.invalidURL
+            }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue(adminKey, forHTTPHeaderField: "x-api-key")
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+            let responseData: AnthropicUsageResponse = try await ServiceSupport.fetchDecoded(request, decoder: decoder)
+            allBuckets.append(contentsOf: responseData.data)
+            nextPage = (responseData.hasMore == true) ? responseData.nextPage : nil
+            pagesFetched += 1
+        } while nextPage != nil && pagesFetched < maxUsagePages
 
         // Aggregate all usage data
         var totalInputTokens: Double = 0
         var totalOutputTokens: Double = 0
-        var totalCachedTokens: Double = 0
 
-        for bucket in responseData.data {
+        for bucket in allBuckets {
             totalInputTokens += Double(bucket.inputTokens ?? 0)
             totalOutputTokens += Double(bucket.outputTokens ?? 0)
-            totalCachedTokens += Double(bucket.inputCachedTokens ?? 0)
         }
 
         let totalTokens = totalInputTokens + totalOutputTokens

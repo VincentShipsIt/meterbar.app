@@ -502,9 +502,7 @@ struct SettingsView: View {
     }
 
     private func formatDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        UsageFormat.relative(date)
     }
 
     private func addClaudeAccount() {
@@ -672,37 +670,44 @@ private struct AccountProfileRow: View {
     }
 }
 
-struct ClaudeHelpView: View {
+/// Shared admin-key help sheet. The Claude and OpenAI variants only differ by
+/// copy and the console URL, so they share one layout.
+private struct AdminKeyHelpView: View {
     @Environment(\.dismiss) var dismiss
+
+    let title: String
+    let intro: String
+    let steps: [String]
+    let note: String
+    let consoleButtonTitle: String
+    let consoleURL: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("How to get Claude Admin API Key")
+            Text(title)
                 .font(.title2)
                 .bold()
 
-            Text("The Usage API requires an Admin API key, which is different from a regular API key.")
+            Text(intro)
                 .foregroundColor(.secondary)
 
             Divider()
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("1. Go to the Claude Console")
-                Text("2. Navigate to Settings → Admin Keys")
-                Text("3. Click 'Create Admin Key'")
-                Text("4. Copy the key (starts with sk-ant-admin...)")
-                Text("5. Paste it in the field above")
+                ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                    Text("\(index + 1). \(step)")
+                }
             }
 
             Divider()
 
-            Text("Note: You must be an organization admin to create Admin API keys. Individual accounts cannot access the Usage API.")
+            Text(note)
                 .font(.caption)
                 .foregroundStyle(MeterBarTheme.warning)
 
             HStack {
-                Button("Open Claude Console") {
-                    if let url = URL(string: "https://console.anthropic.com/settings/admin-keys") {
+                Button(consoleButtonTitle) {
+                    if let url = URL(string: consoleURL) {
                         NSWorkspace.shared.open(url)
                     }
                 }
@@ -720,50 +725,40 @@ struct ClaudeHelpView: View {
     }
 }
 
-struct OpenAIHelpView: View {
-    @Environment(\.dismiss) var dismiss
-
+struct ClaudeHelpView: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("How to get OpenAI Admin API Key")
-                .font(.title2)
-                .bold()
+        AdminKeyHelpView(
+            title: "How to get Claude Admin API Key",
+            intro: "The Usage API requires an Admin API key, which is different from a regular API key.",
+            steps: [
+                "Go to the Claude Console",
+                "Navigate to Settings → Admin Keys",
+                "Click 'Create Admin Key'",
+                "Copy the key (starts with sk-ant-admin...)",
+                "Paste it in the field above"
+            ],
+            note: "Note: You must be an organization admin to create Admin API keys. Individual accounts cannot access the Usage API.",
+            consoleButtonTitle: "Open Claude Console",
+            consoleURL: "https://console.anthropic.com/settings/admin-keys"
+        )
+    }
+}
 
-            Text("The Usage API requires an Admin key from your organization settings.")
-                .foregroundColor(.secondary)
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("1. Go to OpenAI Platform")
-                Text("2. Navigate to Settings → Organization → Admin Keys")
-                Text("3. Click 'Create new admin key'")
-                Text("4. Copy the key")
-                Text("5. Paste it in the field above")
-            }
-
-            Divider()
-
-            Text("Note: You must be an organization owner or admin to create Admin keys.")
-                .font(.caption)
-                .foregroundStyle(MeterBarTheme.warning)
-
-            HStack {
-                Button("Open OpenAI Settings") {
-                    if let url = URL(string: "https://platform.openai.com/settings/organization/admin-keys") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-
-                Spacer()
-
-                Button("Close") {
-                    dismiss()
-                }
-            }
-        }
-        .padding()
-        .frame(width: 500, height: 400)
+struct OpenAIHelpView: View {
+    var body: some View {
+        AdminKeyHelpView(
+            title: "How to get OpenAI Admin API Key",
+            intro: "The Usage API requires an Admin key from your organization settings.",
+            steps: [
+                "Go to OpenAI Platform",
+                "Navigate to Settings → Organization → Admin Keys",
+                "Click 'Create new admin key'",
+                "Copy the key",
+                "Paste it in the field above"
+            ],
+            note: "Note: You must be an organization owner or admin to create Admin keys.",
+            consoleButtonTitle: "Open OpenAI Settings",
+            consoleURL: "https://platform.openai.com/settings/organization/admin-keys"
+        )
     }
 }

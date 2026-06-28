@@ -20,13 +20,11 @@ struct TokenCost: Codable, Identifiable, Sendable {
     }
 
     var formattedCost: String {
-        String(format: "$%.2f", estimatedCostUSD)
+        UsageFormat.cost(estimatedCostUSD)
     }
 
     var formattedTokens: String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: totalTokens)) ?? "\(totalTokens)"
+        UsageFormat.groupedTokens(totalTokens)
     }
 }
 
@@ -47,13 +45,11 @@ struct TokenUsageBreakdown: Codable, Identifiable, Sendable {
     }
 
     var formattedCost: String {
-        String(format: "$%.2f", estimatedCostUSD)
+        UsageFormat.cost(estimatedCostUSD)
     }
 
     var formattedTokens: String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: totalTokens)) ?? "\(totalTokens)"
+        UsageFormat.groupedTokens(totalTokens)
     }
 }
 
@@ -101,7 +97,7 @@ struct CostSummary: Codable, Sendable {
     }
 
     var formattedTotalCost: String {
-        String(format: "$%.2f", totalCostUSD)
+        UsageFormat.cost(totalCostUSD)
     }
 
     var averageDailyCost: Double {
@@ -110,7 +106,7 @@ struct CostSummary: Codable, Sendable {
     }
 
     var formattedDailyCost: String {
-        String(format: "$%.2f/day", averageDailyCost)
+        "\(UsageFormat.cost(averageDailyCost))/day"
     }
 
     func filtered(to enabledServices: Set<ServiceType>) -> CostSummary {

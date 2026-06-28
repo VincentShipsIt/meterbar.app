@@ -127,16 +127,18 @@ struct MenuBarView: View {
             Button(action: openDashboard) {
                 Image(systemName: "sidebar.right")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.glass)
+            .controlSize(.small)
             .help("Open Usage Dashboard")
 
             Button {
                 Task { await dataManager.refreshAll() }
             } label: {
-                Image(systemName: "arrow.clockwise")
+                RefreshingIcon(isRefreshing: dataManager.isLoading)
             }
-            .buttonStyle(.borderless)
-            .help("Refresh usage")
+            .buttonStyle(.glass)
+            .controlSize(.small)
+            .help(dataManager.isLoading ? "Refreshing usage" : "Refresh usage")
 
             optionsMenu
         }
@@ -159,7 +161,9 @@ struct MenuBarView: View {
         } label: {
             Image(systemName: "ellipsis")
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.glass)
+        .controlSize(.small)
         .menuIndicator(.hidden)
         .fixedSize()
         .help("More options")
@@ -205,7 +209,8 @@ struct PopoverOverviewPanel: View {
                         logoKind: .claude,
                         accentColor: MeterBarTheme.claudeAccent,
                         metrics: accountMetrics[account.id],
-                        emptyDetail: account.isDefault ? "Waiting for refresh" : "Run claude login"
+                        emptyDetail: account.isDefault ? "Waiting for refresh" : "Run claude login",
+                        accountID: account.id
                     ))
                 }
             } else {
@@ -262,14 +267,21 @@ struct PopoverOverviewPanel: View {
             return "Refresh to load enabled providers."
         }
         if tightestLimit.percentLeft <= 0 {
-            return "\(tightestLimit.title) is out until reset across \(snapshots.count) sources."
+            return "\(tightestLimit.title) is out until reset across \(sourcesLabel)."
         }
-        return "\(tightestLimit.title) has \(tightestLimit.percentLeft)% left across \(snapshots.count) sources."
+        return "\(tightestLimit.title) has \(tightestLimit.percentLeft)% left across \(sourcesLabel)."
+    }
+
+    private var sourcesLabel: String {
+        snapshots.count == 1 ? "1 source" : "\(snapshots.count) sources"
     }
 
     private var statusIconName: String {
         guard let tightestLimit else { return "clock.fill" }
-        if tightestLimit.percentLeft <= 0 { return "exclamationmark.octagon.fill" }
+        // Align icon severity with the status color/title bands: the <= 10 "needs
+        // attention" band is red (danger), so it gets the strong octagon icon
+        // rather than the same triangle used for the orange "tight" band.
+        if tightestLimit.percentLeft <= 10 { return "exclamationmark.octagon.fill" }
         if tightestLimit.percentLeft <= 25 { return "exclamationmark.triangle.fill" }
         return "checkmark.shield.fill"
     }
@@ -342,9 +354,13 @@ private struct PopoverProviderSnapshot: Identifiable {
         logoKind: ProviderLogoKind,
         accentColor: Color,
         metrics: UsageMetrics?,
-        emptyDetail: String
+        emptyDetail: String,
+        accountID: UUID? = nil
     ) {
-        self.id = "\(title)-\(logoKind)"
+        // Disambiguate by account id so two accounts that share a display name
+        // (e.g. both "Work") don't collide on a single Identifiable id, which
+        // would corrupt the ForEach that renders the provider cards.
+        self.id = "\(title)-\(logoKind)-\(accountID?.uuidString ?? "default")"
         self.title = title
         self.logoKind = logoKind
         self.accentColor = accentColor
@@ -355,7 +371,7 @@ private struct PopoverProviderSnapshot: Identifiable {
         self.limits = [
             PopoverLimit(title: "Session", limit: metrics?.sessionLimit),
             PopoverLimit(title: "Weekly", limit: metrics?.weeklyLimit),
-            PopoverLimit(title: logoKind == .codex ? "Code Review" : "Sonnet", limit: metrics?.codeReviewLimit)
+            PopoverLimit(title: logoKind == .claude ? "Sonnet" : "Code Review", limit: metrics?.codeReviewLimit)
         ].compactMap { $0 }
     }
 
@@ -506,9 +522,7 @@ private struct PopoverProviderStatusCard: View {
 
     private var updatedText: String {
         guard let updatedAt = snapshot.updatedAt else { return "No data" }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return "Updated \(formatter.localizedString(for: updatedAt, relativeTo: Date()))"
+        return "Updated \(UsageFormat.relative(updatedAt))"
     }
 }
 
@@ -717,8 +731,11 @@ struct BlockingLimitResetCounter: View {
         }
     }
 
-    /// Selects the exhausted window that actually gates usage. Unknown reset
-    /// times are treated as blocking because they may outlast known reset windows.
+    /// Selects the exhausted window that actually gates usage — the exhausted
+    /// window with the latest known reset time (or the most recently passed one
+    /// within the grace period). If any exhausted window has no known reset time,
+    /// returns `nil` so the card shows a plain "exhausted" state without an
+    /// unreliable countdown rather than guessing.
     static func selectBlockingWindow(
         _ windows: [ResetCountdownWindow],
         now: Date,
@@ -991,14 +1008,10 @@ struct UsageBar: View {
 }
 
 private extension View {
-    /// A content surface for cards that sit on the popover's glass chrome.
-    /// Uses an opaque system control background (not a material) so it never
-    /// stacks glass on glass, with concentric continuous corners.
+    /// Popover content-card surface. Delegates to the shared `meterBarCardSurface`
+    /// so the popover and dashboard cards stay visually identical.
     func cardSurface() -> some View {
-        background(
-            Color(nsColor: .controlBackgroundColor),
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
+        meterBarCardSurface()
     }
 }
 

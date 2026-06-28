@@ -152,31 +152,20 @@ class SharedDataStore {
     }
 
     func loadMetrics() -> [ServiceType: UsageMetrics] {
-        guard let containerURL = containerURL else {
-            print("❌ [Widget] App Group container not available")
-            return [:]
-        }
+        guard let containerURL = containerURL else { return [:] }
 
         let fileURL = containerURL.appendingPathComponent("\(metricsKey).json")
-        print("📂 [Widget] Reading from: \(fileURL.path)")
 
-        guard let data = try? Data(contentsOf: fileURL) else {
-            print("❌ [Widget] No data file found")
+        guard let data = try? Data(contentsOf: fileURL),
+              let decoded = try? JSONDecoder().decode([String: UsageMetrics].self, from: data) else {
             return [:]
         }
 
-        guard let decoded = try? JSONDecoder().decode([String: UsageMetrics].self, from: data) else {
-            print("❌ [Widget] Failed to decode JSON")
-            return [:]
-        }
-
-        let metrics = decoded.reduce(into: [ServiceType: UsageMetrics]()) { result, pair in
+        return decoded.reduce(into: [ServiceType: UsageMetrics]()) { result, pair in
             if let service = ServiceType(rawValue: pair.key) {
                 result[service] = pair.value
             }
         }
-        print("✅ [Widget] Loaded \(metrics.count) services")
-        return metrics
     }
 }
 
@@ -349,10 +338,11 @@ struct LargeWidgetView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ForEach(entry.sortedServices.prefix(7), id: \.self) { service in
+                let services = Array(entry.sortedServices.prefix(7))
+                ForEach(Array(services.enumerated()), id: \.element) { index, service in
                     if let metrics = entry.metrics[service] {
                         ServiceCompactView(metrics: metrics)
-                        if service != entry.sortedServices.prefix(7).last {
+                        if index < services.count - 1 {
                             Spacer()
                         }
                     }

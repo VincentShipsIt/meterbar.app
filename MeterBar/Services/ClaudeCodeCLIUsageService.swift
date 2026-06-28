@@ -1,9 +1,17 @@
 import Foundation
 
-final class ClaudeCodeCLIUsageService {
+final class ClaudeCodeCLIUsageService: Sendable {
     static let shared = ClaudeCodeCLIUsageService()
 
     private let commandTimeout: TimeInterval = 12
+
+    /// Dedicated queue for the blocking process run so the semaphore wait happens
+    /// on a GCD thread rather than blocking a Swift-concurrency cooperative thread.
+    private let processQueue = DispatchQueue(
+        label: "dev.shipshit.meterbar.ClaudeCLI.process",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
 
     private init() {}
 
@@ -16,7 +24,7 @@ final class ClaudeCodeCLIUsageService {
             throw ClaudeCodeCLIUsageError.cliNotFound
         }
 
-        let output = try runClaudeUsage(binaryPath: binaryPath, account: account)
+        let output = try await runClaudeUsage(binaryPath: binaryPath, account: account)
         return try ClaudeCodeCLIUsageParser.parseMetrics(from: output)
     }
 
@@ -34,7 +42,7 @@ final class ClaudeCodeCLIUsageService {
             .split(separator: ":")
             .map { "\($0)/claude" }
 
-        let homeDir = realHomeDirectory()
+        let homeDir = ServiceSupport.realHomeDirectory()
         let fallbackCandidates = [
             "/opt/homebrew/bin/claude",
             "/usr/local/bin/claude",
@@ -48,17 +56,23 @@ final class ClaudeCodeCLIUsageService {
         return (pathCandidates + fallbackCandidates).first { fileManager.isExecutableFile(atPath: $0) }
     }
 
-    private func realHomeDirectory() -> String {
-        if let pw = getpwuid(getuid()) {
-            return String(cString: pw.pointee.pw_dir)
+    /// Async wrapper that runs the blocking process invocation on `processQueue`
+    /// and bridges the result back via a continuation, so the calling task
+    /// suspends instead of blocking a cooperative thread on the semaphore.
+    private func runClaudeUsage(binaryPath: String, account: ClaudeCodeAccount) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            processQueue.async {
+                do {
+                    let output = try self.runClaudeUsageBlocking(binaryPath: binaryPath, account: account)
+                    continuation.resume(returning: output)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
         }
-        if let home = ProcessInfo.processInfo.environment["HOME"] {
-            return home
-        }
-        return FileManager.default.homeDirectoryForCurrentUser.path
     }
 
-    private func runClaudeUsage(binaryPath: String, account: ClaudeCodeAccount) throws -> String {
+    private func runClaudeUsageBlocking(binaryPath: String, account: ClaudeCodeAccount) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binaryPath)
         process.arguments = ["/usage"]

@@ -9,31 +9,43 @@ class SharedDataStore {
     
     private let appGroupIdentifier = "group.dev.shipshit.meterbar"
     private let metricsKey = "cached_usage_metrics"
-    
+
+    /// Serial queue for off-main disk writes so callers on the MainActor don't
+    /// block on file I/O, while still serializing writes to the shared file.
+    private let ioQueue = DispatchQueue(label: "dev.shipshit.meterbar.SharedDataStore.io", qos: .utility)
+
     private var containerURL: URL? {
         return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)
     }
-    
+
     private init() {}
-    
+
     func saveMetrics(_ metrics: [ServiceType: UsageMetrics]) {
         guard let containerURL = containerURL else {
-            print("[SharedDataStore] App Group container not available. Enable App Groups for both app and widget targets.")
+            AppLog.storage.error("App Group container unavailable; enable App Groups for the app and widget targets.")
             return
         }
 
         let fileURL = containerURL.appendingPathComponent("\(metricsKey).json")
-        
+
         let encoded = metrics.reduce(into: [String: UsageMetrics]()) { result, pair in
             result[pair.key.rawValue] = pair.value
         }
-        
-        do {
-            let data = try JSONEncoder().encode(encoded)
-            try data.write(to: fileURL)
-            reloadWidgetTimelines()
-        } catch {
-            print("[SharedDataStore] Failed to save metrics: \(error)")
+
+        guard let data = try? JSONEncoder().encode(encoded) else {
+            AppLog.storage.error("Failed to encode shared metrics")
+            return
+        }
+
+        // Write off the main thread (callers run on the MainActor). Atomic write
+        // avoids a torn file if two saves race.
+        ioQueue.async { [weak self] in
+            do {
+                try data.write(to: fileURL, options: [.atomic])
+                self?.reloadWidgetTimelines()
+            } catch {
+                AppLog.storage.error("Failed to save shared metrics: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
     

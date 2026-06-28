@@ -9,6 +9,9 @@ class OpenAIService {
 
     private init() {}
 
+    /// Safety cap on pagination so a misbehaving API can never loop forever.
+    private let maxUsagePages = 50
+
     func fetchUsageMetrics() async throws -> UsageMetrics {
         guard let adminKey = authManager.openaiAdminKey else {
             throw ServiceError.notAuthenticated
@@ -16,58 +19,59 @@ class OpenAIService {
 
         // Calculate time range: last 7 days (Unix timestamps)
         let endDate = Date()
-        let startDate = Calendar.current.date(byAdding: .day, value: -7, to: endDate)!
+        let startDate = Calendar.current.date(byAdding: .day, value: -7, to: endDate) ?? endDate
 
         let startTime = Int(startDate.timeIntervalSince1970)
         let endTime = Int(endDate.timeIntervalSince1970)
 
-        // Build URL with query parameters
-        var components = URLComponents(string: "\(baseURL)/v1/organization/usage/completions")!
-        components.queryItems = [
+        let baseQueryItems = [
             URLQueryItem(name: "start_time", value: String(startTime)),
             URLQueryItem(name: "end_time", value: String(endTime)),
             URLQueryItem(name: "bucket_width", value: "1d"),
             URLQueryItem(name: "group_by", value: "model")
         ]
 
-        guard let url = components.url else {
-            throw ServiceError.invalidURL
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(adminKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ServiceError.apiError("Invalid response")
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            if httpResponse.statusCode == 401 {
-                throw ServiceError.notAuthenticated
-            }
-            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw ServiceError.apiError("API error (\(httpResponse.statusCode)): \(errorMessage)")
-        }
-
-        // Parse response
         let decoder = JSONDecoder()
 
-        let responseData = try decoder.decode(OpenAIUsageResponse.self, from: data)
+        // Follow pagination: ignoring `has_more`/`next_page` silently under-counts
+        // usage when the 7-day window spans more than one page of buckets.
+        var allBuckets: [OpenAIUsageBucket] = []
+        var nextPage: String?
+        var pagesFetched = 0
+
+        repeat {
+            guard var components = URLComponents(string: "\(baseURL)/v1/organization/usage/completions") else {
+                throw ServiceError.invalidURL
+            }
+            var queryItems = baseQueryItems
+            if let nextPage {
+                queryItems.append(URLQueryItem(name: "page", value: nextPage))
+            }
+            components.queryItems = queryItems
+
+            guard let url = components.url else {
+                throw ServiceError.invalidURL
+            }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue("Bearer \(adminKey)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+            let responseData: OpenAIUsageResponse = try await ServiceSupport.fetchDecoded(request, decoder: decoder)
+            allBuckets.append(contentsOf: responseData.data)
+            nextPage = (responseData.hasMore == true) ? responseData.nextPage : nil
+            pagesFetched += 1
+        } while nextPage != nil && pagesFetched < maxUsagePages
 
         // Aggregate all usage data
         var totalInputTokens: Double = 0
         var totalOutputTokens: Double = 0
-        var totalRequests: Double = 0
 
-        for bucket in responseData.data {
+        for bucket in allBuckets {
             for result in bucket.results {
                 totalInputTokens += Double(result.inputTokens ?? 0)
                 totalOutputTokens += Double(result.outputTokens ?? 0)
-                totalRequests += Double(result.numModelRequests ?? 0)
             }
         }
 

@@ -52,7 +52,7 @@ class UsageDataManager: ObservableObject {
                 newMetrics[.claude] = metrics
             } catch {
                 lastError = error
-                print("Failed to fetch Claude metrics: \(error)")
+                AppLog.usage.error("Failed to fetch Claude metrics: \(error.localizedDescription, privacy: .public)")
             }
         }
 
@@ -77,7 +77,7 @@ class UsageDataManager: ObservableObject {
                 newMetrics[.openai] = metrics
             } catch {
                 lastError = error
-                print("Failed to fetch OpenAI metrics: \(error)")
+                AppLog.usage.error("Failed to fetch OpenAI metrics: \(error.localizedDescription, privacy: .public)")
             }
         }
 
@@ -88,7 +88,7 @@ class UsageDataManager: ObservableObject {
                 newMetrics[.codexCli] = metrics
             } catch {
                 lastError = error
-                print("Failed to fetch Codex CLI metrics: \(error)")
+                AppLog.usage.error("Failed to fetch Codex CLI metrics: \(error.localizedDescription, privacy: .public)")
                 // Preserve cached data if available (graceful degradation)
                 if let cachedMetrics = self.metrics[.codexCli] {
                     newMetrics[.codexCli] = cachedMetrics
@@ -103,7 +103,7 @@ class UsageDataManager: ObservableObject {
                 newMetrics[.cursor] = metrics
             } catch {
                 lastError = error
-                print("Failed to fetch Cursor metrics: \(error)")
+                AppLog.usage.error("Failed to fetch Cursor metrics: \(error.localizedDescription, privacy: .public)")
                 // Preserve cached data if available (graceful degradation)
                 if let cachedMetrics = self.metrics[.cursor] {
                     newMetrics[.cursor] = cachedMetrics
@@ -159,7 +159,10 @@ class UsageDataManager: ObservableObject {
                 } else if let cachedMetric = metrics[service] {
                     newMetrics = cachedMetric
                 } else {
-                    throw lastError ?? ServiceError.notAuthenticated
+                    // No representative account metrics and nothing cached. Throw a
+                    // specific error rather than the shared `lastError`, which may
+                    // hold a stale error from an unrelated provider/account.
+                    throw ServiceError.notAuthenticated
                 }
             case .openai:
                 guard authManager.isOpenAIAuthenticated else {
@@ -217,19 +220,13 @@ class UsageDataManager: ObservableObject {
     }
 
     private func loadCachedData() {
-        guard let data = UserDefaults.standard.data(forKey: cacheKey),
-              let decoded = try? JSONDecoder().decode([String: UsageMetrics].self, from: data) else {
-            return
-        }
-
-        metrics = decoded.reduce(into: [ServiceType: UsageMetrics]()) { result, pair in
-            if let service = ServiceType(rawValue: pair.key) {
-                result[service] = pair.value
-            }
+        let decoded = loadCachedMetricsFromDisk()
+        if !decoded.isEmpty {
+            metrics = decoded
         }
     }
-    
-    /// Load cached metrics from disk without modifying instance state
+
+    /// Decode cached metrics from disk without modifying instance state.
     private func loadCachedMetricsFromDisk() -> [ServiceType: UsageMetrics] {
         guard let data = UserDefaults.standard.data(forKey: cacheKey),
               let decoded = try? JSONDecoder().decode([String: UsageMetrics].self, from: data) else {

@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Combine
+import os
 
 /// Service for fetching Codex CLI usage data from https://chatgpt.com/backend-api/wham/usage
 /// Reads authentication token from ~/.codex/auth.json (stored by Codex CLI).
@@ -18,41 +19,19 @@ class CodexCliLocalService: ObservableObject {
 
     // Path to Codex CLI auth file
     private var authFilePath: String {
-        let homeDir = getRealHomeDirectory()
+        let homeDir = ServiceSupport.realHomeDirectory()
         return "\(homeDir)/.codex/auth.json"
     }
 
-    /// Get the REAL home directory (not sandboxed container)
-    private func getRealHomeDirectory() -> String {
-        // In sandboxed apps, FileManager.homeDirectoryForCurrentUser returns the container path
-        // We need the actual user home directory to access Codex CLI's auth file
-        if let pw = getpwuid(getuid()) {
-            return String(cString: pw.pointee.pw_dir)
-        }
-        // Fallback to environment variable
-        if let home = ProcessInfo.processInfo.environment["HOME"] {
-            return home
-        }
-        // Last resort - this will be sandboxed but better than nothing
-        return FileManager.default.homeDirectoryForCurrentUser.path
-    }
-
     // URLSession with timeout configuration
-    private lazy var urlSession: URLSession = {
-        let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 30.0
-        configuration.timeoutIntervalForResource = 60.0
-        configuration.waitsForConnectivity = true
-        return URLSession(configuration: configuration)
-    }()
+    private let urlSession = ServiceSupport.makeUsageSession()
 
     @Published private(set) var hasAccess: Bool = false
     @Published private(set) var lastError: ServiceError?
     @Published private(set) var subscriptionType: String?
 
     private init() {
-        // Check if we have Codex CLI credentials on init
-        checkAccess()
+        Task.detached(priority: .utility) { [weak self] in self?.checkAccess() }
     }
 
     // MARK: - Auth File Access
@@ -88,14 +67,13 @@ class CodexCliLocalService: ObservableObject {
 
     /// Check and update access status
     func checkAccess() {
-        let token = getAuthToken()
-        let hasToken = token != nil
-        if hasToken {
-            hasAccess = true
-        } else {
-            hasAccess = false
-            subscriptionType = nil
+        let hasToken = getAuthToken() != nil
+        let apply = { [weak self] in
+            guard let self else { return }
+            self.hasAccess = hasToken
+            if !hasToken { self.subscriptionType = nil }
         }
+        if Thread.isMainThread { apply() } else { DispatchQueue.main.async(execute: apply) }
     }
 
     // MARK: - Usage Fetching
@@ -140,8 +118,6 @@ class CodexCliLocalService: ObservableObject {
                 throw ServiceError.apiError("Invalid response type")
             }
 
-            print("[CodexCliLocalService] Usage response status: \(httpResponse.statusCode)")
-
             if httpResponse.statusCode == 401 {
                 await MainActor.run {
                     self.hasAccess = false
@@ -152,7 +128,7 @@ class CodexCliLocalService: ObservableObject {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
-                print("[CodexCliLocalService] Usage error: \(errorMessage.prefix(200))")
+                AppLog.usage.error("Codex usage HTTP \(httpResponse.statusCode, privacy: .public)")
                 throw ServiceError.apiError("HTTP \(httpResponse.statusCode): \(errorMessage.prefix(100))")
             }
 
@@ -170,7 +146,6 @@ class CodexCliLocalService: ObservableObject {
 
             // Check if rate limits exist (free accounts have null rate_limit)
             guard let rateLimit = usageResponse.rateLimit else {
-                print("[CodexCliLocalService] No rate limit data (free account or no usage yet)")
                 // Return empty metrics for free accounts
                 return UsageMetrics(
                     service: .codexCli,
@@ -185,7 +160,6 @@ class CodexCliLocalService: ObservableObject {
             // Map the response to UsageMetrics
             // Primary window (5 hours = 18000 seconds) = session limit
             let primaryWindow = rateLimit.primaryWindow
-            print("[CodexCliLocalService] Primary window: usedPercent=\(primaryWindow.usedPercent), resetAt=\(primaryWindow.resetAt)")
             let sessionLimit = UsageLimit(
                 used: primaryWindow.usedPercent,
                 total: 100.0,
@@ -195,18 +169,16 @@ class CodexCliLocalService: ObservableObject {
 
             // Secondary window (7 days = 604800 seconds) = weekly limit
             let secondaryWindow = rateLimit.secondaryWindow
-            print("[CodexCliLocalService] Secondary window: usedPercent=\(secondaryWindow?.usedPercent ?? -1), resetAt=\(secondaryWindow?.resetAt ?? 0)")
             let weeklyLimit = UsageLimit(
                 used: secondaryWindow?.usedPercent ?? 0.0,
                 total: 100.0,
-                resetTime: secondaryWindow != nil ? Date(timeIntervalSince1970: Double(secondaryWindow!.resetAt)) : Date(),
+                resetTime: secondaryWindow.map { Date(timeIntervalSince1970: Double($0.resetAt)) } ?? Date(),
                 windowSeconds: secondaryWindow.map { TimeInterval($0.limitWindowSeconds) }
             )
 
             // Code review rate limit (7 days window) = code review limit
             var codeReviewLimit: UsageLimit? = nil
             if let codeReviewPrimary = usageResponse.codeReviewRateLimit?.primaryWindow {
-                print("[CodexCliLocalService] Code review: usedPercent=\(codeReviewPrimary.usedPercent), resetAt=\(codeReviewPrimary.resetAt)")
                 codeReviewLimit = UsageLimit(
                     used: codeReviewPrimary.usedPercent,
                     total: 100.0,
@@ -215,7 +187,6 @@ class CodexCliLocalService: ObservableObject {
                 )
             }
 
-            print("[CodexCliLocalService] Final metrics: session=\(sessionLimit.percentage)%, weekly=\(weeklyLimit.percentage)%, codeReview=\(codeReviewLimit?.percentage ?? -1)%")
             return UsageMetrics(
                 service: .codexCli,
                 sessionLimit: sessionLimit,
@@ -225,24 +196,14 @@ class CodexCliLocalService: ObservableObject {
                 resetCreditsAvailable: usageResponse.resetCreditsAvailable
             )
         } catch let urlError as URLError {
-            let errorMessage: String
-            switch urlError.code {
-            case .notConnectedToInternet:
-                errorMessage = "No internet connection"
-            case .cannotFindHost, .dnsLookupFailed:
-                errorMessage = "DNS lookup failed"
-            case .timedOut:
-                errorMessage = "Request timed out"
-            default:
-                errorMessage = urlError.localizedDescription
-            }
+            let errorMessage = ServiceSupport.message(for: urlError)
             let error = ServiceError.apiError(errorMessage)
             await MainActor.run { self.lastError = error }
             throw error
         } catch let error as ServiceError {
             throw error
-        } catch let decodingError as DecodingError {
-            print("[CodexCliLocalService] Decoding error: \(decodingError)")
+        } catch is DecodingError {
+            AppLog.usage.error("Codex usage decode failed")
             let serviceError = ServiceError.parsingError
             await MainActor.run { self.lastError = serviceError }
             throw serviceError
@@ -390,19 +351,7 @@ struct RateLimit: Codable {
     }
 }
 
-struct CodeReviewRateLimit: Codable {
-    let allowed: Bool
-    let limitReached: Bool
-    let primaryWindow: LimitWindow
-    let secondaryWindow: LimitWindow?
-
-    enum CodingKeys: String, CodingKey {
-        case allowed
-        case limitReached = "limit_reached"
-        case primaryWindow = "primary_window"
-        case secondaryWindow = "secondary_window"
-    }
-}
+typealias CodeReviewRateLimit = RateLimit
 
 struct LimitWindow: Codable {
     let usedPercent: Double

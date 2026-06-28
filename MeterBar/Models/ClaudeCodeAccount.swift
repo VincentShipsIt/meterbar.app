@@ -2,7 +2,10 @@ import Combine
 import Foundation
 
 struct ClaudeCodeAccount: Codable, Equatable, Identifiable, Sendable {
-    static let defaultID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    // Fixed sentinel id for the default CLI profile. Built from raw bytes
+    // (00000000-0000-0000-0000-000000000001) so it stays deterministic without a
+    // force-unwrap of `UUID(uuidString:)`.
+    static let defaultID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1))
 
     let id: UUID
     var name: String
