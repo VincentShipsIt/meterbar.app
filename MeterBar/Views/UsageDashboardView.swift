@@ -178,7 +178,10 @@ struct UsageDashboardView: View {
 
             LazyVGrid(columns: overviewGridColumns, alignment: .leading, spacing: 12) {
                 ForEach(providerSnapshots) { snapshot in
-                    ProviderOverviewStatusCard(snapshot: snapshot)
+                    ProviderQuotaCard(
+                        snapshot: snapshot,
+                        variant: .dashboardOverview(minHeight: overviewTileMinHeight)
+                    )
                 }
 
                 CostOverviewStatusCard(
@@ -218,11 +221,7 @@ struct UsageDashboardView: View {
                 }
             } else {
                 ForEach(providerSnapshots) { snapshot in
-                    ProviderLimitsCard(
-                        snapshot: snapshot,
-                        accentColor: color(for: snapshot.service),
-                        updatedText: "Updated \(relativeDate(snapshot.lastUpdated))"
-                    )
+                    ProviderQuotaCard(snapshot: snapshot, variant: .dashboardLimits)
                 }
             }
         }
@@ -268,7 +267,7 @@ struct UsageDashboardView: View {
 
                     if let summary = visibleCostSummary, !summary.costs.isEmpty {
                         ForEach(summary.costs) { cost in
-                            ProviderCostBreakdown(cost: cost)
+                            ProviderCostBreakdown(cost: cost, quotaSnapshot: providerSnapshot(for: cost.provider))
                         }
                     } else {
                         Text("No enabled provider token logs found yet.")
@@ -307,11 +306,11 @@ struct UsageDashboardView: View {
             .frame(maxWidth: .infinity, minHeight: 520, alignment: .leading)
     }
 
-    private var providerSnapshots: [DashboardProviderSnapshot] {
-        var snapshots: [DashboardProviderSnapshot] = []
+    private var providerSnapshots: [ProviderQuotaSnapshot] {
+        var snapshots: [ProviderQuotaSnapshot] = []
 
         if providerVisibility.isEnabled(.codexCli), let codex = dataManager.metrics[.codexCli] {
-            snapshots.append(DashboardProviderSnapshot(title: "Codex", service: .codexCli, metrics: codex))
+            snapshots.append(ProviderQuotaSnapshot(title: "Codex", service: .codexCli, metrics: codex))
         }
 
         if providerVisibility.isEnabled(.claudeCode) {
@@ -319,20 +318,21 @@ struct UsageDashboardView: View {
             if !claudeAccountMetrics.isEmpty {
                 for account in claudeAccountStore.accounts {
                     if let metrics = claudeAccountMetrics[account.id] {
-                        snapshots.append(DashboardProviderSnapshot(
+                        snapshots.append(ProviderQuotaSnapshot(
                             title: account.isDefault && claudeAccountStore.accounts.count == 1 ? "Claude" : account.name,
                             service: .claudeCode,
-                            metrics: metrics
+                            metrics: metrics,
+                            accountID: account.id
                         ))
                     }
                 }
             } else if let claude = dataManager.metrics[.claudeCode] {
-                snapshots.append(DashboardProviderSnapshot(title: "Claude", service: .claudeCode, metrics: claude))
+                snapshots.append(ProviderQuotaSnapshot(title: "Claude", service: .claudeCode, metrics: claude))
             }
         }
 
         if providerVisibility.isEnabled(.cursor), let cursor = dataManager.metrics[.cursor] {
-            snapshots.append(DashboardProviderSnapshot(title: "Cursor", service: .cursor, metrics: cursor))
+            snapshots.append(ProviderQuotaSnapshot(title: "Cursor", service: .cursor, metrics: cursor))
         }
 
         return snapshots
@@ -439,56 +439,11 @@ struct UsageDashboardView: View {
         await costTracker.refreshMissingDaysInBackground(days: 30)
     }
 
-    private func color(for service: ServiceType) -> Color {
-        MeterBarTheme.accent(for: service)
+    private func providerSnapshot(for service: ServiceType) -> ProviderQuotaSnapshot? {
+        let matches = providerSnapshots.filter { $0.service == service }
+        return matches.first { $0.hasExhaustedLimit } ?? matches.first
     }
 
-    private func relativeDate(_ date: Date) -> String {
-        UsageFormat.relative(date)
-    }
-}
-
-private struct DashboardProviderSnapshot: Identifiable {
-    let id: String
-    let title: String
-    let service: ServiceType
-    let logoKind: ProviderLogoKind
-    let lastUpdated: Date
-    let limits: [DashboardLimit]
-
-    init(title: String, service: ServiceType, metrics: UsageMetrics) {
-        self.id = "\(service.rawValue)-\(title)"
-        self.title = title
-        self.service = service
-        self.logoKind = providerLogoKind(for: service)
-        self.lastUpdated = metrics.lastUpdated
-        self.limits = [
-            DashboardLimit(title: "Session", limit: metrics.sessionLimit),
-            DashboardLimit(title: "Weekly", limit: metrics.weeklyLimit),
-            DashboardLimit(title: service == .codexCli ? "Code Review" : "Sonnet", limit: metrics.codeReviewLimit)
-        ].compactMap { $0 }
-    }
-}
-
-private struct DashboardLimit: Identifiable {
-    let id = UUID()
-    let title: String
-    let usageLimit: UsageLimit
-
-    init?(title: String, limit: UsageLimit?) {
-        guard let limit else { return nil }
-        self.title = title
-        self.usageLimit = limit
-    }
-
-    var usedPercent: Double {
-        usageLimit.rawPercentage
-    }
-
-    var percentLeft: Int {
-        let remainingPercent = max(0, 100 - usedPercent)
-        return remainingPercent == 0 ? 0 : max(1, Int(ceil(remainingPercent)))
-    }
 }
 
 private let overviewTileMinHeight: CGFloat = 220
@@ -539,76 +494,6 @@ private struct DashboardStatusHero: View {
         }
         .padding(14)
         .dashboardCardBackground()
-    }
-}
-
-private struct ProviderOverviewStatusCard: View {
-    let snapshot: DashboardProviderSnapshot
-
-    private var accentColor: Color {
-        MeterBarTheme.accent(for: snapshot.service)
-    }
-
-    private var primaryLimit: DashboardLimit? {
-        snapshot.limits.min { $0.percentLeft < $1.percentLeft }
-    }
-
-    private var statusText: String {
-        guard let primaryLimit else { return "No data" }
-        if primaryLimit.percentLeft <= 0 { return "Out" }
-        if primaryLimit.percentLeft <= 10 { return "Critical" }
-        if primaryLimit.percentLeft <= 25 { return "Tight" }
-        return "Healthy"
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 9) {
-                ProviderLogoView(kind: snapshot.logoKind, size: 20, foregroundColor: accentColor)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(snapshot.title)
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                    Text("Updated \(relativeDate(snapshot.lastUpdated))")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                Text(statusText)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(statusColor)
-            }
-
-            if snapshot.limits.isEmpty {
-                Text("No quota windows reported")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 54, alignment: .topLeading)
-            } else {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(snapshot.limits) { limit in
-                        DashboardLimitRow(limit: limit, accentColor: accentColor)
-                    }
-                }
-            }
-        }
-        .padding(14)
-        .frame(
-            maxWidth: .infinity,
-            minHeight: overviewTileMinHeight,
-            alignment: .topLeading
-        )
-        .dashboardCardBackground()
-    }
-
-    private var statusColor: Color {
-        guard let primaryLimit else { return .secondary }
-        return MeterBarTheme.quotaStatusColor(percentLeft: primaryLimit.percentLeft)
-    }
-
-    private func relativeDate(_ date: Date) -> String {
-        UsageFormat.relative(date)
     }
 }
 
@@ -696,42 +581,6 @@ private struct CostOverviewStatusCard: View {
     }
 }
 
-private struct ProviderLimitsCard: View {
-    let snapshot: DashboardProviderSnapshot
-    let accentColor: Color
-    let updatedText: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                ProviderTitle(
-                    title: snapshot.title,
-                    logoKind: snapshot.logoKind,
-                    color: accentColor,
-                    font: .title3
-                )
-                Spacer()
-                Text(updatedText)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            if snapshot.limits.isEmpty {
-                Text("No quota windows reported")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            } else {
-                ForEach(snapshot.limits) { limit in
-                    DashboardLimitRow(limit: limit, accentColor: accentColor)
-                }
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .dashboardCardBackground()
-    }
-}
-
 private struct DashboardCard<Content: View>: View {
     let title: String
     let trailing: String?
@@ -762,93 +611,6 @@ private struct DashboardCard<Content: View>: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .dashboardCardBackground()
     }
-}
-
-private struct ProviderTitle: View {
-    let title: String
-    let logoKind: ProviderLogoKind
-    let color: Color
-    let font: Font
-
-    var body: some View {
-        HStack(spacing: 8) {
-            ProviderLogoView(kind: logoKind, size: 18, foregroundColor: color)
-            Text(title)
-                .font(font)
-                .fontWeight(.semibold)
-        }
-    }
-}
-
-private struct DashboardLimitRow: View {
-    let limit: DashboardLimit
-    let accentColor: Color
-
-    private var paceContext: PaceLabelContext {
-        limit.title.localizedCaseInsensitiveContains("weekly") ? .weekly : .session
-    }
-
-    private var isOut: Bool {
-        limit.percentLeft <= 0
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(limit.title)
-                    .font(.subheadline)
-                    .bold()
-                Spacer()
-                Text(isOut ? "Out" : "\(limit.percentLeft)% left")
-                    .font(.subheadline)
-                    .bold()
-                    .foregroundColor(isOut ? MeterBarTheme.danger : .primary)
-            }
-
-            UsageBar(
-                usedPercentage: limit.usedPercent,
-                accentColor: accentColor,
-                pace: limit.usageLimit.pace(),
-                paceContext: paceContext
-            )
-
-            HStack {
-                Text("\(Int(limit.usedPercent.rounded()))% used")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                if let pace = limit.usageLimit.pace() {
-                    Text(pace.leftLabel)
-                        .font(.caption)
-                        .foregroundColor(paceLabelColor(pace))
-                }
-                Spacer()
-                if limit.usageLimit.resetTime != nil {
-                    ResetCountdownLabel(
-                        title: nil,
-                        limit: limit.usageLimit,
-                        font: .caption,
-                        foregroundColor: .secondary,
-                        iconSize: 10
-                    )
-                }
-            }
-        }
-    }
-
-    private func paceLabelColor(_ pace: UsagePace) -> Color {
-        if pace.isExhausted {
-            return MeterBarTheme.danger
-        }
-        switch pace.stage {
-        case .reserve:
-            return MeterBarTheme.success
-        case .deficit:
-            return MeterBarTheme.warning
-        case .onPace:
-            return .secondary
-        }
-    }
-
 }
 
 private struct CostScanLoadingChart: View {
@@ -1443,6 +1205,7 @@ private struct DailyProviderUsageSummaryRow: View {
 
 private struct ProviderCostBreakdown: View {
     let cost: TokenCost
+    let quotaSnapshot: ProviderQuotaSnapshot?
 
     private var logoKind: ProviderLogoKind {
         providerLogoKind(for: cost.provider)
@@ -1465,6 +1228,13 @@ private struct ProviderCostBreakdown: View {
                 Text(cost.formattedCost)
                     .font(.title3)
                     .bold()
+            }
+
+            if let quotaSnapshot, quotaSnapshot.hasExhaustedLimit {
+                BlockingLimitResetCounter(
+                    windows: quotaSnapshot.resetWindows,
+                    accentColor: logoColor
+                )
             }
 
             HStack(spacing: 14) {
@@ -1586,17 +1356,6 @@ private enum DashboardDateFormat {
     static func medium(_ date: Date) -> String { mediumDate.string(from: date) }
     static func month(_ date: Date) -> String { month.string(from: date) }
     static func weekdayMonthDay(_ date: Date) -> String { weekdayMonthDay.string(from: date) }
-}
-
-private func providerLogoKind(for provider: ServiceType) -> ProviderLogoKind {
-    switch provider {
-    case .codexCli, .openai:
-        return .codex
-    case .claude, .claudeCode:
-        return .claude
-    case .cursor:
-        return .cursor
-    }
 }
 
 private func color(for provider: ServiceType) -> Color {
