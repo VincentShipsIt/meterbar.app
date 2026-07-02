@@ -272,7 +272,10 @@ struct UsageDashboardView: View {
 
                     if let summary = visibleCostSummary, !summary.costs.isEmpty {
                         ForEach(summary.costs) { cost in
-                            ProviderCostBreakdown(cost: cost)
+                            ProviderCostBreakdown(
+                                cost: cost,
+                                quotaSnapshot: providerSnapshot(for: cost.provider)
+                            )
                         }
                     } else {
                         Text("No enabled provider token logs found yet.")
@@ -324,6 +327,13 @@ struct UsageDashboardView: View {
             cursorHasAccess: cursorService.hasAccess
         ))
         .filter(\.hasMetrics)
+    }
+
+    /// The snapshot for a provider in the Costs panel — prefers an exhausted
+    /// one so the cost card can surface when that provider's quota resets.
+    private func providerSnapshot(for service: ServiceType) -> ProviderSnapshot? {
+        let matches = providerSnapshots.filter { $0.service == service }
+        return matches.first(where: \.hasExhaustedLimit) ?? matches.first
     }
 
     private var visibleCostSummary: CostSummary? {
@@ -1357,6 +1367,7 @@ private struct DailyProviderUsageSummaryRow: View {
 
 private struct ProviderCostBreakdown: View {
     let cost: TokenCost
+    var quotaSnapshot: ProviderSnapshot?
 
     private var logoKind: ProviderLogoKind {
         .forService(cost.provider)
@@ -1379,6 +1390,13 @@ private struct ProviderCostBreakdown: View {
                 Text(cost.formattedCost)
                     .font(.title3)
                     .bold()
+            }
+
+            if let quotaSnapshot, quotaSnapshot.hasExhaustedLimit {
+                BlockingLimitResetCounter(
+                    windows: quotaSnapshot.resetWindows,
+                    accentColor: logoColor
+                )
             }
 
             HStack(spacing: 14) {
