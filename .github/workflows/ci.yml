@@ -6,11 +6,19 @@ on:
   pull_request:
     branches: [master]
 
+# Pull requests run only the FAST gates below (SwiftPM build + tests + lint,
+# ~1 min total). The heavy `xcodebuild` app+widget build is expensive and only
+# ever breaks on project-file / widget-target changes, so it runs on pushes to
+# master (post-merge) rather than on every PR.
+
 jobs:
+  # Required PR gate. Named "build" to satisfy branch protection. Fast: compiles
+  # the SwiftPM library (Models/Services/Views against MeterBarShared) and the
+  # CLI, without building the full .app / widget bundle.
   build:
-    name: Build (app + widget)
+    name: build
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -19,19 +27,8 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
 
-      - name: Show Xcode version
-        run: xcodebuild -version
-
-      - name: Build
-        run: |
-          xcodebuild -project MeterBar.xcodeproj \
-            -scheme MeterBar \
-            -configuration Debug \
-            -destination 'platform=macOS' \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+      - name: Build library (SwiftPM)
+        run: swift build
 
       - name: Build CLI
         run: |
@@ -41,7 +38,7 @@ jobs:
   test:
     name: Tests + coverage gate
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 20
     env:
       # Coverage floor enforced by scripts/check-coverage.sh. Measured baseline on
       # 2026-07-02 was 9.0% line coverage (tests cover models/parsers; the ~3.5k
@@ -90,3 +87,34 @@ jobs:
       - name: Lint
         # --strict: the tree is currently violation-free, so any new warning fails.
         run: /tmp/swiftlint/swiftlint lint --strict
+
+  # Full app + widget build via xcodebuild. Slow (~3 min) and only sensitive to
+  # project-file / widget-target changes, so it runs on pushes to master rather
+  # than on every PR. This is where the .xcodeproj SwiftPM package wiring
+  # (MeterBarShared linked into both the app and the widget target) is exercised.
+  xcode-build:
+    name: Build (app + widget)
+    if: github.event_name == 'push'
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build
+        run: |
+          xcodebuild -project MeterBar.xcodeproj \
+            -scheme MeterBar \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
