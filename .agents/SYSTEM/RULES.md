@@ -1,93 +1,47 @@
 # Coding Rules - MeterBar
 
 **Purpose:** Coding standards and patterns for this project.
-**Last Updated:** 2025-12-29
+**Last Updated:** 2026-07-02 (rewritten — the previous version was a TypeScript template that never
+applied to this pure-Swift repo)
 
 ---
 
 ## General Principles
 
-1. **Follow existing patterns** - Search for 3+ similar implementations before writing new code
-2. **Quality over speed** - Think through implementations before coding
-3. **No inline types** - Define interfaces/types in dedicated files
-4. **No `any` types** - Use proper TypeScript types
-5. **No `console.log`** - Use a logging service
+1. **Follow existing patterns** — search for 3+ similar implementations before writing new code
+2. **Quality over speed** — think through implementations before coding
+3. **No `print(...)`** — use `AppLog` (`os.Logger`); enforced by the SwiftLint custom rule `no_print_statements`
+4. **No force-unwraps** — `force_unwrapping` is an opt-in SwiftLint rule here; prefer `guard let` or documented sentinels (see `ClaudeCodeAccount.defaultID`)
+5. **Never log secrets or raw API response bodies** — use `privacy: .public` only on values proven non-sensitive
 
----
+## Swift conventions (enforced by tooling)
 
-## File Organization
+The single source of truth is `.swiftlint.yml` + `.swiftformat` at the repo root. Highlights:
 
-### Naming Conventions
+- 4-space indent, max line width 120 (SwiftLint error at 200)
+- Swift 5 language mode (`SWIFT_VERSION = 5.0` in the Xcode project, `.swiftLanguageMode(.v5)` in `Package.swift`) — don't introduce Swift 6 strict-concurrency-only constructs without migrating the singletons
+- Types: PascalCase; files named after their primary type (`CostTracker.swift`)
+- Services are singletons (`static let shared`); new services should follow that pattern until the DI refactor happens
+- UI state via `ObservableObject` + `@Published`; UI mutations on the main actor
+- Decode external JSON with explicit `CodingKeys` for snake_case fields; tolerate absent fields with optionals rather than failing decode
 
-- **Directories:** lowercase with hyphens (`user-settings/`)
-- **Files:** kebab-case (`user-service.ts`)
-- **Components:** PascalCase (`UserProfile.tsx`)
-- **Interfaces:** PascalCase with `I` prefix (`IUserProfile`)
+## Data-contract rules (important)
 
-### Import Order
+- The app-group JSON (`cached_usage_metrics.json`) is decoded by **three** codebases (app, widget, CLI) with duplicated struct definitions. Any change to `UsageMetrics`/`UsageLimit`/`ServiceType` serialization must be mirrored in `MeterBarWidget/UsageWidget.swift` and `MeterBarCLI/Sources/MeterBarCLI.swift`, and the contract tests in `MeterBarTests/CachedMetricsContractTests.swift` must be updated.
+- Do NOT change the `JSONEncoder`/`JSONDecoder` date strategy for the shared cache — all three sides rely on the default (seconds since reference date).
 
-1. External packages
-2. Internal packages/aliases
-3. Relative imports
-4. Types/interfaces
+## Error handling
 
-```typescript
-// External
-import { useState } from 'react';
-
-// Internal aliases
-import { Button } from '@components/ui';
-import { UserService } from '@services/user';
-
-// Relative
-import { helpers } from './utils';
-
-// Types
-import type { IUser } from '@interfaces/user';
-```
-
----
-
-## TypeScript
-
-### Do
-
-- Use strict mode
-- Define return types for functions
-- Use path aliases (`@components/`, `@services/`)
-- Export types from dedicated files
-
-### Don't
-
-- Use `any` type
-- Use inline interface definitions
-- Use relative imports for shared code
-- Ignore TypeScript errors
-
----
-
-## Error Handling
-
-```typescript
-try {
-  const result = await operation();
-  return result;
-} catch (error) {
-  logger.error('Operation failed', { error, context });
-  throw new AppError('User-friendly message', error);
-}
-```
-
----
+- Provider services map errors to `ServiceError` (`notAuthenticated`, `invalidURL`, `apiError(String)`, `parsingError`) and update their `@Published lastError`/`hasAccess` on the main actor
+- Fetch failures degrade gracefully: keep cached metrics rather than blanking the UI (see `UsageDataManager.refreshAll`)
+- Availability-biased token checks: a token we cannot introspect is treated as valid and the server 401 is the source of truth (`OAuthTokenExpiry`)
 
 ## Testing
 
-- Write tests for business logic
-- Use descriptive test names
-- Mock external dependencies
-- Test edge cases
-
----
+- Tests live in `MeterBarTests/` and run via `swift test` (requires full Xcode; Command Line Tools lack the XCTest module)
+- TDD for new features; new parsing/decode logic must come with fixture tests
+- Network-touching tests must gate on credentials with `XCTSkip` (see `APIIntegrationTests`)
+- Pure logic (parsers, formatters, models) must be testable without the network
 
 ## Git
 
@@ -95,34 +49,19 @@ try {
 
 ```
 type(scope): description
-
-[optional body]
-
-[optional footer]
 ```
 
 Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
 
 ### Branch Naming
 
-- `feature/description`
-- `fix/description`
-- `chore/description`
-
----
+- `feature/description`, `fix/description`, `chore/description`
 
 ## Documentation
 
-- Document public APIs
-- Add JSDoc for complex functions
-- Keep README up to date
-- Document architectural decisions in `SYSTEM/architecture/DECISIONS.md`
-
----
-
-## Project-Specific Rules
-
-<!-- Add your project-specific rules below -->
+- Keep `README.md` claims true to the code (the sandbox/minimum-OS claims drifted once already)
+- Architectural decisions go in `SYSTEM/architecture/DECISIONS.md`
+- Session logs: `.agents/SESSIONS/YYYY-MM-DD.md`, one file per day
 
 ---
 

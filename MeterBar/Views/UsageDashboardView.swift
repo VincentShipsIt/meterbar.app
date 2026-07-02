@@ -233,7 +233,8 @@ struct UsageDashboardView: View {
         VStack(alignment: .leading, spacing: 14) {
             DashboardCard(title: "30 Day API-Rate Token Spend", trailing: costRefreshStatusText) {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("Local subscription logs are estimated using API token rates so Codex and Claude can be compared.")
+                    Text("Local subscription logs are estimated using API token rates "
+                        + "so Codex and Claude can be compared.")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
@@ -319,8 +320,9 @@ struct UsageDashboardView: View {
             if !claudeAccountMetrics.isEmpty {
                 for account in claudeAccountStore.accounts {
                     if let metrics = claudeAccountMetrics[account.id] {
+                        let isOnlyDefaultAccount = account.isDefault && claudeAccountStore.accounts.count == 1
                         snapshots.append(DashboardProviderSnapshot(
-                            title: account.isDefault && claudeAccountStore.accounts.count == 1 ? "Claude" : account.name,
+                            title: isOnlyDefaultAccount ? "Claude" : account.name,
                             service: .claudeCode,
                             metrics: metrics
                         ))
@@ -387,7 +389,8 @@ struct UsageDashboardView: View {
         if limit.percentLeft <= 0 {
             return "\(limit.title) is out until reset. Tracking \(providerSnapshots.count) local provider sources."
         }
-        return "\(limit.title) has \(limit.percentLeft)% left. Tracking \(providerSnapshots.count) local provider sources."
+        return "\(limit.title) has \(limit.percentLeft)% left. "
+            + "Tracking \(providerSnapshots.count) local provider sources."
     }
 
     private var sectionSubtitle: String {
@@ -848,13 +851,13 @@ private struct DashboardLimitRow: View {
             return .secondary
         }
     }
-
 }
 
 private struct CostScanLoadingChart: View {
     let compact: Bool
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion)
+    private var reduceMotion
 
     private let barCount = 30
 
@@ -867,7 +870,8 @@ private struct CostScanLoadingChart: View {
                 let barWidth = max(4, (proxy.size.width - CGFloat(barCount - 1) * spacing) / CGFloat(barCount))
                 let time = timeline.date.timeIntervalSinceReferenceDate
                 let sweepWidth = max(42, proxy.size.width * 0.18)
-                let sweepX = CGFloat(time.truncatingRemainder(dividingBy: 1.8) / 1.8) * (proxy.size.width + sweepWidth) - sweepWidth
+                let sweepProgress = CGFloat(time.truncatingRemainder(dividingBy: 1.8) / 1.8)
+                let sweepX = sweepProgress * (proxy.size.width + sweepWidth) - sweepWidth
 
                 VStack(alignment: .leading, spacing: compact ? 8 : 11) {
                     HStack(spacing: 8) {
@@ -1148,7 +1152,8 @@ private struct DailyUsageChart: View {
         } else {
             lines.append("")
             for segment in day.segments {
-                lines.append("\(segment.provider.displayName): \(UsageFormat.tokens(segment.tokens)) · \(UsageFormat.cost(segment.cost))")
+                lines.append("\(segment.provider.displayName): \(UsageFormat.tokens(segment.tokens)) "
+                    + "· \(UsageFormat.cost(segment.cost))")
             }
         }
 
@@ -1408,7 +1413,8 @@ private struct DailyUsageDetailRow: View {
     }
 
     private var accessibilitySummary: String {
-        "\(dateLabel(day.date)), \(UsageFormat.tokens(day.totalTokens)) tokens, \(UsageFormat.cost(day.estimatedCostUSD))"
+        "\(dateLabel(day.date)), \(UsageFormat.tokens(day.totalTokens)) tokens, "
+            + "\(UsageFormat.cost(day.estimatedCostUSD))"
     }
 
     private func dateLabel(_ date: Date) -> String {
@@ -1475,11 +1481,11 @@ private struct ProviderCostBreakdown: View {
             }
 
             if !cost.modelBreakdowns.isEmpty {
-                CostBreakdownSection(title: "Models", items: cost.modelBreakdowns.prefix(6).map { $0 })
+                CostBreakdownSection(title: "Models", items: Array(cost.modelBreakdowns.prefix(6)))
             }
 
             if !cost.originBreakdowns.isEmpty {
-                CostBreakdownSection(title: "Usage Origin", items: cost.originBreakdowns.prefix(6).map { $0 })
+                CostBreakdownSection(title: "Usage Origin", items: Array(cost.originBreakdowns.prefix(6)))
             }
         }
         .padding(12)

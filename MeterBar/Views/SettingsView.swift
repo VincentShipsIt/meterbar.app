@@ -274,7 +274,10 @@ struct SettingsView: View {
                     .frame(maxWidth: 220)
             }
 
-            SettingsRowView(title: "Config directory", detail: "Use a separate CLAUDE_CONFIG_DIR for each extra account.") {
+            SettingsRowView(
+                title: "Config directory",
+                detail: "Use a separate CLAUDE_CONFIG_DIR for each extra account."
+            ) {
                 HStack(spacing: 8) {
                     TextField("Path", text: $newClaudeConfigDirectory)
                         .textFieldStyle(.roundedBorder)
@@ -364,7 +367,10 @@ struct SettingsView: View {
                         .fontWeight(.semibold)
                 }
             } else if !cursorService.hasAccess {
-                SettingsNotice(text: "Reads Cursor IDE credentials from Cursor's local state database.", color: .secondary)
+                SettingsNotice(
+                    text: "Reads Cursor IDE credentials from Cursor's local state database.",
+                    color: .secondary
+                )
                 SettingsNotice(text: "Log in to Cursor IDE first, then check again.", color: MeterBarTheme.warning)
             }
         }
@@ -416,7 +422,10 @@ struct SettingsView: View {
             }
 
             if !canScanCosts {
-                SettingsNotice(text: "Enable Claude Code or OpenAI Codex to scan local token logs.", color: MeterBarTheme.warning)
+                SettingsNotice(
+                    text: "Enable Claude Code or OpenAI Codex to scan local token logs.",
+                    color: MeterBarTheme.warning
+                )
             }
 
             SettingsRowView(title: "Local sessions") {
@@ -673,7 +682,8 @@ private struct AccountProfileRow: View {
 /// Shared admin-key help sheet. The Claude and OpenAI variants only differ by
 /// copy and the console URL, so they share one layout.
 private struct AdminKeyHelpView: View {
-    @Environment(\.dismiss) var dismiss
+    @Environment(\.dismiss)
+    var dismiss
 
     let title: String
     let intro: String
@@ -737,7 +747,8 @@ struct ClaudeHelpView: View {
                 "Copy the key (starts with sk-ant-admin...)",
                 "Paste it in the field above"
             ],
-            note: "Note: You must be an organization admin to create Admin API keys. Individual accounts cannot access the Usage API.",
+            note: "Note: You must be an organization admin to create Admin API keys. "
+                + "Individual accounts cannot access the Usage API.",
             consoleButtonTitle: "Open Claude Console",
             consoleURL: "https://console.anthropic.com/settings/admin-keys"
         )

@@ -744,7 +744,8 @@ struct BlockingLimitResetCounter: View {
         let exhaustedWindows = windows.filter { $0.limit.isAtLimit }
         guard !exhaustedWindows.isEmpty else { return nil }
 
-        let candidates = exhaustedWindows.compactMap { window -> (window: ResetCountdownWindow, seconds: TimeInterval)? in
+        let candidates = exhaustedWindows.compactMap { window
+            -> (window: ResetCountdownWindow, seconds: TimeInterval)? in
             guard let seconds = window.limit.secondsUntilReset(now: now) else { return nil }
             return (window, seconds)
         }

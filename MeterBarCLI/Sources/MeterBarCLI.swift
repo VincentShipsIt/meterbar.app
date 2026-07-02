@@ -260,7 +260,9 @@ struct Cost: ParsableCommand {
             // Ignore errors
         }
 
-        // Calculate cost (Sonnet pricing)
+        // Calculate cost (Sonnet pricing). Mirrors the "claude-sonnet" entry in the
+        // app's CostTracker pricing table — keep both in sync until a shared package
+        // exists (.agents/docs/DEFERRED_WORK.md §1).
         let inputCost = Double(totalInput) / 1_000_000 * 3.0
         let outputCost = Double(totalOutput) / 1_000_000 * 15.0
         let cacheCreationCost = Double(totalCacheCreation) / 1_000_000 * 3.75

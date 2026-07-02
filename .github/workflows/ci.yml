@@ -8,6 +8,7 @@ on:
 
 jobs:
   build:
+    name: Build (app + widget)
     runs-on: macos-26
     timeout-minutes: 30
 
@@ -32,13 +33,57 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
-      - name: Run tests
+      - name: Build CLI
         run: |
-          xcodebuild -project MeterBar.xcodeproj \
-            -scheme MeterBar \
-            -configuration Debug \
-            -destination 'platform=macOS' \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            test || echo "Tests completed (some may require credentials)"
+          cd MeterBarCLI
+          swift build
+
+  test:
+    name: Tests + coverage gate
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      # Coverage floor enforced by scripts/check-coverage.sh. Ratchet this up as
+      # coverage improves; never lower it to make a PR pass.
+      COVERAGE_THRESHOLD: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
+
+      - name: Run tests with coverage gate
+        # check-coverage.sh runs `swift test --enable-code-coverage` (a real gate —
+        # any test failure fails this step) and then enforces COVERAGE_THRESHOLD
+        # via llvm-cov. Network-touching tests self-skip without credentials
+        # (XCTSkip in APIIntegrationTests).
+        run: bash scripts/check-coverage.sh
+
+  lint:
+    name: SwiftLint
+    runs-on: macos-26
+    timeout-minutes: 10
+    env:
+      SWIFTLINT_VERSION: 0.65.0
+      SWIFTLINT_SHA256: d6cb0aa7a2f5f1ef306fc9e37bcb54dc9a26facc8f7784ac0c3dd3eccf5c6ba6
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Install SwiftLint (pinned + checksum-verified)
+        run: |
+          set -euo pipefail
+          URL="https://github.com/realm/SwiftLint/releases/download/${SWIFTLINT_VERSION}/portable_swiftlint.zip"
+          curl --fail --location --silent --show-error \
+            --connect-timeout 15 --max-time 120 --retry 3 \
+            "$URL" -o /tmp/swiftlint.zip
+          echo "${SWIFTLINT_SHA256}  /tmp/swiftlint.zip" | shasum -a 256 --check --strict
+          unzip -o /tmp/swiftlint.zip -d /tmp/swiftlint
+          chmod +x /tmp/swiftlint/swiftlint
+
+      - name: Lint
+        # --strict: the tree is currently violation-free, so any new warning fails.
+        run: /tmp/swiftlint/swiftlint lint --strict

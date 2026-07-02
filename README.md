@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Platform-macOS%2013.0+-black?logo=apple" alt="macOS 13.0+">
-  <img src="https://img.shields.io/badge/Swift-5.9-orange?logo=swift" alt="Swift 5.9">
-  <img src="https://img.shields.io/badge/SwiftUI-5.0-blue?logo=swift" alt="SwiftUI">
+  <img src="https://img.shields.io/badge/Platform-macOS%2026+-black?logo=apple" alt="macOS 26+">
+  <img src="https://img.shields.io/badge/Swift-5-orange?logo=swift" alt="Swift 5">
+  <img src="https://img.shields.io/badge/SwiftUI-blue?logo=swift" alt="SwiftUI">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License">
 </p>
 
@@ -58,7 +58,7 @@ A lightweight macOS menu bar app that monitors Claude Code, Codex CLI, and Curso
 Paste this into your local coding agent to have it install MeterBar for you:
 
 ```text
-Install MeterBar on this Mac. First verify this is macOS 13 or newer and that Homebrew is available. Install with: brew tap VincentShipsIt/tap && brew install --cask VincentShipsIt/tap/meterbar. If Homebrew is missing, ask before installing Homebrew. After installing, verify /Applications/MeterBar.app exists and that the meterbar CLI is linked, then open MeterBar. If macOS blocks the first launch because the app is unsigned, remove quarantine with xattr -cr /Applications/MeterBar.app and open it again. Do not ask me for API keys or paste secrets; for usage data, tell me to run claude login, codex login, and log into Cursor if I want those providers tracked.
+Install MeterBar on this Mac. First verify this is macOS 26 or newer and that Homebrew is available. Install with: brew tap VincentShipsIt/tap && brew install --cask VincentShipsIt/tap/meterbar. If Homebrew is missing, ask before installing Homebrew. After installing, verify /Applications/MeterBar.app exists and that the meterbar CLI is linked, then open MeterBar. If macOS blocks the first launch because the app is unsigned, remove quarantine with xattr -cr /Applications/MeterBar.app and open it again. Do not ask me for API keys or paste secrets; for usage data, tell me to run claude login, codex login, and log into Cursor if I want those providers tracked.
 ```
 
 ### Homebrew (Recommended)
@@ -84,7 +84,7 @@ Download the latest release from the [Releases](https://github.com/VincentShipsI
 
 ### Build from Source
 
-Prerequisites: macOS 13.0+, Xcode 15.0+
+Prerequisites: macOS 26+, Xcode 26+
 
 ```bash
 git clone https://github.com/VincentShipsIt/meterbar.app.git
@@ -189,15 +189,19 @@ Claude Code usage uses `claude /usage` first so MeterBar does not need to read C
 ## Privacy & Security
 
 - All credentials remain in their original locations (managed by CLI tools)
-- No data sent to external servers (only official API calls)
-- Sandboxed app with minimal file system access
+- No data sent to external servers (only calls to the providers' own usage endpoints)
+- The main app is **not** sandboxed — it must read other tools' credential/log files
+  (`~/.claude`, `~/.codex`, Cursor's local database) and run the `claude` binary. The
+  widget extension is sandboxed. Hardened runtime is enabled for both.
+- No analytics, telemetry, or crash reporting
 - Open source for full transparency
 
 ## Architecture
 
 - **SwiftUI** - Modern declarative UI
 - **Combine** - Reactive data flow
-- **App Sandbox** - Secure with specific entitlements for credential access
+- **Hardened Runtime** - Enabled for app and widget (the main app is un-sandboxed by
+  design so it can read local CLI credential/log files)
 - **URLSession** - Native networking
 
 ## Troubleshooting
@@ -218,7 +222,7 @@ Run `codex logout && codex login` and select your team workspace when prompted.
 
 ### App can't read credentials
 
-The app needs sandbox exceptions to read CLI credential files. Rebuild from source if using a modified entitlements file.
+The app reads CLI credential files from your home directory (`~/.codex/auth.json`, Cursor's local database). If you built from source with App Sandbox enabled, those reads will fail — the shipped configuration keeps the main app un-sandboxed for this reason.
 
 ## Contributing
 

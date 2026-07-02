@@ -46,15 +46,10 @@ class AuthenticationManager: ObservableObject {
     }
 
     var isClaudeAuthenticated: Bool {
-        return claudeAdminKey != nil
+        claudeAdminKey != nil
     }
 
     var isOpenAIAuthenticated: Bool {
-        return openaiAdminKey != nil
-    }
-
-    // Cursor doesn't have authentication - it doesn't provide an API
-    var isCursorAuthenticated: Bool {
-        return false
+        openaiAdminKey != nil
     }
 }

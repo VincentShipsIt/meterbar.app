@@ -20,18 +20,31 @@ class CostTracker: ObservableObject {
     }
 
     // API-rate estimates per million tokens for local log usage.
+    // Prices last verified against provider pricing pages: 2026-07-02. These rot
+    // silently — re-verify when adding models or when estimates look off.
+    // NOTE: MeterBarCLI/Sources/MeterBarCLI.swift carries a simplified copy of the
+    // "claude-sonnet" entry; keep the two in sync until a shared package exists
+    // (.agents/docs/DEFERRED_WORK.md §1).
     private let pricing: [String: TokenPricing] = [
         "claude-sonnet": TokenPricing(input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30),
         "claude-opus": TokenPricing(input: 15.0, output: 75.0, cacheCreation: 18.75, cacheRead: 1.50),
         "claude-haiku": TokenPricing(input: 0.25, output: 1.25, cacheCreation: 0.30, cacheRead: 0.03),
-        "claude-fable-5": TokenPricing(input: 10.0, output: 50.0, cacheCreation: 12.5, cacheRead: 1.0, cacheCreationOneHour: 20.0),
-        "claude-opus-4-8": TokenPricing(input: 5.0, output: 25.0, cacheCreation: 6.25, cacheRead: 0.50, cacheCreationOneHour: 10.0),
-        "claude-opus-4-7": TokenPricing(input: 5.0, output: 25.0, cacheCreation: 6.25, cacheRead: 0.50, cacheCreationOneHour: 10.0),
-        "claude-opus-4-6": TokenPricing(input: 5.0, output: 25.0, cacheCreation: 6.25, cacheRead: 0.50, cacheCreationOneHour: 10.0),
-        "claude-sonnet-4-6": TokenPricing(input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30, cacheCreationOneHour: 6.0),
-        "claude-sonnet-4-5": TokenPricing(input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30, cacheCreationOneHour: 6.0),
-        "claude-sonnet-4": TokenPricing(input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30, cacheCreationOneHour: 6.0),
-        "claude-haiku-4-5": TokenPricing(input: 1.0, output: 5.0, cacheCreation: 1.25, cacheRead: 0.10, cacheCreationOneHour: 2.0),
+        "claude-fable-5": TokenPricing(
+            input: 10.0, output: 50.0, cacheCreation: 12.5, cacheRead: 1.0, cacheCreationOneHour: 20.0),
+        "claude-opus-4-8": TokenPricing(
+            input: 5.0, output: 25.0, cacheCreation: 6.25, cacheRead: 0.50, cacheCreationOneHour: 10.0),
+        "claude-opus-4-7": TokenPricing(
+            input: 5.0, output: 25.0, cacheCreation: 6.25, cacheRead: 0.50, cacheCreationOneHour: 10.0),
+        "claude-opus-4-6": TokenPricing(
+            input: 5.0, output: 25.0, cacheCreation: 6.25, cacheRead: 0.50, cacheCreationOneHour: 10.0),
+        "claude-sonnet-4-6": TokenPricing(
+            input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30, cacheCreationOneHour: 6.0),
+        "claude-sonnet-4-5": TokenPricing(
+            input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30, cacheCreationOneHour: 6.0),
+        "claude-sonnet-4": TokenPricing(
+            input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30, cacheCreationOneHour: 6.0),
+        "claude-haiku-4-5": TokenPricing(
+            input: 1.0, output: 5.0, cacheCreation: 1.25, cacheRead: 0.10, cacheCreationOneHour: 2.0),
         "codex": TokenPricing(input: 1.25, output: 10.0, cacheCreation: 0, cacheRead: 0.125),
         "default": TokenPricing(input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30)
     ]
@@ -260,10 +273,8 @@ class CostTracker: ObservableObject {
                     continue
                 }
 
-                let (input, output, cacheCreate, cacheReadTokens, estimatedCost, dates, daily, models, origins) = parseSessionFile(
-                    at: url,
-                    since: cutoffDate
-                )
+                let (input, output, cacheCreate, cacheReadTokens, estimatedCost, dates, daily, models, origins) =
+                    parseSessionFile(at: url, since: cutoffDate)
 
                 if input > 0 || output > 0 || cacheCreate > 0 || cacheReadTokens > 0 {
                     totalInput += input
@@ -475,7 +486,8 @@ class CostTracker: ObservableObject {
             )
         }
 
-        return (totalInput, totalOutput, totalCacheCreation, totalCacheRead, totalEstimatedCost, dates, dailyTotals, modelTotals, originTotals)
+        return (totalInput, totalOutput, totalCacheCreation, totalCacheRead, totalEstimatedCost,
+                dates, dailyTotals, modelTotals, originTotals)
     }
 
     private func parseISO8601(_ value: String) -> Date? {
@@ -506,10 +518,11 @@ class CostTracker: ObservableObject {
             return pricing["claude-fable-5"] ?? defaultPricing
         }
         if normalized.contains("opus") {
-            if normalized.contains("4-8") { return pricing["claude-opus-4-8"] ?? (pricing["claude-opus"] ?? defaultPricing) }
-            if normalized.contains("4-7") { return pricing["claude-opus-4-7"] ?? (pricing["claude-opus"] ?? defaultPricing) }
-            if normalized.contains("4-6") { return pricing["claude-opus-4-6"] ?? (pricing["claude-opus"] ?? defaultPricing) }
-            return pricing["claude-opus"] ?? defaultPricing
+            let base = pricing["claude-opus"] ?? defaultPricing
+            if normalized.contains("4-8") { return pricing["claude-opus-4-8"] ?? base }
+            if normalized.contains("4-7") { return pricing["claude-opus-4-7"] ?? base }
+            if normalized.contains("4-6") { return pricing["claude-opus-4-6"] ?? base }
+            return base
         }
         if normalized.contains("haiku") {
             return normalized.contains("4-5")
@@ -517,10 +530,11 @@ class CostTracker: ObservableObject {
                 : pricing["claude-haiku"] ?? defaultPricing
         }
         if normalized.contains("sonnet") {
-            if normalized.contains("4-6") { return pricing["claude-sonnet-4-6"] ?? (pricing["claude-sonnet"] ?? defaultPricing) }
-            if normalized.contains("4-5") { return pricing["claude-sonnet-4-5"] ?? (pricing["claude-sonnet"] ?? defaultPricing) }
-            if normalized.contains("4") { return pricing["claude-sonnet-4"] ?? (pricing["claude-sonnet"] ?? defaultPricing) }
-            return pricing["claude-sonnet"] ?? defaultPricing
+            let base = pricing["claude-sonnet"] ?? defaultPricing
+            if normalized.contains("4-6") { return pricing["claude-sonnet-4-6"] ?? base }
+            if normalized.contains("4-5") { return pricing["claude-sonnet-4-5"] ?? base }
+            if normalized.contains("4") { return pricing["claude-sonnet-4"] ?? base }
+            return base
         }
 
         return defaultPricing

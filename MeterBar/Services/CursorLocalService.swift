@@ -11,9 +11,8 @@ import SQLite3
 class CursorLocalService: ObservableObject {
     static let shared = CursorLocalService()
 
-    // API endpoints (from Vibeviewer: https://github.com/MarveleE/Vibeviewer)
+    // API endpoint (from Vibeviewer: https://github.com/MarveleE/Vibeviewer)
     private let usageSummaryEndpoint = "https://cursor.com/api/usage-summary"
-    private let getMeEndpoint = "https://cursor.com/api/dashboard/get-me"
 
     // URLSession shared via ServiceSupport for consistent timeout/connectivity config
     private let urlSession = ServiceSupport.makeUsageSession()
@@ -65,10 +64,8 @@ class CursorLocalService: ObservableObject {
         ]
 
         // Check each path
-        for path in pathsToCheck {
-            if fileManager.fileExists(atPath: path) {
-                return path
-            }
+        for path in pathsToCheck where fileManager.fileExists(atPath: path) {
+            return path
         }
 
         // If not found and forceRescan is true, search recursively in Cursor directories
@@ -97,12 +94,10 @@ class CursorLocalService: ObservableObject {
             return nil
         }
 
-        for case let path as String in enumerator {
-            if path.hasSuffix(filename) {
-                let fullPath = "\(directory)/\(path)"
-                if fileManager.fileExists(atPath: fullPath) {
-                    return fullPath
-                }
+        for case let path as String in enumerator where path.hasSuffix(filename) {
+            let fullPath = "\(directory)/\(path)"
+            if fileManager.fileExists(atPath: fullPath) {
+                return fullPath
             }
         }
 
@@ -199,7 +194,7 @@ class CursorLocalService: ObservableObject {
     /// Format authentication cookie for Cursor API
     private func formatAuthCookie(userId: String, token: String) -> String {
         // Format: userId::token (URL encoded)
-        return "\(userId)%3A%3A\(token)"
+        "\(userId)%3A%3A\(token)"
     }
 
     /// Check and update access status
@@ -218,7 +213,8 @@ class CursorLocalService: ObservableObject {
 
     func fetchUsageMetrics() async throws -> UsageMetrics {
         // Try without rescan first (faster), then with rescan if needed
-        guard let (userId, token) = getAccessTokenFromDatabase(forceRescan: false) ?? getAccessTokenFromDatabase(forceRescan: true) else {
+        guard let (userId, token) = getAccessTokenFromDatabase(forceRescan: false)
+            ?? getAccessTokenFromDatabase(forceRescan: true) else {
             let error = ServiceError.notAuthenticated
             await MainActor.run {
                 self.lastError = error
@@ -241,7 +237,7 @@ class CursorLocalService: ObservableObject {
         }
 
         // Parse billing cycle end date for reset time
-        var resetTime: Date? = nil
+        var resetTime: Date?
         if let billingEnd = summaryData.billingCycleEnd {
             resetTime = Self.fractionalISO8601.date(from: billingEnd) ?? Self.plainISO8601.date(from: billingEnd)
         }
@@ -258,7 +254,7 @@ class CursorLocalService: ObservableObject {
         )
 
         // On-demand usage as secondary metric if enabled
-        var sessionLimit: UsageLimit? = nil
+        var sessionLimit: UsageLimit?
         if let onDemand = summaryData.individualUsage?.onDemand, onDemand.enabled == true {
             let onDemandUsed = Double(onDemand.used ?? 0)
             let onDemandLimit = Double(onDemand.limit ?? 0)

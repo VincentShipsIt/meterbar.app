@@ -103,11 +103,11 @@ struct UsageMetrics: Codable, Identifiable {
             lastUpdated: lastUpdated
         )
     }
-    
+
     var overallStatus: UsageStatus {
         let limits = [sessionLimit, weeklyLimit, codeReviewLimit].compactMap { $0 }
         guard !limits.isEmpty else { return .good }
-        
+
         if limits.contains(where: { $0.isAtLimit }) {
             return .critical
         } else if limits.contains(where: { $0.isNearLimit }) {
@@ -116,9 +116,8 @@ struct UsageMetrics: Codable, Identifiable {
             return .good
         }
     }
-    
+
     var hasData: Bool {
-        return sessionLimit != nil || weeklyLimit != nil || codeReviewLimit != nil
+        sessionLimit != nil || weeklyLimit != nil || codeReviewLimit != nil
     }
 }
-

@@ -18,23 +18,23 @@ struct UsageLimit: Codable, Equatable {
         guard total > 0 else { return 0 }
         return max(0, (used / total) * 100)
     }
-    
+
     var percentage: Double {
-        return min(100, rawPercentage)
+        min(100, rawPercentage)
     }
-    
+
     var remaining: Double {
-        return max(0, total - used)
+        max(0, total - used)
     }
-    
+
     var isNearLimit: Bool {
-        return percentage >= 80
+        percentage >= 80
     }
-    
+
     var isAtLimit: Bool {
-        return percentage >= 100
+        percentage >= 100
     }
-    
+
     var statusColor: UsageStatus {
         if isAtLimit {
             return .critical
