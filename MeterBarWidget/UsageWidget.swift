@@ -1,7 +1,15 @@
 import WidgetKit
 import SwiftUI
 
-// MARK: - Shared Types (duplicated for Widget target)
+// MARK: - Shared Types (MANUAL MIRROR of MeterBar/Models)
+//
+// The widget extension is an Xcode-only target and cannot import the MeterBar
+// SwiftPM library without a shared framework target (which requires Xcode to
+// set up). Until that exists, these are hand-synced mirrors of
+// MeterBar/Models/{ServiceType,UsageLimit,UsageMetrics}.swift and the
+// MetricsCodec decode. When you change those files, update this one.
+// Note: `iconName` here intentionally returns ASSET names, not the app's
+// SF Symbol names.
 
 enum ServiceType: String, Codable, CaseIterable, Identifiable {
     case claudeCode = "Claude Code"

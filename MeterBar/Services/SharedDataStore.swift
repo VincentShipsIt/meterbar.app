@@ -4,9 +4,11 @@ import os
 import WidgetKit
 #endif
 
-/// Shared data store using App Groups for Widget extension access
-class SharedDataStore {
-    static let shared = SharedDataStore()
+/// Shared data store using App Groups for Widget extension access.
+/// Public so the meterbar CLI reads the same file through the same code path
+/// instead of maintaining its own copy of the location and decode logic.
+public class SharedDataStore {
+    public static let shared = SharedDataStore()
     
     private let appGroupIdentifier = "group.dev.shipshit.meterbar"
     private let metricsKey = "cached_usage_metrics"
@@ -46,7 +48,7 @@ class SharedDataStore {
         }
     }
     
-    func loadMetrics() -> [ServiceType: UsageMetrics] {
+    public func loadMetrics() -> [ServiceType: UsageMetrics] {
         guard let containerURL = containerURL else { return [:] }
 
         let fileURL = containerURL.appendingPathComponent("\(metricsKey).json")

@@ -146,15 +146,18 @@ meterbar usage
 # JSON output for scripts
 meterbar usage --json
 
-# Filter by provider
+# Filter by provider (claude, codex, cursor)
 meterbar usage --provider claude
 
-# Show token costs (last 30 days)
+# Show token costs from the app's last local scan
 meterbar cost
 
-# Cost for specific period
-meterbar cost --days 7 --json
+# JSON output
+meterbar cost --json
 ```
+
+`meterbar cost` reports the MeterBar app's cached 30-day scan (run one from
+the app's Costs tab), so the CLI and the app always show the same numbers.
 
 The CLI is automatically installed when using Homebrew. For manual installs, it's located at:
 ```

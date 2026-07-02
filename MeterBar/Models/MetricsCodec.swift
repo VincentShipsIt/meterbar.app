@@ -9,15 +9,15 @@ import Foundation
 /// malformed entry drops only that entry instead of discarding the whole cache.
 /// This matters across app updates — e.g. when a provider is removed, caches
 /// written by older versions still decode for the providers that remain.
-enum MetricsCodec {
-    static func encode(_ metrics: [ServiceType: UsageMetrics]) -> Data? {
+public enum MetricsCodec {
+    public static func encode(_ metrics: [ServiceType: UsageMetrics]) -> Data? {
         let keyed = metrics.reduce(into: [String: UsageMetrics]()) { result, pair in
             result[pair.key.rawValue] = pair.value
         }
         return try? JSONEncoder().encode(keyed)
     }
 
-    static func decode(_ data: Data) -> [ServiceType: UsageMetrics] {
+    public static func decode(_ data: Data) -> [ServiceType: UsageMetrics] {
         guard let keyed = try? JSONDecoder().decode([String: FailableBox<UsageMetrics>].self, from: data) else {
             return [:]
         }

@@ -12,7 +12,6 @@ class CostTracker: ObservableObject {
     @Published var lastScanDate: Date?
 
     private let providerVisibilityStore = ProviderVisibilityStore.shared
-    private let cacheFileName = "cost-summary-v1.json"
 
     /// True while either a manual scan or a background missing-day backfill runs.
     var isRefreshInProgress: Bool {
@@ -172,53 +171,17 @@ class CostTracker: ObservableObject {
         )
     }
 
-    private var cacheURL: URL? {
-        guard let supportDirectory = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first else {
-            return nil
-        }
-
-        return supportDirectory
-            .appendingPathComponent("MeterBar", isDirectory: true)
-            .appendingPathComponent(cacheFileName)
-    }
-
     private func loadCachedSummary() {
-        guard let cacheURL,
-              let data = try? Data(contentsOf: cacheURL) else {
-            return
-        }
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
-        do {
-            let cache = try decoder.decode(CostSummaryCache.self, from: data)
-            costSummary = cache.summary
-            lastScanDate = cache.lastScanDate
-        } catch {
-            AppLog.cost.error("Failed to load cost summary cache: \(error.localizedDescription, privacy: .public)")
-        }
+        guard let cache = CostSummaryStore.load() else { return }
+        costSummary = cache.summary
+        lastScanDate = cache.lastScanDate
     }
 
     private func saveCachedSummary() {
-        guard let costSummary,
-              let cacheURL,
-              let lastScanDate else {
-            return
-        }
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let costSummary, let lastScanDate else { return }
 
         do {
-            let directory = cacheURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let data = try encoder.encode(CostSummaryCache(summary: costSummary, lastScanDate: lastScanDate))
-            try data.write(to: cacheURL, options: [.atomic])
+            try CostSummaryStore.save(CostSummaryCache(summary: costSummary, lastScanDate: lastScanDate))
         } catch {
             AppLog.cost.error("Failed to save cost summary cache: \(error.localizedDescription, privacy: .public)")
         }
@@ -922,11 +885,6 @@ class CostTracker: ObservableObject {
         }
         return String(text[range]).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
     }
-}
-
-private struct CostSummaryCache: Codable {
-    let summary: CostSummary
-    let lastScanDate: Date
 }
 
 /// Mutable accumulators threaded through the Codex scan. Bundling these into one

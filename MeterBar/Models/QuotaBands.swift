@@ -9,30 +9,30 @@ import Foundation
 /// the menu bar, popover, widget, notifications, and CLI could disagree about
 /// the same quota at the same moment. Every surface now derives severity from
 /// `QuotaBand` and the displayed percentage from `QuotaMath.percentLeft`.
-enum QuotaBand: Equatable {
+public enum QuotaBand: Equatable, Sendable {
     case healthy
     case tight
     case critical
     case exhausted
 
     /// Critical when this much (or less) of the quota is left.
-    static let criticalPercentLeft = 10
+    public static let criticalPercentLeft = 10
     /// Tight when this much (or less) of the quota is left.
-    static let tightPercentLeft = 25
+    public static let tightPercentLeft = 25
 
-    static func forPercentLeft(_ percentLeft: Int) -> QuotaBand {
+    public static func forPercentLeft(_ percentLeft: Int) -> QuotaBand {
         if percentLeft <= 0 { return .exhausted }
         if percentLeft <= criticalPercentLeft { return .critical }
         if percentLeft <= tightPercentLeft { return .tight }
         return .healthy
     }
 
-    static func forLimit(_ limit: UsageLimit) -> QuotaBand {
+    public static func forLimit(_ limit: UsageLimit) -> QuotaBand {
         forPercentLeft(QuotaMath.percentLeft(for: limit))
     }
 
     /// Short status label shown on provider cards ("Out" / "Critical" / …).
-    var shortLabel: String {
+    public var shortLabel: String {
         switch self {
         case .healthy: return "Healthy"
         case .tight: return "Tight"
@@ -42,7 +42,7 @@ enum QuotaBand: Equatable {
     }
 
     /// Headline for the overview status hero (popover and dashboard).
-    var overviewTitle: String {
+    public var overviewTitle: String {
         switch self {
         case .healthy: return "All tracked quotas look healthy"
         case .tight: return "Quota is tight"
@@ -53,7 +53,7 @@ enum QuotaBand: Equatable {
 
     /// Status icon. The red bands get the strong octagon, the amber band the
     /// triangle, so icon severity always agrees with color and copy.
-    var iconName: String {
+    public var iconName: String {
         switch self {
         case .healthy: return "checkmark.shield.fill"
         case .tight: return "exclamationmark.triangle.fill"
@@ -62,18 +62,18 @@ enum QuotaBand: Equatable {
     }
 }
 
-enum QuotaMath {
+public enum QuotaMath {
     /// The integer "% left" figure shown to the user.
     ///
     /// Rounds up and floors at 1 so a nearly-exhausted quota reads "1% left"
     /// rather than rounding down to an alarming-but-wrong 0; exactly 0 only
     /// when the quota is truly spent.
-    static func percentLeft(usedPercent: Double) -> Int {
+    public static func percentLeft(usedPercent: Double) -> Int {
         let remainingPercent = max(0, 100 - usedPercent)
         return remainingPercent == 0 ? 0 : max(1, Int(ceil(remainingPercent)))
     }
 
-    static func percentLeft(for limit: UsageLimit) -> Int {
+    public static func percentLeft(for limit: UsageLimit) -> Int {
         percentLeft(usedPercent: limit.rawPercentage)
     }
 }
