@@ -29,11 +29,7 @@ Download the latest release from:
 https://github.com/VincentShipsIt/meterbar.app/releases
 ```
 
-The release build is currently unsigned/not notarized. If macOS blocks the first launch, right-click `MeterBar.app` and choose Open, or run:
-
-```bash
-xattr -cr /Applications/MeterBar.app
-```
+Release builds are signed with a Developer ID certificate and notarized by Apple, so the app opens normally after download.
 
 ## Development Prerequisites
 
