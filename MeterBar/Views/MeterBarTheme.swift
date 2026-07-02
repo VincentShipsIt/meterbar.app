@@ -47,9 +47,19 @@ enum MeterBarTheme {
     }
 
     static func quotaStatusColor(percentLeft: Int) -> Color {
-        if percentLeft <= 10 { return danger }
-        if percentLeft <= 25 { return warning }
-        return success
+        QuotaBand.forPercentLeft(percentLeft).color
+    }
+}
+
+extension QuotaBand {
+    /// Appearance-adaptive color for the band (single place where severity
+    /// maps to color, shared by every surface).
+    var color: Color {
+        switch self {
+        case .healthy: return MeterBarTheme.success
+        case .tight: return MeterBarTheme.warning
+        case .critical, .exhausted: return MeterBarTheme.danger
+        }
     }
 }
 

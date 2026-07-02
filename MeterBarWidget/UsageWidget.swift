@@ -68,22 +68,13 @@ struct UsageLimit: Codable, Equatable {
         return max(0.001, total)
     }
 
-    var isNearLimit: Bool {
-        return percentage >= 80
-    }
-
-    var isAtLimit: Bool {
-        return percentage >= 100
-    }
-
+    /// Mirrors the app's QuotaBand thresholds (critical ≤10% left, tight ≤25%)
+    /// so the widget never disagrees with the popover about severity.
     var statusColor: UsageStatus {
-        if isAtLimit {
-            return .critical
-        } else if isNearLimit {
-            return .warning
-        } else {
-            return .good
-        }
+        let percentLeft = 100 - percentage
+        if percentLeft <= 10 { return .critical }
+        if percentLeft <= 25 { return .warning }
+        return .good
     }
 }
 
@@ -114,9 +105,9 @@ struct UsageMetrics: Codable, Identifiable {
         let limits = [sessionLimit, weeklyLimit, codeReviewLimit].compactMap { $0 }
         guard !limits.isEmpty else { return .good }
 
-        if limits.contains(where: { $0.isAtLimit }) {
+        if limits.contains(where: { $0.statusColor == .critical }) {
             return .critical
-        } else if limits.contains(where: { $0.isNearLimit }) {
+        } else if limits.contains(where: { $0.statusColor == .warning }) {
             return .warning
         } else {
             return .good
