@@ -15,8 +15,8 @@ class CursorLocalService: ObservableObject {
     private let usageSummaryEndpoint = "https://cursor.com/api/usage-summary"
     private let getMeEndpoint = "https://cursor.com/api/dashboard/get-me"
 
-    // URLSession shared via ServiceSupport for consistent timeout/connectivity config
-    private let urlSession = ServiceSupport.makeUsageSession()
+    // Shared URLSession with the standard usage-request timeouts
+    private let urlSession = ServiceSupport.session
 
     // Assumed default monthly request quota when the API omits a plan total
     private let defaultPlanTotal: Double = 500
@@ -206,12 +206,11 @@ class CursorLocalService: ObservableObject {
     /// - Parameter forceRescan: If true, will recursively search for database if not found in primary paths
     func checkAccess(forceRescan: Bool = false) {
         let hasToken = getAccessTokenFromDatabase(forceRescan: forceRescan) != nil
-        let apply = { [weak self] in
+        ServiceSupport.applyOnMain { [weak self] in
             guard let self else { return }
             self.hasAccess = hasToken
             if !hasToken { self.subscriptionType = nil }
         }
-        if Thread.isMainThread { apply() } else { DispatchQueue.main.async(execute: apply) }
     }
 
     // MARK: - Usage Fetching
@@ -290,13 +289,13 @@ class CursorLocalService: ObservableObject {
             "Cookie": "WorkosCursorSessionToken=\(authCookie)",
             "Origin": "https://cursor.com",
             "Referer": "https://cursor.com/dashboard?tab=usage",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+            "User-Agent": ServiceSupport.browserUserAgent
         ]
     }
 
     private func fetchUsageSummary(userId: String, token: String) async throws -> CursorUsageSummaryResponse {
         guard let url = URL(string: usageSummaryEndpoint) else {
-            throw ServiceError.apiError("Invalid usage summary URL")
+            throw ServiceError.invalidURL
         }
 
         var request = URLRequest(url: url)
@@ -308,33 +307,20 @@ class CursorLocalService: ObservableObject {
             request.setValue(value, forHTTPHeaderField: key)
         }
 
-        let (data, response) = try await urlSession.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ServiceError.apiError("Invalid response type")
-        }
-
-        if httpResponse.statusCode == 401 {
-            await MainActor.run {
-                self.hasAccess = false
-                self.lastError = ServiceError.notAuthenticated
-            }
-            throw ServiceError.notAuthenticated
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            AppLog.usage.error("Cursor usage-summary HTTP \(httpResponse.statusCode, privacy: .public)")
-            throw ServiceError.apiError("HTTP \(httpResponse.statusCode)")
-        }
-
-        // Parse the response
-        let decoder = JSONDecoder()
         do {
-            let summaryResponse = try decoder.decode(CursorUsageSummaryResponse.self, from: data)
-            return summaryResponse
+            let (data, response) = try await urlSession.data(for: request)
+            try ServiceSupport.validate(response, data: data)
+            return try JSONDecoder().decode(CursorUsageSummaryResponse.self, from: data)
         } catch {
-            AppLog.usage.error("Cursor usage-summary decode failed")
-            throw ServiceError.parsingError
+            let serviceError = ServiceSupport.serviceError(from: error)
+            AppLog.usage.error("Cursor usage-summary fetch failed: \(serviceError.localizedDescription)")
+            await MainActor.run {
+                self.lastError = serviceError
+                if case .notAuthenticated = serviceError {
+                    self.hasAccess = false
+                }
+            }
+            throw serviceError
         }
     }
 }

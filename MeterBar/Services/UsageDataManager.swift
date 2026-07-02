@@ -57,36 +57,18 @@ class UsageDataManager: ObservableObject {
             claudeCodeAccountMetrics = [:]
         }
 
-        // Fetch Codex CLI metrics (local auth from ~/.codex/auth.json)
-        if providerVisibilityStore.isEnabled(.codexCli), codexCliService.hasAccess {
+        // Fetch the simple (single-account) providers. On failure the final
+        // merge loop below preserves any cached metrics (graceful degradation).
+        for service in [ServiceType.codexCli, .cursor]
+        where providerVisibilityStore.isEnabled(service) && hasProviderAccess(service) {
             do {
-                let metrics = try await codexCliService.fetchUsageMetrics()
-                newMetrics[.codexCli] = metrics
+                newMetrics[service] = try await fetchSimpleProviderMetrics(service)
             } catch {
                 lastError = error
-                AppLog.usage.error("Failed to fetch Codex CLI metrics: \(error.localizedDescription, privacy: .public)")
-                // Preserve cached data if available (graceful degradation)
-                if let cachedMetrics = self.metrics[.codexCli] {
-                    newMetrics[.codexCli] = cachedMetrics
-                }
+                AppLog.usage.error("Failed to fetch \(service.rawValue, privacy: .public) metrics: \(error.localizedDescription, privacy: .public)")
             }
         }
 
-        // Fetch Cursor metrics (local files)
-        if providerVisibilityStore.isEnabled(.cursor), cursorService.hasAccess {
-            do {
-                let metrics = try await cursorService.fetchUsageMetrics()
-                newMetrics[.cursor] = metrics
-            } catch {
-                lastError = error
-                AppLog.usage.error("Failed to fetch Cursor metrics: \(error.localizedDescription, privacy: .public)")
-                // Preserve cached data if available (graceful degradation)
-                if let cachedMetrics = self.metrics[.cursor] {
-                    newMetrics[.cursor] = cachedMetrics
-                }
-            }
-        }
-        
         // Merge new metrics with existing cached metrics for services that failed to fetch
         for service in ServiceType.allCases where providerVisibilityStore.isEnabled(service) {
             if newMetrics[service] == nil, let cachedMetric = self.metrics[service] {
@@ -135,27 +117,12 @@ class UsageDataManager: ObservableObject {
                     // hold a stale error from an unrelated provider/account.
                     throw ServiceError.notAuthenticated
                 }
-            case .codexCli:
-                guard codexCliService.hasAccess else {
+            case .codexCli, .cursor:
+                guard hasProviderAccess(service) else {
                     throw ServiceError.notAuthenticated
                 }
                 do {
-                    newMetrics = try await codexCliService.fetchUsageMetrics()
-                } catch {
-                    // On individual refresh, preserve cached data if fetch fails
-                    if let cachedMetric = metrics[service] {
-                        newMetrics = cachedMetric
-                        lastError = error
-                    } else {
-                        throw error
-                    }
-                }
-            case .cursor:
-                guard cursorService.hasAccess else {
-                    throw ServiceError.notAuthenticated
-                }
-                do {
-                    newMetrics = try await cursorService.fetchUsageMetrics()
+                    newMetrics = try await fetchSimpleProviderMetrics(service)
                 } catch {
                     // On individual refresh, preserve cached data if fetch fails
                     if let cachedMetric = metrics[service] {
@@ -240,5 +207,31 @@ class UsageDataManager: ObservableObject {
 
     private func representativeClaudeCodeMetrics(from accountMetrics: [UUID: UsageMetrics]) -> UsageMetrics? {
         accountMetrics[ClaudeCodeAccount.defaultID] ?? accountMetrics.values.first
+    }
+
+    // MARK: - Provider strategy
+
+    private func hasProviderAccess(_ service: ServiceType) -> Bool {
+        switch service {
+        case .claudeCode:
+            return claudeCodeService.hasAccess
+        case .codexCli:
+            return codexCliService.hasAccess
+        case .cursor:
+            return cursorService.hasAccess
+        }
+    }
+
+    /// Fetch for the providers without multi-account handling (Claude Code has
+    /// its own account-aware path).
+    private func fetchSimpleProviderMetrics(_ service: ServiceType) async throws -> UsageMetrics {
+        switch service {
+        case .codexCli:
+            return try await codexCliService.fetchUsageMetrics()
+        case .cursor:
+            return try await cursorService.fetchUsageMetrics()
+        case .claudeCode:
+            preconditionFailure("Claude Code uses the account-aware fetch path")
+        }
     }
 }
