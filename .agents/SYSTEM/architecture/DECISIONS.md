@@ -32,7 +32,7 @@ What other options were considered?
 
 ## Decisions
 
-### ADR-001: Use .agent/ Folder for AI Documentation
+### ADR-001: Use .agents/ Folder for AI Documentation
 
 **Date:** 2025-12-29
 **Status:** Accepted
@@ -41,7 +41,7 @@ What other options were considered?
 Need a structured way to organize AI agent documentation, session tracking, and project rules.
 
 #### Decision
-Use a `.agent/` folder at the project root with standardized subdirectories:
+Use a `.agents/` folder at the project root with standardized subdirectories:
 - `SYSTEM/` for rules and architecture
 - `TASKS/` for task tracking
 - `SESSIONS/` for daily session documentation

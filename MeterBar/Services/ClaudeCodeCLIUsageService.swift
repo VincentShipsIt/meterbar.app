@@ -1,4 +1,5 @@
 import Foundation
+import MeterBarShared
 
 final class ClaudeCodeCLIUsageService: Sendable {
     static let shared = ClaudeCodeCLIUsageService()
@@ -165,8 +166,7 @@ enum ClaudeCodeCLIUsageParser {
         from lines: [String],
         labelPrefixes: [String],
         windowMinutes: Int,
-        now: Date) -> UsageLimit?
-    {
+        now: Date) -> UsageLimit? {
         guard let line = lines.first(where: { line in
             let normalized = line.lowercased()
             return labelPrefixes.contains { normalized.hasPrefix($0) }

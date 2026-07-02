@@ -1,4 +1,5 @@
 import Foundation
+import MeterBarShared
 import os
 import Combine
 import SwiftUI
@@ -12,7 +13,8 @@ class UsageDataManager: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var lastError: Error?
 
-    @AppStorage("refreshInterval") private var refreshIntervalRaw: Int = RefreshInterval.fifteenMinutes.rawValue
+    @AppStorage(StorageKeys.refreshInterval)
+    private var refreshIntervalRaw: Int = RefreshInterval.fifteenMinutes.rawValue
 
     var refreshInterval: RefreshInterval {
         get { RefreshInterval(rawValue: refreshIntervalRaw) ?? .fifteenMinutes }
@@ -22,17 +24,14 @@ class UsageDataManager: ObservableObject {
         }
     }
 
-    private let claudeService = ClaudeService.shared
     private let claudeCodeService = ClaudeCodeLocalService.shared
     private let cursorService = CursorLocalService.shared
-    private let openaiService = OpenAIService.shared
     private let codexCliService = CodexCliLocalService.shared
-    private let authManager = AuthenticationManager.shared
     private let claudeCodeAccountStore = ClaudeCodeAccountStore.shared
     private let providerVisibilityStore = ProviderVisibilityStore.shared
 
     private var refreshTimer: Timer?
-    private let cacheKey = "cached_usage_metrics"
+    private let cacheKey = StorageKeys.cachedUsageMetrics
     private let sharedStore = SharedDataStore.shared
 
     private init() {
@@ -45,17 +44,6 @@ class UsageDataManager: ObservableObject {
         lastError = nil
 
         var newMetrics: [ServiceType: UsageMetrics] = [:]
-
-        // Fetch Claude metrics
-        if providerVisibilityStore.isEnabled(.claude), authManager.isClaudeAuthenticated {
-            do {
-                let metrics = try await claudeService.fetchUsageMetrics()
-                newMetrics[.claude] = metrics
-            } catch {
-                lastError = error
-                AppLog.usage.error("Failed to fetch Claude metrics: \(error.localizedDescription, privacy: .public)")
-            }
-        }
 
         // Fetch Claude Code metrics (local files)
         if providerVisibilityStore.isEnabled(.claudeCode), claudeCodeService.hasAccess {
@@ -71,47 +59,19 @@ class UsageDataManager: ObservableObject {
             claudeCodeAccountMetrics = [:]
         }
 
-        // Fetch OpenAI API metrics
-        if providerVisibilityStore.isEnabled(.openai), authManager.isOpenAIAuthenticated {
+        // Fetch the simple (single-account) providers. On failure the final
+        // merge loop below preserves any cached metrics (graceful degradation).
+        for service in [ServiceType.codexCli, .cursor]
+        where providerVisibilityStore.isEnabled(service) && hasProviderAccess(service) {
             do {
-                let metrics = try await openaiService.fetchUsageMetrics()
-                newMetrics[.openai] = metrics
+                newMetrics[service] = try await fetchSimpleProviderMetrics(service)
             } catch {
                 lastError = error
-                AppLog.usage.error("Failed to fetch OpenAI metrics: \(error.localizedDescription, privacy: .public)")
+                let detail = "Failed to fetch \(service.rawValue) metrics: \(error.localizedDescription)"
+                AppLog.usage.error("\(detail, privacy: .public)")
             }
         }
 
-        // Fetch Codex CLI metrics (local auth from ~/.codex/auth.json)
-        if providerVisibilityStore.isEnabled(.codexCli), codexCliService.hasAccess {
-            do {
-                let metrics = try await codexCliService.fetchUsageMetrics()
-                newMetrics[.codexCli] = metrics
-            } catch {
-                lastError = error
-                AppLog.usage.error("Failed to fetch Codex CLI metrics: \(error.localizedDescription, privacy: .public)")
-                // Preserve cached data if available (graceful degradation)
-                if let cachedMetrics = self.metrics[.codexCli] {
-                    newMetrics[.codexCli] = cachedMetrics
-                }
-            }
-        }
-
-        // Fetch Cursor metrics (local files)
-        if providerVisibilityStore.isEnabled(.cursor), cursorService.hasAccess {
-            do {
-                let metrics = try await cursorService.fetchUsageMetrics()
-                newMetrics[.cursor] = metrics
-            } catch {
-                lastError = error
-                AppLog.usage.error("Failed to fetch Cursor metrics: \(error.localizedDescription, privacy: .public)")
-                // Preserve cached data if available (graceful degradation)
-                if let cachedMetrics = self.metrics[.cursor] {
-                    newMetrics[.cursor] = cachedMetrics
-                }
-            }
-        }
-        
         // Merge new metrics with existing cached metrics for services that failed to fetch
         for service in ServiceType.allCases where providerVisibilityStore.isEnabled(service) {
             if newMetrics[service] == nil, let cachedMetric = self.metrics[service] {
@@ -144,11 +104,6 @@ class UsageDataManager: ObservableObject {
             let newMetrics: UsageMetrics
 
             switch service {
-            case .claude:
-                guard authManager.isClaudeAuthenticated else {
-                    throw ServiceError.notAuthenticated
-                }
-                newMetrics = try await claudeService.fetchUsageMetrics()
             case .claudeCode:
                 guard claudeCodeService.hasAccess else {
                     throw ServiceError.notAuthenticated
@@ -165,32 +120,12 @@ class UsageDataManager: ObservableObject {
                     // hold a stale error from an unrelated provider/account.
                     throw ServiceError.notAuthenticated
                 }
-            case .openai:
-                guard authManager.isOpenAIAuthenticated else {
-                    throw ServiceError.notAuthenticated
-                }
-                newMetrics = try await openaiService.fetchUsageMetrics()
-            case .codexCli:
-                guard codexCliService.hasAccess else {
+            case .codexCli, .cursor:
+                guard hasProviderAccess(service) else {
                     throw ServiceError.notAuthenticated
                 }
                 do {
-                    newMetrics = try await codexCliService.fetchUsageMetrics()
-                } catch {
-                    // On individual refresh, preserve cached data if fetch fails
-                    if let cachedMetric = metrics[service] {
-                        newMetrics = cachedMetric
-                        lastError = error
-                    } else {
-                        throw error
-                    }
-                }
-            case .cursor:
-                guard cursorService.hasAccess else {
-                    throw ServiceError.notAuthenticated
-                }
-                do {
-                    newMetrics = try await cursorService.fetchUsageMetrics()
+                    newMetrics = try await fetchSimpleProviderMetrics(service)
                 } catch {
                     // On individual refresh, preserve cached data if fetch fails
                     if let cachedMetric = metrics[service] {
@@ -229,24 +164,14 @@ class UsageDataManager: ObservableObject {
 
     /// Decode cached metrics from disk without modifying instance state.
     private func loadCachedMetricsFromDisk() -> [ServiceType: UsageMetrics] {
-        guard let data = UserDefaults.standard.data(forKey: cacheKey),
-              let decoded = try? JSONDecoder().decode([String: UsageMetrics].self, from: data) else {
+        guard let data = UserDefaults.standard.data(forKey: cacheKey) else {
             return [:]
         }
-
-        return decoded.reduce(into: [ServiceType: UsageMetrics]()) { result, pair in
-            if let service = ServiceType(rawValue: pair.key) {
-                result[service] = pair.value
-            }
-        }
+        return MetricsCodec.decode(data)
     }
 
     private func saveCachedData() {
-        let encoded = metrics.reduce(into: [String: UsageMetrics]()) { result, pair in
-            result[pair.key.rawValue] = pair.value
-        }
-
-        if let data = try? JSONEncoder().encode(encoded) {
+        if let data = MetricsCodec.encode(metrics) {
             UserDefaults.standard.set(data, forKey: cacheKey)
         }
     }
@@ -287,17 +212,29 @@ class UsageDataManager: ObservableObject {
         accountMetrics[ClaudeCodeAccount.defaultID] ?? accountMetrics.values.first
     }
 
-    func getNextRefreshTime() -> Date? {
-        // Find the earliest reset time across all metrics
-        let resetTimes = metrics.values.compactMap { metrics -> Date? in
-            let times = [
-                metrics.sessionLimit?.resetTime,
-                metrics.weeklyLimit?.resetTime,
-                metrics.codeReviewLimit?.resetTime
-            ].compactMap { $0 }
-            return times.min()
-        }
+    // MARK: - Provider strategy
 
-        return resetTimes.min()
+    private func hasProviderAccess(_ service: ServiceType) -> Bool {
+        switch service {
+        case .claudeCode:
+            return claudeCodeService.hasAccess
+        case .codexCli:
+            return codexCliService.hasAccess
+        case .cursor:
+            return cursorService.hasAccess
+        }
+    }
+
+    /// Fetch for the providers without multi-account handling (Claude Code has
+    /// its own account-aware path).
+    private func fetchSimpleProviderMetrics(_ service: ServiceType) async throws -> UsageMetrics {
+        switch service {
+        case .codexCli:
+            return try await codexCliService.fetchUsageMetrics()
+        case .cursor:
+            return try await cursorService.fetchUsageMetrics()
+        case .claudeCode:
+            preconditionFailure("Claude Code uses the account-aware fetch path")
+        }
     }
 }

@@ -30,7 +30,14 @@ if [ ! -f "$TEST_BINARY" ]; then
   exit 1
 fi
 
-COVERAGE_PERCENT="$(xcrun llvm-cov report "$TEST_BINARY" -instr-profile "$PROFDATA" -ignore-filename-regex ".*Tests.*" | awk '/^TOTAL/ {print $NF}' | tr -d '%')"
+# Parse the JSON summary rather than the text table: `llvm-cov report` column
+# order varies between LLVM versions (a trailing branch-coverage column made
+# `awk '{print $NF}'` read "-" and fail the gate with "Coverage: -%").
+COVERAGE_PERCENT="$(xcrun llvm-cov export "$TEST_BINARY" \
+  -instr-profile "$PROFDATA" \
+  -summary-only \
+  -ignore-filename-regex ".*Tests.*" \
+  | python3 -c 'import json,sys; print(f'"'"'{json.load(sys.stdin)["data"][0]["totals"]["lines"]["percent"]:.1f}'"'"')')"
 if [ -z "$COVERAGE_PERCENT" ]; then
   echo "Failed to parse coverage report." >&2
   exit 1

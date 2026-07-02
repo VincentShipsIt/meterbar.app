@@ -1,4 +1,5 @@
 import Foundation
+import MeterBarShared
 import AppKit
 import Combine
 
@@ -8,12 +9,11 @@ class ClaudeCodeLocalService: ObservableObject {
     // Working endpoint (discovered via testing)
     private let usageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 
-    private let baseURL = "https://api.anthropic.com"
     private let keychainService = "Claude Code-credentials"
     private let cliUsageService = ClaudeCodeCLIUsageService.shared
-    private let oauthFallbackUserDefaultsKey = "ClaudeCodeEnableOAuthFallback"
+    private let oauthFallbackUserDefaultsKey = StorageKeys.claudeCodeOAuthFallback
 
-    private let urlSession = ServiceSupport.makeUsageSession()
+    private let urlSession = ServiceSupport.session
 
     @Published private(set) var hasAccess: Bool = false
     @Published private(set) var subscriptionType: String?
@@ -22,8 +22,9 @@ class ClaudeCodeLocalService: ObservableObject {
     @Published private(set) var authState: ClaudeCodeAuthState = .unavailable
 
     private init() {
-        // Check if we have Claude Code credentials on init
-        checkAccess()
+        // Defer keychain/filesystem I/O off the init thread, like the other
+        // local services (this previously ran synchronously in init).
+        Task.detached(priority: .utility) { [weak self] in self?.checkAccess() }
     }
 
     // MARK: - Keychain Access
@@ -79,18 +80,29 @@ class ClaudeCodeLocalService: ObservableObject {
 
     /// Check and update access status
     func checkAccess() {
+        let newHasAccess: Bool
+        let newAuthState: ClaudeCodeAuthState
+        var clearsSubscription = false
+
         if cliUsageService.isAvailable() {
-            hasAccess = true
-            authState = .cliAvailable
-        } else if isOAuthFallbackEnabled, let _ = getOAuthToken() {
-            hasAccess = true
-            authState = .connected(.legacyOAuth)
+            newHasAccess = true
+            newAuthState = .cliAvailable
+        } else if isOAuthFallbackEnabled, getOAuthToken() != nil {
+            newHasAccess = true
+            newAuthState = .connected(.legacyOAuth)
         } else {
-            hasAccess = false
-            authState = .unavailable
-            if !isOAuthFallbackEnabled || getCredentials() == nil {
-                subscriptionType = nil
-                rateLimitTier = nil
+            newHasAccess = false
+            newAuthState = .unavailable
+            clearsSubscription = !isOAuthFallbackEnabled || getCredentials() == nil
+        }
+
+        ServiceSupport.applyOnMain { [weak self] in
+            guard let self else { return }
+            self.hasAccess = newHasAccess
+            self.authState = newAuthState
+            if clearsSubscription {
+                self.subscriptionType = nil
+                self.rateLimitTier = nil
             }
         }
     }
@@ -136,7 +148,7 @@ class ClaudeCodeLocalService: ObservableObject {
         }
 
         guard let url = URL(string: usageEndpoint) else {
-            throw ServiceError.apiError("Invalid usage endpoint URL")
+            throw ServiceError.invalidURL
         }
 
         var request = URLRequest(url: url)
@@ -149,24 +161,7 @@ class ClaudeCodeLocalService: ObservableObject {
 
         do {
             let (data, response) = try await urlSession.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw ServiceError.apiError("Invalid response type")
-            }
-
-            if httpResponse.statusCode == 401 {
-                await MainActor.run {
-                    self.hasAccess = false
-                    self.lastError = ServiceError.notAuthenticated
-                    self.authState = .needsLogin
-                }
-                throw ServiceError.notAuthenticated
-            }
-
-            guard (200...299).contains(httpResponse.statusCode) else {
-                let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
-                throw ServiceError.apiError("HTTP \(httpResponse.statusCode): \(errorMessage)")
-            }
+            try ServiceSupport.validate(response, data: data)
 
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
@@ -195,7 +190,7 @@ class ClaudeCodeLocalService: ObservableObject {
             )
 
             // Sonnet-only weekly limit (if available)
-            var sonnetLimit: UsageLimit? = nil
+            var sonnetLimit: UsageLimit?
             if let sonnet = usageResponse.sevenDaySonnet {
                 sonnetLimit = UsageLimit(
                     used: sonnet.utilization,
@@ -212,21 +207,16 @@ class ClaudeCodeLocalService: ObservableObject {
                 codeReviewLimit: sonnetLimit,
                 extraUsage: usageResponse.extraUsageStatus
             )
-        } catch let urlError as URLError {
-            let errorMessage = ServiceSupport.message(for: urlError)
-            let error = ServiceError.apiError(errorMessage)
-            await MainActor.run {
-                self.lastError = error
-                self.authState = .error(errorMessage)
-            }
-            throw error
-        } catch let error as ServiceError {
-            throw error
         } catch {
-            let serviceError = ServiceError.parsingError
+            let serviceError = ServiceSupport.serviceError(from: error)
             await MainActor.run {
                 self.lastError = serviceError
-                self.authState = .error(serviceError.localizedDescription)
+                if case .notAuthenticated = serviceError {
+                    self.hasAccess = false
+                    self.authState = .needsLogin
+                } else {
+                    self.authState = .error(serviceError.localizedDescription)
+                }
             }
             throw serviceError
         }
@@ -362,10 +352,6 @@ enum ClaudeCodeAuthState: Equatable {
 
 struct ClaudeCodeCredentials: Codable {
     let claudeAiOauth: ClaudeAiOAuth
-
-    enum CodingKeys: String, CodingKey {
-        case claudeAiOauth = "claudeAiOauth"
-    }
 }
 
 struct ClaudeAiOAuth: Codable {

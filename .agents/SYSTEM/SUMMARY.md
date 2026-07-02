@@ -31,7 +31,7 @@
 
 - **Initial Implementation:** All core features implemented
 - **Project Structure:** Complete Swift/SwiftUI architecture
-- **Documentation:** Created `.agent/` documentation structure
+- **Documentation:** Created `.agents/` documentation structure
 
 ---
 

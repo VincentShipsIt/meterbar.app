@@ -1,4 +1,5 @@
 import Combine
+import MeterBarShared
 import Foundation
 import os
 import SQLite3
@@ -12,7 +13,6 @@ class CostTracker: ObservableObject {
     @Published var lastScanDate: Date?
 
     private let providerVisibilityStore = ProviderVisibilityStore.shared
-    private let cacheFileName = "cost-summary-v1.json"
 
     /// True while either a manual scan or a background missing-day backfill runs.
     var isRefreshInProgress: Bool {
@@ -20,18 +20,31 @@ class CostTracker: ObservableObject {
     }
 
     // API-rate estimates per million tokens for local log usage.
+    // Prices last verified against provider pricing pages: 2026-07-02. These rot
+    // silently — re-verify when adding models or when estimates look off.
+    // NOTE: MeterBarCLI/Sources/MeterBarCLI.swift carries a simplified copy of the
+    // "claude-sonnet" entry; keep the two in sync until a shared package exists
+    // (.agents/docs/DEFERRED_WORK.md §1).
     private let pricing: [String: TokenPricing] = [
         "claude-sonnet": TokenPricing(input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30),
         "claude-opus": TokenPricing(input: 15.0, output: 75.0, cacheCreation: 18.75, cacheRead: 1.50),
         "claude-haiku": TokenPricing(input: 0.25, output: 1.25, cacheCreation: 0.30, cacheRead: 0.03),
-        "claude-fable-5": TokenPricing(input: 10.0, output: 50.0, cacheCreation: 12.5, cacheRead: 1.0, cacheCreationOneHour: 20.0),
-        "claude-opus-4-8": TokenPricing(input: 5.0, output: 25.0, cacheCreation: 6.25, cacheRead: 0.50, cacheCreationOneHour: 10.0),
-        "claude-opus-4-7": TokenPricing(input: 5.0, output: 25.0, cacheCreation: 6.25, cacheRead: 0.50, cacheCreationOneHour: 10.0),
-        "claude-opus-4-6": TokenPricing(input: 5.0, output: 25.0, cacheCreation: 6.25, cacheRead: 0.50, cacheCreationOneHour: 10.0),
-        "claude-sonnet-4-6": TokenPricing(input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30, cacheCreationOneHour: 6.0),
-        "claude-sonnet-4-5": TokenPricing(input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30, cacheCreationOneHour: 6.0),
-        "claude-sonnet-4": TokenPricing(input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30, cacheCreationOneHour: 6.0),
-        "claude-haiku-4-5": TokenPricing(input: 1.0, output: 5.0, cacheCreation: 1.25, cacheRead: 0.10, cacheCreationOneHour: 2.0),
+        "claude-fable-5": TokenPricing(
+            input: 10.0, output: 50.0, cacheCreation: 12.5, cacheRead: 1.0, cacheCreationOneHour: 20.0),
+        "claude-opus-4-8": TokenPricing(
+            input: 5.0, output: 25.0, cacheCreation: 6.25, cacheRead: 0.50, cacheCreationOneHour: 10.0),
+        "claude-opus-4-7": TokenPricing(
+            input: 5.0, output: 25.0, cacheCreation: 6.25, cacheRead: 0.50, cacheCreationOneHour: 10.0),
+        "claude-opus-4-6": TokenPricing(
+            input: 5.0, output: 25.0, cacheCreation: 6.25, cacheRead: 0.50, cacheCreationOneHour: 10.0),
+        "claude-sonnet-4-6": TokenPricing(
+            input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30, cacheCreationOneHour: 6.0),
+        "claude-sonnet-4-5": TokenPricing(
+            input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30, cacheCreationOneHour: 6.0),
+        "claude-sonnet-4": TokenPricing(
+            input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30, cacheCreationOneHour: 6.0),
+        "claude-haiku-4-5": TokenPricing(
+            input: 1.0, output: 5.0, cacheCreation: 1.25, cacheRead: 0.10, cacheCreationOneHour: 2.0),
         "codex": TokenPricing(input: 1.25, output: 10.0, cacheCreation: 0, cacheRead: 0.125),
         "default": TokenPricing(input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30)
     ]
@@ -40,22 +53,9 @@ class CostTracker: ObservableObject {
     /// `pricing["default"]`. Mirrors the `"default"` entry above.
     private let defaultPricing = TokenPricing(input: 3.0, output: 15.0, cacheCreation: 3.75, cacheRead: 0.30)
 
-    // Cached formatters/regexes. The scan parses tens of thousands of log lines,
-    // so allocating an ISO8601DateFormatter/NSRegularExpression per call was a
-    // measurable hot-path cost. `ISO8601DateFormatter.date(from:)` and
-    // `NSRegularExpression` are safe to share across reads.
-    private static let fractionalISO8601Formatter: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
-
-    private static let plainISO8601Formatter: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter
-    }()
-
+    // Cached regexes. The scan parses tens of thousands of log lines, so
+    // allocating an NSRegularExpression per call was a measurable hot-path
+    // cost. Date parsing shares the cached FlexibleISO8601 formatters.
     private static let codexLogValueRegexes: [String: NSRegularExpression] = {
         let keys = [
             "event.timestamp", "input_token_count", "output_token_count",
@@ -172,53 +172,17 @@ class CostTracker: ObservableObject {
         )
     }
 
-    private var cacheURL: URL? {
-        guard let supportDirectory = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first else {
-            return nil
-        }
-
-        return supportDirectory
-            .appendingPathComponent("MeterBar", isDirectory: true)
-            .appendingPathComponent(cacheFileName)
-    }
-
     private func loadCachedSummary() {
-        guard let cacheURL,
-              let data = try? Data(contentsOf: cacheURL) else {
-            return
-        }
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
-        do {
-            let cache = try decoder.decode(CostSummaryCache.self, from: data)
-            costSummary = cache.summary
-            lastScanDate = cache.lastScanDate
-        } catch {
-            AppLog.cost.error("Failed to load cost summary cache: \(error.localizedDescription, privacy: .public)")
-        }
+        guard let cache = CostSummaryStore.load() else { return }
+        costSummary = cache.summary
+        lastScanDate = cache.lastScanDate
     }
 
     private func saveCachedSummary() {
-        guard let costSummary,
-              let cacheURL,
-              let lastScanDate else {
-            return
-        }
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let costSummary, let lastScanDate else { return }
 
         do {
-            let directory = cacheURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let data = try encoder.encode(CostSummaryCache(summary: costSummary, lastScanDate: lastScanDate))
-            try data.write(to: cacheURL, options: [.atomic])
+            try CostSummaryStore.save(CostSummaryCache(summary: costSummary, lastScanDate: lastScanDate))
         } catch {
             AppLog.cost.error("Failed to save cost summary cache: \(error.localizedDescription, privacy: .public)")
         }
@@ -260,10 +224,8 @@ class CostTracker: ObservableObject {
                     continue
                 }
 
-                let (input, output, cacheCreate, cacheReadTokens, estimatedCost, dates, daily, models, origins) = parseSessionFile(
-                    at: url,
-                    since: cutoffDate
-                )
+                let (input, output, cacheCreate, cacheReadTokens, estimatedCost, dates, daily, models, origins) =
+                    parseSessionFile(at: url, since: cutoffDate)
 
                 if input > 0 || output > 0 || cacheCreate > 0 || cacheReadTokens > 0 {
                     totalInput += input
@@ -315,7 +277,10 @@ class CostTracker: ObservableObject {
 
     private func claudeProjectRoots(accounts: [ClaudeCodeAccount]) -> [URL] {
         let fileManager = FileManager.default
-        let home = fileManager.homeDirectoryForCurrentUser
+        // realHomeDirectory, not homeDirectoryForCurrentUser: in sandboxed
+        // builds the latter is the app container, and the scan would silently
+        // find zero logs while quota fetching kept working.
+        let home = URL(fileURLWithPath: ServiceSupport.realHomeDirectory(), isDirectory: true)
         var roots: [URL] = []
 
         if let env = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"]?
@@ -364,7 +329,7 @@ class CostTracker: ObservableObject {
         return url.appendingPathComponent("projects", isDirectory: true)
     }
 
-    private func parseSessionFile(
+    func parseSessionFile(
         at url: URL,
         since cutoffDate: Date
     ) -> (
@@ -403,7 +368,7 @@ class CostTracker: ObservableObject {
             }
 
             guard let timestampStr = json["timestamp"] as? String,
-                  let timestamp = parseISO8601(timestampStr),
+                  let timestamp = FlexibleISO8601.date(from: timestampStr),
                   timestamp >= cutoffDate else {
                 continue
             }
@@ -475,14 +440,8 @@ class CostTracker: ObservableObject {
             )
         }
 
-        return (totalInput, totalOutput, totalCacheCreation, totalCacheRead, totalEstimatedCost, dates, dailyTotals, modelTotals, originTotals)
-    }
-
-    private func parseISO8601(_ value: String) -> Date? {
-        if let date = Self.fractionalISO8601Formatter.date(from: value) {
-            return date
-        }
-        return Self.plainISO8601Formatter.date(from: value)
+        return (totalInput, totalOutput, totalCacheCreation, totalCacheRead, totalEstimatedCost,
+                dates, dailyTotals, modelTotals, originTotals)
     }
 
     private func claudeOneHourCacheCreationTokens(in usage: [String: Any]) -> Int {
@@ -492,7 +451,7 @@ class CostTracker: ObservableObject {
         return min(total, max(0, oneHour))
     }
 
-    private func claudePricing(for model: String?) -> TokenPricing {
+    func claudePricing(for model: String?) -> TokenPricing {
         guard let model else {
             return pricing["claude-sonnet"] ?? defaultPricing
         }
@@ -506,10 +465,11 @@ class CostTracker: ObservableObject {
             return pricing["claude-fable-5"] ?? defaultPricing
         }
         if normalized.contains("opus") {
-            if normalized.contains("4-8") { return pricing["claude-opus-4-8"] ?? (pricing["claude-opus"] ?? defaultPricing) }
-            if normalized.contains("4-7") { return pricing["claude-opus-4-7"] ?? (pricing["claude-opus"] ?? defaultPricing) }
-            if normalized.contains("4-6") { return pricing["claude-opus-4-6"] ?? (pricing["claude-opus"] ?? defaultPricing) }
-            return pricing["claude-opus"] ?? defaultPricing
+            let base = pricing["claude-opus"] ?? defaultPricing
+            if normalized.contains("4-8") { return pricing["claude-opus-4-8"] ?? base }
+            if normalized.contains("4-7") { return pricing["claude-opus-4-7"] ?? base }
+            if normalized.contains("4-6") { return pricing["claude-opus-4-6"] ?? base }
+            return base
         }
         if normalized.contains("haiku") {
             return normalized.contains("4-5")
@@ -517,16 +477,17 @@ class CostTracker: ObservableObject {
                 : pricing["claude-haiku"] ?? defaultPricing
         }
         if normalized.contains("sonnet") {
-            if normalized.contains("4-6") { return pricing["claude-sonnet-4-6"] ?? (pricing["claude-sonnet"] ?? defaultPricing) }
-            if normalized.contains("4-5") { return pricing["claude-sonnet-4-5"] ?? (pricing["claude-sonnet"] ?? defaultPricing) }
-            if normalized.contains("4") { return pricing["claude-sonnet-4"] ?? (pricing["claude-sonnet"] ?? defaultPricing) }
-            return pricing["claude-sonnet"] ?? defaultPricing
+            let base = pricing["claude-sonnet"] ?? defaultPricing
+            if normalized.contains("4-6") { return pricing["claude-sonnet-4-6"] ?? base }
+            if normalized.contains("4-5") { return pricing["claude-sonnet-4-5"] ?? base }
+            if normalized.contains("4") { return pricing["claude-sonnet-4"] ?? base }
+            return base
         }
 
         return defaultPricing
     }
 
-    private func normalizeClaudeModel(_ raw: String) -> String {
+    func normalizeClaudeModel(_ raw: String) -> String {
         var trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.hasPrefix("anthropic.") {
             trimmed = String(trimmed.dropFirst("anthropic.".count))
@@ -552,7 +513,8 @@ class CostTracker: ObservableObject {
     }
 
     private func scanCodexSessions(since cutoffDate: Date) -> (TokenCost, [DailyTokenUsage])? {
-        let codexDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
+        let codexDir = URL(fileURLWithPath: ServiceSupport.realHomeDirectory(), isDirectory: true)
+            .appendingPathComponent(".codex")
         let archivedDir = codexDir.appendingPathComponent("archived_sessions")
         let logsDatabase = codexDir.appendingPathComponent("logs_2.sqlite")
         var context = CodexScanContext(earliestDate: Date(), latestDate: cutoffDate)
@@ -602,8 +564,6 @@ class CostTracker: ObservableObject {
             return
         }
 
-        let formatter = Self.fractionalISO8601Formatter
-
         for case let fileURL as URL in enumerator where fileURL.pathExtension == "jsonl" {
             guard let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]),
                   let modificationDate = values.contentModificationDate,
@@ -617,7 +577,7 @@ class CostTracker: ObservableObject {
                       let data = String(line).data(using: .utf8),
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let timestampText = json["timestamp"] as? String,
-                      let timestamp = formatter.date(from: timestampText),
+                      let timestamp = FlexibleISO8601.date(from: timestampText),
                       timestamp >= cutoffDate,
                       let payload = json["payload"] as? [String: Any],
                       payload["type"] as? String == "token_count",
@@ -860,15 +820,21 @@ class CostTracker: ObservableObject {
             .joined(separator: " ")
     }
 
-    private func calculateCost(input: Int, output: Int, cacheCreation: Int, cacheRead: Int, pricing: TokenPricing) -> Double {
-        let inputCost = Double(input) / 1_000_000 * pricing.input
-        let outputCost = Double(output) / 1_000_000 * pricing.output
-        let cacheCreationCost = Double(cacheCreation) / 1_000_000 * pricing.cacheCreation
-        let cacheReadCost = Double(cacheRead) / 1_000_000 * pricing.cacheRead
-        return inputCost + outputCost + cacheCreationCost + cacheReadCost
+    /// Cost without a one-hour cache tier — delegates to `calculateClaudeCost`
+    /// so there is exactly one pricing formula. (These were near-duplicates
+    /// that had drifted: only the Claude variant clamped negative inputs.)
+    func calculateCost(input: Int, output: Int, cacheCreation: Int, cacheRead: Int, pricing: TokenPricing) -> Double {
+        calculateClaudeCost(
+            input: input,
+            output: output,
+            cacheCreation: cacheCreation,
+            cacheCreationOneHour: 0,
+            cacheRead: cacheRead,
+            pricing: pricing
+        )
     }
 
-    private func calculateClaudeCost(
+    func calculateClaudeCost(
         input: Int,
         output: Int,
         cacheCreation: Int,
@@ -898,7 +864,7 @@ class CostTracker: ObservableObject {
 
     private func codexLogDate(in text: String) -> Date? {
         guard let value = codexLogValue("event.timestamp", in: text) else { return nil }
-        return Self.fractionalISO8601Formatter.date(from: value)
+        return FlexibleISO8601.date(from: value)
     }
 
     private func codexLogInt(_ key: String, in text: String) -> Int {
@@ -924,11 +890,6 @@ class CostTracker: ObservableObject {
     }
 }
 
-private struct CostSummaryCache: Codable {
-    let summary: CostSummary
-    let lastScanDate: Date
-}
-
 /// Mutable accumulators threaded through the Codex scan. Bundling these into one
 /// value collapses `addCodexUsage`/`scanCodexArchivedSessions`/`scanCodexSQLiteLogs`
 /// from 10–13 parameters (a SwiftLint `function_parameter_count` error) down to
@@ -944,7 +905,7 @@ private struct CodexScanContext {
     var latestDate: Date
 }
 
-private struct TokenPricing {
+struct TokenPricing {
     let input: Double      // per million tokens
     let output: Double     // per million tokens
     let cacheCreation: Double
@@ -966,7 +927,7 @@ private struct TokenPricing {
     }
 }
 
-private struct TokenAccumulator {
+struct TokenAccumulator {
     var input = 0
     var output = 0
     var cacheCreation = 0

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import MeterBarShared
 
 @MainActor
 final class UsageDashboardWindowController {
@@ -71,6 +72,10 @@ struct UsageDashboardView: View {
     @StateObject private var costTracker = CostTracker.shared
     @StateObject private var claudeAccountStore = ClaudeCodeAccountStore.shared
     @StateObject private var providerVisibility = ProviderVisibilityStore.shared
+    @StateObject private var claudeCodeService = ClaudeCodeLocalService.shared
+    @StateObject private var codexCliService = CodexCliLocalService.shared
+    @StateObject private var cursorService = CursorLocalService.shared
+    @StateObject private var apiUsageStore = ApiUsageStore.shared
 
     @State private var selectedSection: DashboardSection = .overview
     @State private var columnVisibility = NavigationSplitViewVisibility.all
@@ -173,7 +178,8 @@ struct UsageDashboardView: View {
             DashboardStatusHero(
                 title: overviewStatusTitle,
                 detail: overviewStatusDetail,
-                color: tightestWindowColor
+                iconName: overviewStatusIconName,
+                color: overviewBand?.color ?? .secondary
             )
 
             LazyVGrid(columns: overviewGridColumns, alignment: .leading, spacing: 12) {
@@ -190,9 +196,18 @@ struct UsageDashboardView: View {
             }
             .frame(maxWidth: .infinity)
 
+            if apiUsageStore.hasAnyAuthenticated {
+                DashboardCard(title: "Organization API Spend", trailing: "") {
+                    ApiUsageSection(store: apiUsageStore, embedded: true)
+                }
+            }
+
             DashboardCard(title: "Last 30 Days", trailing: costRefreshStatusText) {
                 costScanChart(height: 180, compact: true)
             }
+        }
+        .task {
+            await apiUsageStore.refresh()
         }
     }
 
@@ -218,11 +233,7 @@ struct UsageDashboardView: View {
                 }
             } else {
                 ForEach(providerSnapshots) { snapshot in
-                    ProviderLimitsCard(
-                        snapshot: snapshot,
-                        accentColor: color(for: snapshot.service),
-                        updatedText: "Updated \(relativeDate(snapshot.lastUpdated))"
-                    )
+                    ProviderLimitsCard(snapshot: snapshot)
                 }
             }
         }
@@ -233,7 +244,10 @@ struct UsageDashboardView: View {
         VStack(alignment: .leading, spacing: 14) {
             DashboardCard(title: "30 Day API-Rate Token Spend", trailing: costRefreshStatusText) {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("Local subscription logs are estimated using API token rates so Codex and Claude can be compared.")
+                    Text(
+                        "Local subscription logs are estimated using API token rates "
+                            + "so Codex and Claude can be compared."
+                    )
                         .font(.caption)
                         .foregroundColor(.secondary)
 
@@ -268,7 +282,10 @@ struct UsageDashboardView: View {
 
                     if let summary = visibleCostSummary, !summary.costs.isEmpty {
                         ForEach(summary.costs) { cost in
-                            ProviderCostBreakdown(cost: cost)
+                            ProviderCostBreakdown(
+                                cost: cost,
+                                quotaSnapshot: providerSnapshot(for: cost.provider)
+                            )
                         }
                     } else {
                         Text("No enabled provider token logs found yet.")
@@ -307,35 +324,26 @@ struct UsageDashboardView: View {
             .frame(maxWidth: .infinity, minHeight: 520, alignment: .leading)
     }
 
-    private var providerSnapshots: [DashboardProviderSnapshot] {
-        var snapshots: [DashboardProviderSnapshot] = []
+    private var providerSnapshots: [ProviderSnapshot] {
+        // Same builder the popover uses; the dashboard only renders providers
+        // that have reported metrics.
+        ProviderSnapshotBuilder.snapshots(ProviderSnapshotBuilder.Input(
+            metrics: dataManager.metrics,
+            claudeAccounts: claudeAccountStore.accounts,
+            claudeAccountMetrics: dataManager.claudeCodeAccountMetrics,
+            enabledServices: providerVisibility.enabledServices,
+            claudeCodeHasAccess: claudeCodeService.hasAccess,
+            codexCliHasAccess: codexCliService.hasAccess,
+            cursorHasAccess: cursorService.hasAccess
+        ))
+        .filter(\.hasMetrics)
+    }
 
-        if providerVisibility.isEnabled(.codexCli), let codex = dataManager.metrics[.codexCli] {
-            snapshots.append(DashboardProviderSnapshot(title: "Codex", service: .codexCli, metrics: codex))
-        }
-
-        if providerVisibility.isEnabled(.claudeCode) {
-            let claudeAccountMetrics = dataManager.claudeCodeAccountMetrics
-            if !claudeAccountMetrics.isEmpty {
-                for account in claudeAccountStore.accounts {
-                    if let metrics = claudeAccountMetrics[account.id] {
-                        snapshots.append(DashboardProviderSnapshot(
-                            title: account.isDefault && claudeAccountStore.accounts.count == 1 ? "Claude" : account.name,
-                            service: .claudeCode,
-                            metrics: metrics
-                        ))
-                    }
-                }
-            } else if let claude = dataManager.metrics[.claudeCode] {
-                snapshots.append(DashboardProviderSnapshot(title: "Claude", service: .claudeCode, metrics: claude))
-            }
-        }
-
-        if providerVisibility.isEnabled(.cursor), let cursor = dataManager.metrics[.cursor] {
-            snapshots.append(DashboardProviderSnapshot(title: "Cursor", service: .cursor, metrics: cursor))
-        }
-
-        return snapshots
+    /// The snapshot for a provider in the Costs panel — prefers an exhausted
+    /// one so the cost card can surface when that provider's quota resets.
+    private func providerSnapshot(for service: ServiceType) -> ProviderSnapshot? {
+        let matches = providerSnapshots.filter { $0.service == service }
+        return matches.first(where: \.hasExhaustedLimit) ?? matches.first
     }
 
     private var visibleCostSummary: CostSummary? {
@@ -353,41 +361,42 @@ struct UsageDashboardView: View {
         if providerVisibility.isEnabled(.cursor) {
             labels.append("Cursor local state")
         }
-        if providerVisibility.isEnabled(.claude) || providerVisibility.isEnabled(.openai) {
-            labels.append("Quota APIs")
-        }
         return labels
     }
 
-    private var tightestWindowColor: Color {
-        guard let limit = providerSnapshots.flatMap(\.limits).min(by: { $0.percentLeft < $1.percentLeft }) else {
-            return .secondary
-        }
-        return MeterBarTheme.quotaStatusColor(percentLeft: limit.percentLeft)
+    private var tightestLimit: SnapshotLimit? {
+        providerSnapshots.tightestLimit
+    }
+
+    private var overviewBand: QuotaBand? {
+        tightestLimit.map { QuotaBand.forPercentLeft($0.percentLeft) }
     }
 
     private var overviewStatusTitle: String {
         guard !providerSnapshots.isEmpty else { return "No sources enabled" }
-        guard let limit = providerSnapshots.flatMap(\.limits).min(by: { $0.percentLeft < $1.percentLeft }) else {
-            return "Waiting for usage"
-        }
-        if limit.percentLeft <= 0 { return "Quota exhausted" }
-        if limit.percentLeft <= 10 { return "Quota needs attention" }
-        if limit.percentLeft <= 25 { return "Quota is tight" }
-        return "All tracked quotas look healthy"
+        guard let overviewBand else { return "Waiting for usage" }
+        return overviewBand.overviewTitle
+    }
+
+    private var overviewStatusIconName: String {
+        // Neutral states (no providers enabled / no usage yet) should not show
+        // the healthy green shield, which falsely implies tracked quotas look good.
+        overviewBand?.iconName ?? "circle.dashed"
     }
 
     private var overviewStatusDetail: String {
         guard !providerSnapshots.isEmpty else {
             return "Enable providers in Settings to show quota status."
         }
-        guard let limit = providerSnapshots.flatMap(\.limits).min(by: { $0.percentLeft < $1.percentLeft }) else {
+        guard let tightestLimit else {
             return "Refresh to load enabled provider status."
         }
-        if limit.percentLeft <= 0 {
-            return "\(limit.title) is out until reset. Tracking \(providerSnapshots.count) local provider sources."
+        if tightestLimit.percentLeft <= 0 {
+            return "\(tightestLimit.title) is out until reset. "
+                + "Tracking \(providerSnapshots.count) local provider sources."
         }
-        return "\(limit.title) has \(limit.percentLeft)% left. Tracking \(providerSnapshots.count) local provider sources."
+        return "\(tightestLimit.title) has \(tightestLimit.percentLeft)% left. "
+            + "Tracking \(providerSnapshots.count) local provider sources."
     }
 
     private var sectionSubtitle: String {
@@ -438,57 +447,6 @@ struct UsageDashboardView: View {
         guard activeSection == .overview || activeSection == .costs else { return }
         await costTracker.refreshMissingDaysInBackground(days: 30)
     }
-
-    private func color(for service: ServiceType) -> Color {
-        MeterBarTheme.accent(for: service)
-    }
-
-    private func relativeDate(_ date: Date) -> String {
-        UsageFormat.relative(date)
-    }
-}
-
-private struct DashboardProviderSnapshot: Identifiable {
-    let id: String
-    let title: String
-    let service: ServiceType
-    let logoKind: ProviderLogoKind
-    let lastUpdated: Date
-    let limits: [DashboardLimit]
-
-    init(title: String, service: ServiceType, metrics: UsageMetrics) {
-        self.id = "\(service.rawValue)-\(title)"
-        self.title = title
-        self.service = service
-        self.logoKind = providerLogoKind(for: service)
-        self.lastUpdated = metrics.lastUpdated
-        self.limits = [
-            DashboardLimit(title: "Session", limit: metrics.sessionLimit),
-            DashboardLimit(title: "Weekly", limit: metrics.weeklyLimit),
-            DashboardLimit(title: service == .codexCli ? "Code Review" : "Sonnet", limit: metrics.codeReviewLimit)
-        ].compactMap { $0 }
-    }
-}
-
-private struct DashboardLimit: Identifiable {
-    let id = UUID()
-    let title: String
-    let usageLimit: UsageLimit
-
-    init?(title: String, limit: UsageLimit?) {
-        guard let limit else { return nil }
-        self.title = title
-        self.usageLimit = limit
-    }
-
-    var usedPercent: Double {
-        usageLimit.rawPercentage
-    }
-
-    var percentLeft: Int {
-        let remainingPercent = max(0, 100 - usedPercent)
-        return remainingPercent == 0 ? 0 : max(1, Int(ceil(remainingPercent)))
-    }
 }
 
 private let overviewTileMinHeight: CGFloat = 220
@@ -496,24 +454,8 @@ private let overviewTileMinHeight: CGFloat = 220
 private struct DashboardStatusHero: View {
     let title: String
     let detail: String
+    let iconName: String
     let color: Color
-
-    private var iconName: String {
-        if title.localizedCaseInsensitiveContains("exhausted") {
-            return "exclamationmark.octagon.fill"
-        }
-        if title.localizedCaseInsensitiveContains("attention")
-            || title.localizedCaseInsensitiveContains("tight") {
-            return "exclamationmark.triangle.fill"
-        }
-        // Neutral states (no providers enabled / no usage yet) should not show the
-        // healthy green shield, which falsely implies tracked quotas look good.
-        if title.localizedCaseInsensitiveContains("no sources")
-            || title.localizedCaseInsensitiveContains("waiting") {
-            return "circle.dashed"
-        }
-        return "checkmark.shield.fill"
-    }
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
@@ -543,33 +485,25 @@ private struct DashboardStatusHero: View {
 }
 
 private struct ProviderOverviewStatusCard: View {
-    let snapshot: DashboardProviderSnapshot
-
-    private var accentColor: Color {
-        MeterBarTheme.accent(for: snapshot.service)
-    }
-
-    private var primaryLimit: DashboardLimit? {
-        snapshot.limits.min { $0.percentLeft < $1.percentLeft }
-    }
+    let snapshot: ProviderSnapshot
 
     private var statusText: String {
-        guard let primaryLimit else { return "No data" }
-        if primaryLimit.percentLeft <= 0 { return "Out" }
-        if primaryLimit.percentLeft <= 10 { return "Critical" }
-        if primaryLimit.percentLeft <= 25 { return "Tight" }
-        return "Healthy"
+        snapshot.band?.shortLabel ?? "No data"
+    }
+
+    private var statusColor: Color {
+        snapshot.band?.color ?? .secondary
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 9) {
-                ProviderLogoView(kind: snapshot.logoKind, size: 20, foregroundColor: accentColor)
+                ProviderLogoView(kind: snapshot.logoKind, size: 20, foregroundColor: snapshot.accentColor)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(snapshot.title)
                         .font(.headline)
                         .fontWeight(.semibold)
-                    Text("Updated \(relativeDate(snapshot.lastUpdated))")
+                    Text(updatedText)
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -588,7 +522,7 @@ private struct ProviderOverviewStatusCard: View {
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(snapshot.limits) { limit in
-                        DashboardLimitRow(limit: limit, accentColor: accentColor)
+                        DashboardLimitRow(limit: limit, accentColor: snapshot.accentColor)
                     }
                 }
             }
@@ -602,13 +536,9 @@ private struct ProviderOverviewStatusCard: View {
         .dashboardCardBackground()
     }
 
-    private var statusColor: Color {
-        guard let primaryLimit else { return .secondary }
-        return MeterBarTheme.quotaStatusColor(percentLeft: primaryLimit.percentLeft)
-    }
-
-    private func relativeDate(_ date: Date) -> String {
-        UsageFormat.relative(date)
+    private var updatedText: String {
+        guard let updatedAt = snapshot.updatedAt else { return "No data" }
+        return "Updated \(UsageFormat.relative(updatedAt))"
     }
 }
 
@@ -697,9 +627,7 @@ private struct CostOverviewStatusCard: View {
 }
 
 private struct ProviderLimitsCard: View {
-    let snapshot: DashboardProviderSnapshot
-    let accentColor: Color
-    let updatedText: String
+    let snapshot: ProviderSnapshot
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -707,7 +635,7 @@ private struct ProviderLimitsCard: View {
                 ProviderTitle(
                     title: snapshot.title,
                     logoKind: snapshot.logoKind,
-                    color: accentColor,
+                    color: snapshot.accentColor,
                     font: .title3
                 )
                 Spacer()
@@ -722,13 +650,18 @@ private struct ProviderLimitsCard: View {
                     .foregroundColor(.secondary)
             } else {
                 ForEach(snapshot.limits) { limit in
-                    DashboardLimitRow(limit: limit, accentColor: accentColor)
+                    DashboardLimitRow(limit: limit, accentColor: snapshot.accentColor)
                 }
             }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .dashboardCardBackground()
+    }
+
+    private var updatedText: String {
+        guard let updatedAt = snapshot.updatedAt else { return "No data" }
+        return "Updated \(UsageFormat.relative(updatedAt))"
     }
 }
 
@@ -781,12 +714,8 @@ private struct ProviderTitle: View {
 }
 
 private struct DashboardLimitRow: View {
-    let limit: DashboardLimit
+    let limit: SnapshotLimit
     let accentColor: Color
-
-    private var paceContext: PaceLabelContext {
-        limit.title.localizedCaseInsensitiveContains("weekly") ? .weekly : .session
-    }
 
     private var isOut: Bool {
         limit.percentLeft <= 0
@@ -809,7 +738,7 @@ private struct DashboardLimitRow: View {
                 usedPercentage: limit.usedPercent,
                 accentColor: accentColor,
                 pace: limit.usageLimit.pace(),
-                paceContext: paceContext
+                paceContext: limit.paceContext
             )
 
             HStack {
@@ -848,13 +777,13 @@ private struct DashboardLimitRow: View {
             return .secondary
         }
     }
-
 }
 
 private struct CostScanLoadingChart: View {
     let compact: Bool
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion)
+    private var reduceMotion
 
     private let barCount = 30
 
@@ -867,7 +796,8 @@ private struct CostScanLoadingChart: View {
                 let barWidth = max(4, (proxy.size.width - CGFloat(barCount - 1) * spacing) / CGFloat(barCount))
                 let time = timeline.date.timeIntervalSinceReferenceDate
                 let sweepWidth = max(42, proxy.size.width * 0.18)
-                let sweepX = CGFloat(time.truncatingRemainder(dividingBy: 1.8) / 1.8) * (proxy.size.width + sweepWidth) - sweepWidth
+                let sweepProgress = CGFloat(time.truncatingRemainder(dividingBy: 1.8) / 1.8)
+                let sweepX = sweepProgress * (proxy.size.width + sweepWidth) - sweepWidth
 
                 VStack(alignment: .leading, spacing: compact ? 8 : 11) {
                     HStack(spacing: 8) {
@@ -1010,7 +940,7 @@ private struct DailyUsageChart: View {
         self.days = Self.buildDays(from: dailyUsage, daysToShow: daysToShow)
     }
 
-    private static let providerOrder: [ServiceType] = [.claudeCode, .codexCli, .cursor, .claude, .openai]
+    private static let providerOrder: [ServiceType] = [.claudeCode, .codexCli, .cursor]
 
     private static func buildDays(from dailyUsage: [DailyTokenUsage], daysToShow: Int) -> [DailyUsageDay] {
         let calendar = Calendar.current
@@ -1148,7 +1078,10 @@ private struct DailyUsageChart: View {
         } else {
             lines.append("")
             for segment in day.segments {
-                lines.append("\(segment.provider.displayName): \(UsageFormat.tokens(segment.tokens)) · \(UsageFormat.cost(segment.cost))")
+                lines.append(
+                    "\(segment.provider.displayName): "
+                        + "\(UsageFormat.tokens(segment.tokens)) · \(UsageFormat.cost(segment.cost))"
+                )
             }
         }
 
@@ -1408,7 +1341,8 @@ private struct DailyUsageDetailRow: View {
     }
 
     private var accessibilitySummary: String {
-        "\(dateLabel(day.date)), \(UsageFormat.tokens(day.totalTokens)) tokens, \(UsageFormat.cost(day.estimatedCostUSD))"
+        "\(dateLabel(day.date)), \(UsageFormat.tokens(day.totalTokens)) tokens, "
+            + "\(UsageFormat.cost(day.estimatedCostUSD))"
     }
 
     private func dateLabel(_ date: Date) -> String {
@@ -1422,9 +1356,9 @@ private struct DailyProviderUsageSummaryRow: View {
     var body: some View {
         HStack(spacing: 10) {
             ProviderLogoView(
-                kind: providerLogoKind(for: provider.provider),
+                kind: .forService(provider.provider),
                 size: 14,
-                foregroundColor: color(for: provider.provider)
+                foregroundColor: MeterBarTheme.accent(for: provider.provider)
             )
             Text(provider.provider.displayName)
                 .font(.caption)
@@ -1443,9 +1377,10 @@ private struct DailyProviderUsageSummaryRow: View {
 
 private struct ProviderCostBreakdown: View {
     let cost: TokenCost
+    var quotaSnapshot: ProviderSnapshot?
 
     private var logoKind: ProviderLogoKind {
-        providerLogoKind(for: cost.provider)
+        .forService(cost.provider)
     }
 
     private var logoColor: Color {
@@ -1467,6 +1402,13 @@ private struct ProviderCostBreakdown: View {
                     .bold()
             }
 
+            if let quotaSnapshot, quotaSnapshot.hasExhaustedLimit {
+                BlockingLimitResetCounter(
+                    windows: quotaSnapshot.resetWindows,
+                    accentColor: logoColor
+                )
+            }
+
             HStack(spacing: 14) {
                 CostMetric(label: "Tokens", value: cost.formattedTokens)
                 CostMetric(label: "Input", value: UsageFormat.tokens(cost.inputTokens))
@@ -1475,11 +1417,11 @@ private struct ProviderCostBreakdown: View {
             }
 
             if !cost.modelBreakdowns.isEmpty {
-                CostBreakdownSection(title: "Models", items: cost.modelBreakdowns.prefix(6).map { $0 })
+                CostBreakdownSection(title: "Models", items: Array(cost.modelBreakdowns.prefix(6)))
             }
 
             if !cost.originBreakdowns.isEmpty {
-                CostBreakdownSection(title: "Usage Origin", items: cost.originBreakdowns.prefix(6).map { $0 })
+                CostBreakdownSection(title: "Usage Origin", items: Array(cost.originBreakdowns.prefix(6)))
             }
         }
         .padding(12)
@@ -1586,21 +1528,6 @@ private enum DashboardDateFormat {
     static func medium(_ date: Date) -> String { mediumDate.string(from: date) }
     static func month(_ date: Date) -> String { month.string(from: date) }
     static func weekdayMonthDay(_ date: Date) -> String { weekdayMonthDay.string(from: date) }
-}
-
-private func providerLogoKind(for provider: ServiceType) -> ProviderLogoKind {
-    switch provider {
-    case .codexCli, .openai:
-        return .codex
-    case .claude, .claudeCode:
-        return .claude
-    case .cursor:
-        return .cursor
-    }
-}
-
-private func color(for provider: ServiceType) -> Color {
-    MeterBarTheme.accent(for: provider)
 }
 
 private extension View {

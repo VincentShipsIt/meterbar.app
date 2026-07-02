@@ -62,7 +62,7 @@ Suggest workflow improvements:
 
 ### 2025-12-29 - Initial Setup
 
-- Created `.agent/` structure
+- Created `.agents/` structure
 - Documented initial patterns
 
 ---

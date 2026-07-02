@@ -1,10 +1,10 @@
 import SwiftUI
 import AppKit
+import MeterBarShared
 
 struct SettingsView: View {
     let embeddedInDashboard: Bool
 
-    @StateObject private var authManager = AuthenticationManager.shared
     @StateObject private var dataManager = UsageDataManager.shared
     @StateObject private var claudeCodeService = ClaudeCodeLocalService.shared
     @StateObject private var claudeAccountStore = ClaudeCodeAccountStore.shared
@@ -12,14 +12,20 @@ struct SettingsView: View {
     @StateObject private var costTracker = CostTracker.shared
     @StateObject private var providerVisibility = ProviderVisibilityStore.shared
     @StateObject private var dockVisibility = DockVisibilityStore.shared
+    @StateObject private var authManager = AuthenticationManager.shared
+    @StateObject private var apiUsageStore = ApiUsageStore.shared
 
-    @State private var claudeAdminKey: String = ""
-    @State private var openaiAdminKey: String = ""
     @State private var newClaudeAccountName: String = ""
     @State private var newClaudeConfigDirectory: String = ""
+    @State private var claudeReconnectError: String?
+    @State private var claudeAdminKeyDraft: String = ""
+    @State private var openaiAdminKeyDraft: String = ""
 
-    @State private var showingClaudeHelp = false
-    @State private var showingOpenAIHelp = false
+    /// Same key ClaudeCodeLocalService reads. Previously this flag was only
+    /// settable via `defaults write`; exposing it here makes the legacy OAuth
+    /// fallback discoverable instead of a hidden switch.
+    @AppStorage(StorageKeys.claudeCodeOAuthFallback)
+    private var oauthFallbackEnabled = false
 
     init(embeddedInDashboard: Bool = false) {
         self.embeddedInDashboard = embeddedInDashboard
@@ -28,14 +34,8 @@ struct SettingsView: View {
     var body: some View {
         Form {
             trackedProvidersSection
-            if providerVisibility.isEnabled(.claude) {
-                claudeAdminSection
-            }
             if providerVisibility.isEnabled(.claudeCode) {
                 claudeCodeSection
-            }
-            if providerVisibility.isEnabled(.openai) {
-                openAISection
             }
             if providerVisibility.isEnabled(.cursor) {
                 cursorSection
@@ -43,6 +43,7 @@ struct SettingsView: View {
             if showExtraUsageSection {
                 extraUsageSection
             }
+            apiUsageSection
             costTrackingSection
             refreshSection
             generalSection
@@ -54,11 +55,18 @@ struct SettingsView: View {
             minWidth: embeddedInDashboard ? nil : 560,
             minHeight: embeddedInDashboard ? nil : 500
         )
-        .sheet(isPresented: $showingClaudeHelp) {
-            ClaudeHelpView()
-        }
-        .sheet(isPresented: $showingOpenAIHelp) {
-            OpenAIHelpView()
+        .alert(
+            "Claude Reconnect Failed",
+            isPresented: Binding(
+                get: { claudeReconnectError != nil },
+                set: { isPresented in
+                    if !isPresented { claudeReconnectError = nil }
+                }
+            )
+        ) {
+            Button("OK") { claudeReconnectError = nil }
+        } message: {
+            Text(claudeReconnectError ?? "Could not open the Claude reconnect flow.")
         }
     }
 
@@ -136,6 +144,85 @@ struct SettingsView: View {
         }
     }
 
+    private var apiUsageSection: some View {
+        SettingsPanelSection(
+            title: "API Usage (organization)",
+            systemImage: "network",
+            color: MeterBarTheme.appAccent
+        ) {
+            SettingsNotice(
+                text: "Paste an organization admin key to show your pay-as-you-go API spend "
+                    + "(Anthropic / OpenAI) as its own card, separate from subscription quotas. "
+                    + "Keys are stored in the macOS Keychain and only used against the provider's usage API.",
+                color: .secondary
+            )
+
+            adminKeyRow(
+                provider: .anthropic,
+                draft: $claudeAdminKeyDraft,
+                placeholder: "sk-ant-admin...",
+                helpURL: "https://console.anthropic.com/settings/admin-keys"
+            )
+
+            SettingsDivider()
+
+            adminKeyRow(
+                provider: .openai,
+                draft: $openaiAdminKeyDraft,
+                placeholder: "OpenAI admin key",
+                helpURL: "https://platform.openai.com/settings/organization/admin-keys"
+            )
+        }
+    }
+
+    private func adminKeyRow(
+        provider: ApiProvider,
+        draft: Binding<String>,
+        placeholder: String,
+        helpURL: String
+    ) -> some View {
+        let connected = authManager.isAuthenticated(provider)
+        return SettingsRowView(
+            title: provider.displayName,
+            detail: connected ? "Connected. Usage appears on the API card." : "Required for organization usage."
+        ) {
+            HStack(spacing: 8) {
+                StatusPill(title: connected ? "Connected" : "Not Connected", isConnected: connected)
+
+                SecureField(placeholder, text: draft)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 200)
+
+                Button("Save") {
+                    saveAdminKey(provider, draft: draft)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Button("Remove") {
+                    authManager.removeAdminKey(for: provider)
+                    Task { await apiUsageStore.refresh() }
+                }
+                .buttonStyle(.bordered)
+                .disabled(!connected)
+
+                Button("Help") {
+                    if let url = URL(string: helpURL) {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .help("Open \(helpURL)")
+            }
+        }
+    }
+
+    private func saveAdminKey(_ provider: ApiProvider, draft: Binding<String>) {
+        guard authManager.setAdminKey(draft.wrappedValue, for: provider) else { return }
+        draft.wrappedValue = ""
+        Task { await apiUsageStore.refresh() }
+    }
+
     private var trackedProvidersSection: some View {
         SettingsPanelSection(title: "Tracked Providers", systemImage: "switch.2", color: MeterBarTheme.appAccent) {
             providerToggleRow(
@@ -153,56 +240,6 @@ struct SettingsView: View {
                 detail: "Track Cursor quota from local Cursor state.",
                 service: .cursor
             )
-            SettingsDivider()
-            providerToggleRow(
-                title: "Claude Admin API",
-                detail: "Optional organization usage API source.",
-                service: .claude
-            )
-            providerToggleRow(
-                title: "OpenAI Admin API",
-                detail: "Optional platform usage API source.",
-                service: .openai
-            )
-        }
-    }
-
-    private var claudeAdminSection: some View {
-        SettingsPanelSection(title: "Claude (Anthropic)", logoKind: .claude, color: MeterBarTheme.claudeAccent) {
-            SettingsRowView(title: "Connection") {
-                StatusPill(
-                    title: authManager.isClaudeAuthenticated ? "Connected" : "Not Connected",
-                    isConnected: authManager.isClaudeAuthenticated
-                )
-            }
-
-            SettingsRowView(title: "Admin API Key", detail: "Required for organization usage APIs.") {
-                SecureField("sk-ant-admin...", text: $claudeAdminKey)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 330)
-            }
-
-            SettingsRowView(title: "Actions") {
-                HStack(spacing: 8) {
-                    Button("Save") {
-                        _ = authManager.setClaudeAdminKey(claudeAdminKey)
-                        claudeAdminKey = ""
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(claudeAdminKey.isEmpty)
-
-                    Button("Remove", role: .destructive) {
-                        authManager.removeClaudeAdminKey()
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(!authManager.isClaudeAuthenticated)
-
-                    Button("Help") {
-                        showingClaudeHelp = true
-                    }
-                    .buttonStyle(.bordered)
-                }
-            }
         }
     }
 
@@ -251,6 +288,21 @@ struct SettingsView: View {
                 )
             }
 
+            SettingsRowView(
+                title: "Legacy OAuth fallback",
+                detail: "When the Claude CLI is unavailable, read usage via Claude Code's OAuth token."
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { oauthFallbackEnabled },
+                    set: { enabled in
+                        oauthFallbackEnabled = enabled
+                        claudeCodeService.checkAccess()
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+            }
+
             SettingsDivider()
 
             VStack(alignment: .leading, spacing: 8) {
@@ -258,14 +310,27 @@ struct SettingsView: View {
                     .font(.subheadline)
                     .fontWeight(.semibold)
 
-                ForEach(claudeAccountStore.accounts) { account in
-                    AccountProfileRow(account: account) {
-                        claudeAccountStore.removeAccount(id: account.id)
-                        Task {
-                            await dataManager.refreshAll()
-                        }
+                List {
+                    ForEach(claudeAccountStore.accounts) { account in
+                        AccountProfileRow(
+                            account: account,
+                            onSave: { name, configDirectory in
+                                updateClaudeAccount(id: account.id, name: name, configDirectory: configDirectory)
+                            },
+                            onReconnect: { reconnectClaudeAccount(account) },
+                            onRemove: {
+                                claudeAccountStore.removeAccount(id: account.id)
+                                Task { await dataManager.refreshAll() }
+                            }
+                        )
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
                     }
+                    .onMove(perform: moveClaudeAccounts)
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .frame(height: claudeAccountListHeight)
             }
 
             SettingsRowView(title: "New account") {
@@ -274,7 +339,10 @@ struct SettingsView: View {
                     .frame(maxWidth: 220)
             }
 
-            SettingsRowView(title: "Config directory", detail: "Use a separate CLAUDE_CONFIG_DIR for each extra account.") {
+            SettingsRowView(
+                title: "Config directory",
+                detail: "Use a separate CLAUDE_CONFIG_DIR for each extra account."
+            ) {
                 HStack(spacing: 8) {
                     TextField("Path", text: $newClaudeConfigDirectory)
                         .textFieldStyle(.roundedBorder)
@@ -293,45 +361,6 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!canAddClaudeAccount)
-            }
-        }
-    }
-
-    private var openAISection: some View {
-        SettingsPanelSection(title: "OpenAI", logoKind: .codex, color: MeterBarTheme.codexAccent) {
-            SettingsRowView(title: "Connection") {
-                StatusPill(
-                    title: authManager.isOpenAIAuthenticated ? "Connected" : "Not Connected",
-                    isConnected: authManager.isOpenAIAuthenticated
-                )
-            }
-
-            SettingsRowView(title: "Admin API Key", detail: "Required for platform usage APIs.") {
-                SecureField("Admin API Key", text: $openaiAdminKey)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 330)
-            }
-
-            SettingsRowView(title: "Actions") {
-                HStack(spacing: 8) {
-                    Button("Save") {
-                        _ = authManager.setOpenAIAdminKey(openaiAdminKey)
-                        openaiAdminKey = ""
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(openaiAdminKey.isEmpty)
-
-                    Button("Remove", role: .destructive) {
-                        authManager.removeOpenAIAdminKey()
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(!authManager.isOpenAIAuthenticated)
-
-                    Button("Help") {
-                        showingOpenAIHelp = true
-                    }
-                    .buttonStyle(.bordered)
-                }
             }
         }
     }
@@ -364,7 +393,10 @@ struct SettingsView: View {
                         .fontWeight(.semibold)
                 }
             } else if !cursorService.hasAccess {
-                SettingsNotice(text: "Reads Cursor IDE credentials from Cursor's local state database.", color: .secondary)
+                SettingsNotice(
+                    text: "Reads Cursor IDE credentials from Cursor's local state database.",
+                    color: .secondary
+                )
                 SettingsNotice(text: "Log in to Cursor IDE first, then check again.", color: MeterBarTheme.warning)
             }
         }
@@ -416,7 +448,10 @@ struct SettingsView: View {
             }
 
             if !canScanCosts {
-                SettingsNotice(text: "Enable Claude Code or OpenAI Codex to scan local token logs.", color: MeterBarTheme.warning)
+                SettingsNotice(
+                    text: "Enable Claude Code or OpenAI Codex to scan local token logs.",
+                    color: MeterBarTheme.warning
+                )
             }
 
             SettingsRowView(title: "Local sessions") {
@@ -531,6 +566,27 @@ struct SettingsView: View {
             }
         }
     }
+
+    private var claudeAccountListHeight: CGFloat {
+        min(320, max(84, CGFloat(claudeAccountStore.accounts.count) * 84))
+    }
+
+    private func updateClaudeAccount(id: UUID, name: String, configDirectory: String?) {
+        claudeAccountStore.updateAccount(id: id, name: name, configDirectory: configDirectory)
+        Task { await dataManager.refreshAll() }
+    }
+
+    private func moveClaudeAccounts(from source: IndexSet, to destination: Int) {
+        claudeAccountStore.moveAccounts(fromOffsets: source, toOffset: destination)
+    }
+
+    private func reconnectClaudeAccount(_ account: ClaudeCodeAccount) {
+        do {
+            try ClaudeCodeReconnectService.openReconnectTerminal(for: account)
+        } catch {
+            claudeReconnectError = error.localizedDescription
+        }
+    }
 }
 
 private struct SettingsPanelSection<Content: View>: View {
@@ -641,124 +697,112 @@ private struct StatusPill: View {
 
 private struct AccountProfileRow: View {
     let account: ClaudeCodeAccount
+    let onSave: (String, String?) -> Void
+    let onReconnect: () -> Void
     let onRemove: () -> Void
 
+    @State private var nameDraft: String
+    @State private var configDirectoryDraft: String
+
+    init(
+        account: ClaudeCodeAccount,
+        onSave: @escaping (String, String?) -> Void,
+        onReconnect: @escaping () -> Void,
+        onRemove: @escaping () -> Void
+    ) {
+        self.account = account
+        self.onSave = onSave
+        self.onReconnect = onReconnect
+        self.onRemove = onRemove
+        _nameDraft = State(initialValue: account.name)
+        _configDirectoryDraft = State(initialValue: account.configDirectory ?? "")
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "line.3.horizontal")
+                .foregroundStyle(.tertiary)
+                .frame(width: 14)
+                .padding(.top, 8)
+                .help("Drag to reorder")
+
             Image(systemName: account.isDefault ? "person.crop.circle" : "person.crop.circle.badge.plus")
                 .foregroundStyle(MeterBarTheme.claudeAccent)
                 .frame(width: 18)
+                .padding(.top, 4)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(account.name)
+            VStack(alignment: .leading, spacing: 6) {
+                TextField("Account label", text: $nameDraft)
                     .font(.subheadline)
-                    .fontWeight(.semibold)
-                Text(account.configDirectory ?? "Default Claude CLI profile")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 240)
+                    .onSubmit(saveChanges)
+
+                if account.isDefault {
+                    Text("Default Claude CLI profile")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else {
+                    TextField("Config directory", text: $configDirectoryDraft)
+                        .font(.caption)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 300)
+                        .onSubmit(saveChanges)
+                }
             }
 
             Spacer()
 
-            if !account.isDefault {
-                Button("Remove", role: .destructive, action: onRemove)
+            HStack(spacing: 8) {
+                Button(action: onReconnect) {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .help("Reconnect Claude profile")
+
+                Button(action: saveChanges) {
+                    Image(systemName: "checkmark")
+                }
+                .buttonStyle(.bordered)
+                .disabled(!hasChanges || !canSave)
+                .help("Save account changes")
+
+                if !account.isDefault {
+                    Button(role: .destructive, action: onRemove) {
+                        Image(systemName: "trash")
+                    }
                     .buttonStyle(.bordered)
+                    .help("Delete account")
+                }
             }
         }
         .padding(.vertical, 4)
-    }
-}
-
-/// Shared admin-key help sheet. The Claude and OpenAI variants only differ by
-/// copy and the console URL, so they share one layout.
-private struct AdminKeyHelpView: View {
-    @Environment(\.dismiss) var dismiss
-
-    let title: String
-    let intro: String
-    let steps: [String]
-    let note: String
-    let consoleButtonTitle: String
-    let consoleURL: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(title)
-                .font(.title2)
-                .bold()
-
-            Text(intro)
-                .foregroundColor(.secondary)
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
-                    Text("\(index + 1). \(step)")
-                }
-            }
-
-            Divider()
-
-            Text(note)
-                .font(.caption)
-                .foregroundStyle(MeterBarTheme.warning)
-
-            HStack {
-                Button(consoleButtonTitle) {
-                    if let url = URL(string: consoleURL) {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-
-                Spacer()
-
-                Button("Close") {
-                    dismiss()
-                }
-            }
+        .onChange(of: account) { _, updatedAccount in
+            nameDraft = updatedAccount.name
+            configDirectoryDraft = updatedAccount.configDirectory ?? ""
         }
-        .padding()
-        .frame(width: 500, height: 400)
     }
-}
 
-struct ClaudeHelpView: View {
-    var body: some View {
-        AdminKeyHelpView(
-            title: "How to get Claude Admin API Key",
-            intro: "The Usage API requires an Admin API key, which is different from a regular API key.",
-            steps: [
-                "Go to the Claude Console",
-                "Navigate to Settings → Admin Keys",
-                "Click 'Create Admin Key'",
-                "Copy the key (starts with sk-ant-admin...)",
-                "Paste it in the field above"
-            ],
-            note: "Note: You must be an organization admin to create Admin API keys. Individual accounts cannot access the Usage API.",
-            consoleButtonTitle: "Open Claude Console",
-            consoleURL: "https://console.anthropic.com/settings/admin-keys"
-        )
+    private var trimmedName: String {
+        nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
-}
 
-struct OpenAIHelpView: View {
-    var body: some View {
-        AdminKeyHelpView(
-            title: "How to get OpenAI Admin API Key",
-            intro: "The Usage API requires an Admin key from your organization settings.",
-            steps: [
-                "Go to OpenAI Platform",
-                "Navigate to Settings → Organization → Admin Keys",
-                "Click 'Create new admin key'",
-                "Copy the key",
-                "Paste it in the field above"
-            ],
-            note: "Note: You must be an organization owner or admin to create Admin keys.",
-            consoleButtonTitle: "Open OpenAI Settings",
-            consoleURL: "https://platform.openai.com/settings/organization/admin-keys"
-        )
+    private var trimmedConfigDirectory: String {
+        configDirectoryDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var hasChanges: Bool {
+        trimmedName != account.name ||
+            (!account.isDefault && trimmedConfigDirectory != (account.configDirectory ?? ""))
+    }
+
+    private var canSave: Bool {
+        !trimmedName.isEmpty && (account.isDefault || !trimmedConfigDirectory.isEmpty)
+    }
+
+    private func saveChanges() {
+        guard hasChanges, canSave else { return }
+        onSave(trimmedName, account.isDefault ? nil : trimmedConfigDirectory)
     }
 }

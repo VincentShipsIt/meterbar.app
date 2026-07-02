@@ -1,4 +1,5 @@
 import AppKit
+import MeterBarShared
 import SwiftUI
 
 /// Color tokens for MeterBar.
@@ -23,6 +24,10 @@ enum MeterBarTheme {
         light: NSColor(srgbRed: 34 / 255, green: 150 / 255, blue: 92 / 255, alpha: 1),
         dark: NSColor(srgbRed: 99 / 255, green: 210 / 255, blue: 151 / 255, alpha: 1)
     )
+    static let openaiAccent = Color.adaptive(
+        light: NSColor(srgbRed: 16 / 255, green: 163 / 255, blue: 127 / 255, alpha: 1),
+        dark: NSColor(srgbRed: 106 / 255, green: 216 / 255, blue: 185 / 255, alpha: 1)
+    )
 
     /// The app's own accent. Follows the user's system accent color.
     static let appAccent = Color.accentColor
@@ -37,26 +42,38 @@ enum MeterBarTheme {
 
     static func accent(for service: ServiceType) -> Color {
         switch service {
-        case .claude, .claudeCode:
+        case .claudeCode:
             return claudeAccent
-        case .codexCli, .openai:
+        case .codexCli:
             return codexAccent
         case .cursor:
             return cursorAccent
         }
     }
 
-    static func quotaStatusColor(percentLeft: Int) -> Color {
-        if percentLeft <= 10 { return danger }
-        if percentLeft <= 25 { return warning }
-        return success
+    static func accent(for provider: ApiProvider) -> Color {
+        switch provider {
+        case .anthropic:
+            return claudeAccent
+        case .openai:
+            return openaiAccent
+        }
     }
 
-    static func metricColor(percentLeft: Int) -> Color {
-        // Match the danger threshold of quotaStatusColor so the prominent "N%"
-        // metric turns red across the whole critical band, agreeing with the
-        // adjacent status label, while staying neutral for healthy quotas.
-        percentLeft <= 10 ? danger : .primary
+    static func quotaStatusColor(percentLeft: Int) -> Color {
+        QuotaBand.forPercentLeft(percentLeft).color
+    }
+}
+
+extension QuotaBand {
+    /// Appearance-adaptive color for the band (single place where severity
+    /// maps to color, shared by every surface).
+    var color: Color {
+        switch self {
+        case .healthy: return MeterBarTheme.success
+        case .tight: return MeterBarTheme.warning
+        case .critical, .exhausted: return MeterBarTheme.danger
+        }
     }
 }
 

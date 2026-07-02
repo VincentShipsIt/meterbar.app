@@ -6,7 +6,8 @@ import SwiftUI
 struct RefreshingIcon: View {
     let isRefreshing: Bool
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion)
+    private var reduceMotion
     @State private var rotationDegrees = 0.0
 
     var body: some View {

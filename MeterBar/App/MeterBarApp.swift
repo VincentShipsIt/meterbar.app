@@ -1,4 +1,5 @@
 import AppKit
+import MeterBarShared
 import Combine
 import os
 import SwiftUI
@@ -7,8 +8,9 @@ import UserNotifications
 @main
 struct MeterBarApp: App {
     @StateObject private var dataManager = UsageDataManager.shared
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    
+    @NSApplicationDelegateAdaptor(AppDelegate.self)
+    var appDelegate
+
     init() {
         AppLog.app.info("MeterBar initializing")
     }
@@ -52,19 +54,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             AppLog.app.error("Failed to create status item button")
             return
         }
-        
+
         // Set up the menu bar icon with 3 progress bars
         let image = createMenuBarIcon()
         image.isTemplate = true
         button.image = image
-        
+
         button.action = #selector(handleStatusItemClick)
         button.target = self
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         button.toolTip = "MeterBar"
         button.imagePosition = .imageLeft
         button.font = .systemFont(ofSize: 14, weight: .semibold)
-        
+
         // Create popover
         popover = NSPopover()
         popover?.contentSize = NSSize(width: 520, height: 420)
@@ -82,10 +84,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Setup notifications (also handles initial data refresh)
         setupNotifications()
     }
-    
+
     /// Left-click opens the popover; right-click (or control-click) opens a
     /// native menu so Quit stays reachable even when the Dock icon is hidden.
-    @objc private func handleStatusItemClick() {
+    @objc
+    private func handleStatusItemClick() {
         let event = NSApp.currentEvent
         let isSecondaryClick = event?.type == .rightMouseUp
             || (event?.modifierFlags.contains(.control) ?? false)
@@ -97,7 +100,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc func togglePopover() {
+    @objc
+    func togglePopover() {
         guard let button = statusItem?.button,
               let popover = popover else { return }
 
@@ -155,15 +159,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return menu
     }
 
-    @objc private func toggleShowInDock() {
+    @objc
+    private func toggleShowInDock() {
         dockVisibilityStore.setShowInDock(!dockVisibilityStore.showInDock)
     }
 
-    @objc private func openDashboardFromStatusMenu() {
+    @objc
+    private func openDashboardFromStatusMenu() {
         UsageDashboardWindowController.shared.show()
     }
 
-    @objc private func quitApp() {
+    @objc
+    private func quitApp() {
         NSApp.terminate(nil)
     }
 
@@ -213,7 +220,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // Request permission only if not yet determined
                 UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
                     if let error = error {
-                        AppLog.app.error("Notification permission error: \(error.localizedDescription, privacy: .public)")
+                        AppLog.app.error(
+                            "Notification permission error: \(error.localizedDescription, privacy: .public)"
+                        )
                     } else if !granted {
                         AppLog.app.info("Notification permission denied by user")
                     }
@@ -271,7 +280,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let warnKey = "\(baseKey)-warn"
             let criticalKey = "\(baseKey)-critical"
 
-            if limit.percentage >= 100 {
+            // Same bands as every other surface: warn in the critical band
+            // (≤10% left ≡ the old ≥90% used), alert when exhausted.
+            switch QuotaBand.forLimit(limit) {
+            case .exhausted:
                 // Only fire once per crossing; supersede any pending warn alert.
                 notifiedLimitKeys.remove(warnKey)
                 if notifiedLimitKeys.insert(criticalKey).inserted {
@@ -281,7 +293,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         body: "You've reached your usage limit"
                     )
                 }
-            } else if limit.percentage >= 90 {
+            case .critical:
                 if notifiedLimitKeys.insert(warnKey).inserted {
                     sendNotification(
                         identifier: warnKey,
@@ -289,7 +301,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         body: "You're at \(Int(limit.percentage))% of your limit"
                     )
                 }
-            } else {
+            case .healthy, .tight:
                 // Usage fell back below the threshold; allow the next crossing to
                 // notify again.
                 notifiedLimitKeys.remove(warnKey)
@@ -356,7 +368,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateStatusItem(metrics: [ServiceType: UsageMetrics]) {
         guard let button = statusItem?.button else { return }
 
-        guard let status = selectedStatus(in: metrics), let limit = status.limit else {
+        guard let limit = mostConstrainedPrimaryLimit(in: metrics) else {
             button.title = ""
             button.imagePosition = .imageOnly
             button.toolTip = "MeterBar"
@@ -366,13 +378,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let percent = percentLeft(for: limit)
         button.imagePosition = .imageLeft
         button.title = " \(percent)%"
-        button.toolTip = "MeterBar: \(percent)% left · \(status.label)"
-        button.setAccessibilityLabel("MeterBar \(percent)% left, \(status.label)")
-    }
-
-    @MainActor
-    private func selectedStatus(in metrics: [ServiceType: UsageMetrics]) -> (label: String, limit: UsageLimit?)? {
-        ("overview primary quota", mostConstrainedPrimaryLimit(in: metrics))
+        button.toolTip = "MeterBar: \(percent)% left on the tightest quota"
+        button.setAccessibilityLabel("MeterBar \(percent)% left on the tightest quota")
     }
 
     @MainActor
@@ -402,9 +409,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func percentLeft(for limit: UsageLimit) -> Int {
-        guard limit.total > 0 else { return 100 }
-        let rawPercentage = max(0, (limit.used / limit.total) * 100)
-        return Int(max(0, 100 - rawPercentage).rounded())
+        // Shared math so the menu-bar title always agrees with the popover and
+        // dashboard (the previous copy rounded instead of ceiling and could
+        // disagree by 1%).
+        QuotaMath.percentLeft(for: limit)
     }
 
     private func createMenuBarIcon() -> NSImage {

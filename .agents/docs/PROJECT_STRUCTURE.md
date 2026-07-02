@@ -15,7 +15,7 @@ apps/ai-usage-tracker/
 ├── SETUP.md                     # Setup instructions
 ├── Package.swift                # Swift Package Manager manifest
 ├── .gitignore                   # Git ignore rules
-├── .agent/                      # AI documentation
+├── .agents/                      # AI documentation
 │   └── README.md
 ├── .github/                     # GitHub templates
 │   ├── ISSUE_TEMPLATE/
