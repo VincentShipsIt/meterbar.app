@@ -241,18 +241,4 @@ class UsageDataManager: ObservableObject {
     private func representativeClaudeCodeMetrics(from accountMetrics: [UUID: UsageMetrics]) -> UsageMetrics? {
         accountMetrics[ClaudeCodeAccount.defaultID] ?? accountMetrics.values.first
     }
-
-    func getNextRefreshTime() -> Date? {
-        // Find the earliest reset time across all metrics
-        let resetTimes = metrics.values.compactMap { metrics -> Date? in
-            let times = [
-                metrics.sessionLimit?.resetTime,
-                metrics.weeklyLimit?.resetTime,
-                metrics.codeReviewLimit?.resetTime
-            ].compactMap { $0 }
-            return times.min()
-        }
-
-        return resetTimes.min()
-    }
 }

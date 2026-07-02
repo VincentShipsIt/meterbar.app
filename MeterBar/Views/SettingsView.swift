@@ -15,6 +15,11 @@ struct SettingsView: View {
     @State private var newClaudeAccountName: String = ""
     @State private var newClaudeConfigDirectory: String = ""
 
+    /// Same key ClaudeCodeLocalService reads. Previously this flag was only
+    /// settable via `defaults write`; exposing it here makes the legacy OAuth
+    /// fallback discoverable instead of a hidden switch.
+    @AppStorage("ClaudeCodeEnableOAuthFallback") private var oauthFallbackEnabled = false
+
     init(embeddedInDashboard: Bool = false) {
         self.embeddedInDashboard = embeddedInDashboard
     }
@@ -181,6 +186,21 @@ struct SettingsView: View {
                     text: "MeterBar reads Claude CLI usage output before any legacy OAuth fallback.",
                     color: MeterBarTheme.warning
                 )
+            }
+
+            SettingsRowView(
+                title: "Legacy OAuth fallback",
+                detail: "When the Claude CLI is unavailable, read usage via Claude Code's OAuth token."
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { oauthFallbackEnabled },
+                    set: { enabled in
+                        oauthFallbackEnabled = enabled
+                        claudeCodeService.checkAccess()
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
             }
 
             SettingsDivider()

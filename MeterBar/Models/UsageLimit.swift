@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 
 struct UsageLimit: Codable, Equatable {
     let used: Double
@@ -22,27 +21,9 @@ struct UsageLimit: Codable, Equatable {
     var percentage: Double {
         return min(100, rawPercentage)
     }
-    
-    var remaining: Double {
-        return max(0, total - used)
-    }
-    
-    var isNearLimit: Bool {
-        return percentage >= 80
-    }
-    
+
     var isAtLimit: Bool {
         return percentage >= 100
-    }
-    
-    var statusColor: UsageStatus {
-        if isAtLimit {
-            return .critical
-        } else if isNearLimit {
-            return .warning
-        } else {
-            return .good
-        }
     }
 
     func secondsUntilReset(now: Date = Date()) -> TimeInterval? {
@@ -203,16 +184,3 @@ enum PaceLabelContext {
     }
 }
 
-enum UsageStatus {
-    case good
-    case warning
-    case critical
-
-    var color: Color {
-        switch self {
-        case .good: return MeterBarTheme.success
-        case .warning: return MeterBarTheme.warning
-        case .critical: return MeterBarTheme.danger
-        }
-    }
-}

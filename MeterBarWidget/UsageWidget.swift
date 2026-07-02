@@ -68,10 +68,6 @@ struct UsageLimit: Codable, Equatable {
         return max(0.001, total)
     }
 
-    var remaining: Double {
-        return max(0, total - used)
-    }
-
     var isNearLimit: Bool {
         return percentage >= 80
     }
@@ -384,72 +380,6 @@ struct ServiceCompactView: View {
                 }
             }
         }
-    }
-}
-
-struct ServiceDetailView: View {
-    let metrics: UsageMetrics
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(metrics.service.iconName)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 20, height: 20)
-                Text(metrics.service.displayName)
-                    .font(.headline)
-                Spacer()
-                WidgetStatusIndicator(status: metrics.overallStatus)
-            }
-
-            if let sessionLimit = metrics.sessionLimit {
-                LimitDetailView(title: "Session", limit: sessionLimit)
-            }
-
-            if let weeklyLimit = metrics.weeklyLimit {
-                LimitDetailView(title: "Weekly", limit: weeklyLimit)
-            }
-
-            if let codeReviewLimit = metrics.codeReviewLimit {
-                LimitDetailView(title: "Code Review", limit: codeReviewLimit)
-            }
-        }
-        .padding()
-        .background(Color.gray.opacity(0.1))
-        .cornerRadius(8)
-    }
-}
-
-struct LimitDetailView: View {
-    let title: String
-    let limit: UsageLimit
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(title)
-                    .font(.caption)
-                Spacer()
-                Text("\(Int(limit.percentage))%")
-                    .font(.caption)
-                    .bold()
-            }
-
-            ProgressView(value: limit.clampedUsed, total: limit.clampedTotal)
-                .tint(limit.statusColor.color)
-
-            Text("\(formatNumber(limit.used)) / \(formatNumber(limit.total))")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-        }
-    }
-
-    private func formatNumber(_ value: Double) -> String {
-        if value >= 1000 {
-            return String(format: "%.1fk", value / 1000)
-        }
-        return String(format: "%.0f", value)
     }
 }
 

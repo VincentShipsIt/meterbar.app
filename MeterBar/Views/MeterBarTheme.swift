@@ -51,13 +51,6 @@ enum MeterBarTheme {
         if percentLeft <= 25 { return warning }
         return success
     }
-
-    static func metricColor(percentLeft: Int) -> Color {
-        // Match the danger threshold of quotaStatusColor so the prominent "N%"
-        // metric turns red across the whole critical band, agreeing with the
-        // adjacent status label, while staying neutral for healthy quotas.
-        percentLeft <= 10 ? danger : .primary
-    }
 }
 
 struct MeterBarDetailBackground: View {

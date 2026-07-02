@@ -356,7 +356,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateStatusItem(metrics: [ServiceType: UsageMetrics]) {
         guard let button = statusItem?.button else { return }
 
-        guard let status = selectedStatus(in: metrics), let limit = status.limit else {
+        guard let limit = mostConstrainedPrimaryLimit(in: metrics) else {
             button.title = ""
             button.imagePosition = .imageOnly
             button.toolTip = "MeterBar"
@@ -366,13 +366,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let percent = percentLeft(for: limit)
         button.imagePosition = .imageLeft
         button.title = " \(percent)%"
-        button.toolTip = "MeterBar: \(percent)% left · \(status.label)"
-        button.setAccessibilityLabel("MeterBar \(percent)% left, \(status.label)")
-    }
-
-    @MainActor
-    private func selectedStatus(in metrics: [ServiceType: UsageMetrics]) -> (label: String, limit: UsageLimit?)? {
-        ("overview primary quota", mostConstrainedPrimaryLimit(in: metrics))
+        button.toolTip = "MeterBar: \(percent)% left on the tightest quota"
+        button.setAccessibilityLabel("MeterBar \(percent)% left on the tightest quota")
     }
 
     @MainActor

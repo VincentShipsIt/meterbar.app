@@ -26,8 +26,6 @@ struct ExtraUsageStatus: Codable, Equatable {
 
     static let unknown = ExtraUsageStatus(state: .unknown, detail: nil)
 
-    var isOn: Bool { state == .on }
-
     /// Formats an amount as USD ("$5.00"); falls back to "<amount> <currency>" for others.
     static func formatAmount(_ amount: Double, currency: String? = "USD") -> String {
         let normalized = (currency ?? "USD").uppercased()
@@ -102,23 +100,6 @@ struct UsageMetrics: Codable, Identifiable {
             resetCreditsAvailable: resetCreditsAvailable,
             lastUpdated: lastUpdated
         )
-    }
-    
-    var overallStatus: UsageStatus {
-        let limits = [sessionLimit, weeklyLimit, codeReviewLimit].compactMap { $0 }
-        guard !limits.isEmpty else { return .good }
-        
-        if limits.contains(where: { $0.isAtLimit }) {
-            return .critical
-        } else if limits.contains(where: { $0.isNearLimit }) {
-            return .warning
-        } else {
-            return .good
-        }
-    }
-    
-    var hasData: Bool {
-        return sessionLimit != nil || weeklyLimit != nil || codeReviewLimit != nil
     }
 }
 

@@ -8,7 +8,6 @@ class ClaudeCodeLocalService: ObservableObject {
     // Working endpoint (discovered via testing)
     private let usageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 
-    private let baseURL = "https://api.anthropic.com"
     private let keychainService = "Claude Code-credentials"
     private let cliUsageService = ClaudeCodeCLIUsageService.shared
     private let oauthFallbackUserDefaultsKey = "ClaudeCodeEnableOAuthFallback"
