@@ -13,7 +13,8 @@ class UsageDataManager: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var lastError: Error?
 
-    @AppStorage("refreshInterval") private var refreshIntervalRaw: Int = RefreshInterval.fifteenMinutes.rawValue
+    @AppStorage("refreshInterval")
+    private var refreshIntervalRaw: Int = RefreshInterval.fifteenMinutes.rawValue
 
     var refreshInterval: RefreshInterval {
         get { RefreshInterval(rawValue: refreshIntervalRaw) ?? .fifteenMinutes }
@@ -41,6 +42,10 @@ class UsageDataManager: ObservableObject {
         setupAutoRefresh()
     }
 
+    // One branch per provider by design; splitting per-provider fetches into
+    // helpers is planned alongside UsageDataManager tests (untested today —
+    // restructuring without coverage is riskier than the branch count).
+    // swiftlint:disable:next cyclomatic_complexity
     func refreshAll() async {
         isLoading = true
         lastError = nil
@@ -112,7 +117,7 @@ class UsageDataManager: ObservableObject {
                 }
             }
         }
-        
+
         // Merge new metrics with existing cached metrics for services that failed to fetch
         for service in ServiceType.allCases where providerVisibilityStore.isEnabled(service) {
             if newMetrics[service] == nil, let cachedMetric = self.metrics[service] {
@@ -126,6 +131,9 @@ class UsageDataManager: ObservableObject {
         isLoading = false
     }
 
+    // Same rationale as refreshAll: per-provider branching stays inline until
+    // this manager has test coverage to make extraction safe.
+    // swiftlint:disable:next cyclomatic_complexity
     func refresh(service: ServiceType) async {
         isLoading = true
         lastError = nil

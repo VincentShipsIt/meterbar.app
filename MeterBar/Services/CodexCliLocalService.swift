@@ -109,7 +109,11 @@ class CodexCliLocalService: ObservableObject {
         request.setValue("https://chatgpt.com/", forHTTPHeaderField: "Referer")
         request.setValue("https://chatgpt.com", forHTTPHeaderField: "Origin")
         request.setValue("*/*", forHTTPHeaderField: "Accept")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
+        request.setValue(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+                + "(KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+            forHTTPHeaderField: "User-Agent"
+        )
         request.timeoutInterval = 30.0
 
         do {
@@ -135,7 +139,7 @@ class CodexCliLocalService: ObservableObject {
 
             let decoder = JSONDecoder()
             // Note: Codex CLI API uses Unix timestamps (Int64), not ISO8601 dates
-            
+
             // Decode the actual Codex CLI usage response
             let usageResponse = try decoder.decode(CodexCliUsageResponse.self, from: data)
 
@@ -178,7 +182,7 @@ class CodexCliLocalService: ObservableObject {
             )
 
             // Code review rate limit (7 days window) = code review limit
-            var codeReviewLimit: UsageLimit? = nil
+            var codeReviewLimit: UsageLimit?
             if let codeReviewPrimary = usageResponse.codeReviewRateLimit?.primaryWindow {
                 codeReviewLimit = UsageLimit(
                     used: codeReviewPrimary.usedPercent,

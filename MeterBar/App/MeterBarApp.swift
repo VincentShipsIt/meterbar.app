@@ -8,8 +8,9 @@ import UserNotifications
 @main
 struct MeterBarApp: App {
     @StateObject private var dataManager = UsageDataManager.shared
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    
+    @NSApplicationDelegateAdaptor(AppDelegate.self)
+    var appDelegate
+
     init() {
         AppLog.app.info("MeterBar initializing")
     }
@@ -53,19 +54,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             AppLog.app.error("Failed to create status item button")
             return
         }
-        
+
         // Set up the menu bar icon with 3 progress bars
         let image = createMenuBarIcon()
         image.isTemplate = true
         button.image = image
-        
+
         button.action = #selector(handleStatusItemClick)
         button.target = self
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         button.toolTip = "MeterBar"
         button.imagePosition = .imageLeft
         button.font = .systemFont(ofSize: 14, weight: .semibold)
-        
+
         // Create popover
         popover = NSPopover()
         popover?.contentSize = NSSize(width: 520, height: 420)
@@ -83,10 +84,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Setup notifications (also handles initial data refresh)
         setupNotifications()
     }
-    
+
     /// Left-click opens the popover; right-click (or control-click) opens a
     /// native menu so Quit stays reachable even when the Dock icon is hidden.
-    @objc private func handleStatusItemClick() {
+    @objc
+    private func handleStatusItemClick() {
         let event = NSApp.currentEvent
         let isSecondaryClick = event?.type == .rightMouseUp
             || (event?.modifierFlags.contains(.control) ?? false)
@@ -98,7 +100,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc func togglePopover() {
+    @objc
+    func togglePopover() {
         guard let button = statusItem?.button,
               let popover = popover else { return }
 
@@ -156,15 +159,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return menu
     }
 
-    @objc private func toggleShowInDock() {
+    @objc
+    private func toggleShowInDock() {
         dockVisibilityStore.setShowInDock(!dockVisibilityStore.showInDock)
     }
 
-    @objc private func openDashboardFromStatusMenu() {
+    @objc
+    private func openDashboardFromStatusMenu() {
         UsageDashboardWindowController.shared.show()
     }
 
-    @objc private func quitApp() {
+    @objc
+    private func quitApp() {
         NSApp.terminate(nil)
     }
 
@@ -214,7 +220,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // Request permission only if not yet determined
                 UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
                     if let error = error {
-                        AppLog.app.error("Notification permission error: \(error.localizedDescription, privacy: .public)")
+                        AppLog.app.error(
+                            "Notification permission error: \(error.localizedDescription, privacy: .public)"
+                        )
                     } else if !granted {
                         AppLog.app.info("Notification permission denied by user")
                     }

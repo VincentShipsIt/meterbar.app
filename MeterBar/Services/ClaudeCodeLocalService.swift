@@ -9,7 +9,6 @@ class ClaudeCodeLocalService: ObservableObject {
     // Working endpoint (discovered via testing)
     private let usageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 
-    private let baseURL = "https://api.anthropic.com"
     private let keychainService = "Claude Code-credentials"
     private let cliUsageService = ClaudeCodeCLIUsageService.shared
     private let oauthFallbackUserDefaultsKey = "ClaudeCodeEnableOAuthFallback"
@@ -83,7 +82,7 @@ class ClaudeCodeLocalService: ObservableObject {
         if cliUsageService.isAvailable() {
             hasAccess = true
             authState = .cliAvailable
-        } else if isOAuthFallbackEnabled, let _ = getOAuthToken() {
+        } else if isOAuthFallbackEnabled, getOAuthToken() != nil {
             hasAccess = true
             authState = .connected(.legacyOAuth)
         } else {
@@ -196,7 +195,7 @@ class ClaudeCodeLocalService: ObservableObject {
             )
 
             // Sonnet-only weekly limit (if available)
-            var sonnetLimit: UsageLimit? = nil
+            var sonnetLimit: UsageLimit?
             if let sonnet = usageResponse.sevenDaySonnet {
                 sonnetLimit = UsageLimit(
                     used: sonnet.utilization,
@@ -363,10 +362,6 @@ enum ClaudeCodeAuthState: Equatable {
 
 struct ClaudeCodeCredentials: Codable {
     let claudeAiOauth: ClaudeAiOAuth
-
-    enum CodingKeys: String, CodingKey {
-        case claudeAiOauth = "claudeAiOauth"
-    }
 }
 
 struct ClaudeAiOAuth: Codable {

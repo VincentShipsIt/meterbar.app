@@ -8,7 +8,7 @@ import WidgetKit
 /// Shared data store using App Groups for Widget extension access
 class SharedDataStore {
     static let shared = SharedDataStore()
-    
+
     private let appGroupIdentifier = "group.dev.shipshit.meterbar"
     private let metricsKey = "cached_usage_metrics"
 
@@ -17,7 +17,7 @@ class SharedDataStore {
     private let ioQueue = DispatchQueue(label: "dev.shipshit.meterbar.SharedDataStore.io", qos: .utility)
 
     private var containerURL: URL? {
-        return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)
     }
 
     private init() {}
@@ -50,17 +50,17 @@ class SharedDataStore {
             }
         }
     }
-    
+
     func loadMetrics() -> [ServiceType: UsageMetrics] {
         guard let containerURL = containerURL else { return [:] }
-        
+
         let fileURL = containerURL.appendingPathComponent("\(metricsKey).json")
-        
+
         guard let data = try? Data(contentsOf: fileURL),
               let decoded = try? JSONDecoder().decode([String: UsageMetrics].self, from: data) else {
             return [:]
         }
-        
+
         return decoded.reduce(into: [ServiceType: UsageMetrics]()) { result, pair in
             if let service = ServiceType(rawValue: pair.key) {
                 result[service] = pair.value
