@@ -18,4 +18,8 @@ enum StorageKeys {
     static let claudeCodeOAuthFallback = "ClaudeCodeEnableOAuthFallback"
     /// Extra Claude Code account profiles (JSON-encoded [ClaudeCodeAccount]).
     static let claudeCodeCustomAccounts = "ClaudeCodeCustomAccounts"
+    /// User-chosen display name for the default Claude Code CLI profile.
+    static let claudeCodeDefaultAccountName = "ClaudeCodeDefaultAccountName"
+    /// Persisted account display order (array of UUID strings).
+    static let claudeCodeAccountOrder = "ClaudeCodeAccountOrder"
 }

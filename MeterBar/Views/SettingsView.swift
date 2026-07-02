@@ -15,6 +15,7 @@ struct SettingsView: View {
 
     @State private var newClaudeAccountName: String = ""
     @State private var newClaudeConfigDirectory: String = ""
+    @State private var claudeReconnectError: String?
 
     /// Same key ClaudeCodeLocalService reads. Previously this flag was only
     /// settable via `defaults write`; exposing it here makes the legacy OAuth
@@ -49,6 +50,19 @@ struct SettingsView: View {
             minWidth: embeddedInDashboard ? nil : 560,
             minHeight: embeddedInDashboard ? nil : 500
         )
+        .alert(
+            "Claude Reconnect Failed",
+            isPresented: Binding(
+                get: { claudeReconnectError != nil },
+                set: { isPresented in
+                    if !isPresented { claudeReconnectError = nil }
+                }
+            )
+        ) {
+            Button("OK") { claudeReconnectError = nil }
+        } message: {
+            Text(claudeReconnectError ?? "Could not open the Claude reconnect flow.")
+        }
     }
 
     private var generalSection: some View {
@@ -212,14 +226,27 @@ struct SettingsView: View {
                     .font(.subheadline)
                     .fontWeight(.semibold)
 
-                ForEach(claudeAccountStore.accounts) { account in
-                    AccountProfileRow(account: account) {
-                        claudeAccountStore.removeAccount(id: account.id)
-                        Task {
-                            await dataManager.refreshAll()
-                        }
+                List {
+                    ForEach(claudeAccountStore.accounts) { account in
+                        AccountProfileRow(
+                            account: account,
+                            onSave: { name, configDirectory in
+                                updateClaudeAccount(id: account.id, name: name, configDirectory: configDirectory)
+                            },
+                            onReconnect: { reconnectClaudeAccount(account) },
+                            onRemove: {
+                                claudeAccountStore.removeAccount(id: account.id)
+                                Task { await dataManager.refreshAll() }
+                            }
+                        )
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
                     }
+                    .onMove(perform: moveClaudeAccounts)
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .frame(height: claudeAccountListHeight)
             }
 
             SettingsRowView(title: "New account") {
@@ -455,6 +482,27 @@ struct SettingsView: View {
             }
         }
     }
+
+    private var claudeAccountListHeight: CGFloat {
+        min(320, max(84, CGFloat(claudeAccountStore.accounts.count) * 84))
+    }
+
+    private func updateClaudeAccount(id: UUID, name: String, configDirectory: String?) {
+        claudeAccountStore.updateAccount(id: id, name: name, configDirectory: configDirectory)
+        Task { await dataManager.refreshAll() }
+    }
+
+    private func moveClaudeAccounts(from source: IndexSet, to destination: Int) {
+        claudeAccountStore.moveAccounts(fromOffsets: source, toOffset: destination)
+    }
+
+    private func reconnectClaudeAccount(_ account: ClaudeCodeAccount) {
+        do {
+            try ClaudeCodeReconnectService.openReconnectTerminal(for: account)
+        } catch {
+            claudeReconnectError = error.localizedDescription
+        }
+    }
 }
 
 private struct SettingsPanelSection<Content: View>: View {
@@ -565,31 +613,112 @@ private struct StatusPill: View {
 
 private struct AccountProfileRow: View {
     let account: ClaudeCodeAccount
+    let onSave: (String, String?) -> Void
+    let onReconnect: () -> Void
     let onRemove: () -> Void
 
+    @State private var nameDraft: String
+    @State private var configDirectoryDraft: String
+
+    init(
+        account: ClaudeCodeAccount,
+        onSave: @escaping (String, String?) -> Void,
+        onReconnect: @escaping () -> Void,
+        onRemove: @escaping () -> Void
+    ) {
+        self.account = account
+        self.onSave = onSave
+        self.onReconnect = onReconnect
+        self.onRemove = onRemove
+        _nameDraft = State(initialValue: account.name)
+        _configDirectoryDraft = State(initialValue: account.configDirectory ?? "")
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "line.3.horizontal")
+                .foregroundStyle(.tertiary)
+                .frame(width: 14)
+                .padding(.top, 8)
+                .help("Drag to reorder")
+
             Image(systemName: account.isDefault ? "person.crop.circle" : "person.crop.circle.badge.plus")
                 .foregroundStyle(MeterBarTheme.claudeAccent)
                 .frame(width: 18)
+                .padding(.top, 4)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(account.name)
+            VStack(alignment: .leading, spacing: 6) {
+                TextField("Account label", text: $nameDraft)
                     .font(.subheadline)
-                    .fontWeight(.semibold)
-                Text(account.configDirectory ?? "Default Claude CLI profile")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 240)
+                    .onSubmit(saveChanges)
+
+                if account.isDefault {
+                    Text("Default Claude CLI profile")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else {
+                    TextField("Config directory", text: $configDirectoryDraft)
+                        .font(.caption)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 300)
+                        .onSubmit(saveChanges)
+                }
             }
 
             Spacer()
 
-            if !account.isDefault {
-                Button("Remove", role: .destructive, action: onRemove)
+            HStack(spacing: 8) {
+                Button(action: onReconnect) {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .help("Reconnect Claude profile")
+
+                Button(action: saveChanges) {
+                    Image(systemName: "checkmark")
+                }
+                .buttonStyle(.bordered)
+                .disabled(!hasChanges || !canSave)
+                .help("Save account changes")
+
+                if !account.isDefault {
+                    Button(role: .destructive, action: onRemove) {
+                        Image(systemName: "trash")
+                    }
                     .buttonStyle(.bordered)
+                    .help("Delete account")
+                }
             }
         }
         .padding(.vertical, 4)
+        .onChange(of: account) { _, updatedAccount in
+            nameDraft = updatedAccount.name
+            configDirectoryDraft = updatedAccount.configDirectory ?? ""
+        }
+    }
+
+    private var trimmedName: String {
+        nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedConfigDirectory: String {
+        configDirectoryDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var hasChanges: Bool {
+        trimmedName != account.name ||
+            (!account.isDefault && trimmedConfigDirectory != (account.configDirectory ?? ""))
+    }
+
+    private var canSave: Bool {
+        !trimmedName.isEmpty && (account.isDefault || !trimmedConfigDirectory.isEmpty)
+    }
+
+    private func saveChanges() {
+        guard hasChanges, canSave else { return }
+        onSave(trimmedName, account.isDefault ? nil : trimmedConfigDirectory)
     }
 }
