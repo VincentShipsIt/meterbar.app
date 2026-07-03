@@ -18,11 +18,27 @@ public class SharedDataStore {
     /// block on file I/O, while still serializing writes to the shared file.
     private let ioQueue = DispatchQueue(label: "dev.shipshit.meterbar.SharedDataStore.io", qos: .utility)
 
+    /// Overrides the App Group container location. `nil` in production (the
+    /// container is resolved from the app-group identifier); tests inject a
+    /// temp directory so the encode → atomic-write → decode round-trip can run
+    /// without the App Group entitlement (unavailable to `swift test`).
+    private let directoryOverride: URL?
+
+    /// Invoked after a successful write. Defaults to reloading the widget
+    /// timelines; tests inject a spy to assert the write completed.
+    private let didWrite: () -> Void
+
     private var containerURL: URL? {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)
+        if let directoryOverride { return directoryOverride }
+        return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)
     }
 
-    private init() {}
+    /// Defaults reproduce the production singleton exactly; tests inject a
+    /// directory + write spy.
+    init(directoryOverride: URL? = nil, didWrite: (() -> Void)? = nil) {
+        self.directoryOverride = directoryOverride
+        self.didWrite = didWrite ?? SharedDataStore.reloadWidgetTimelines
+    }
 
     func saveMetrics(_ metrics: [ServiceType: UsageMetrics]) {
         guard let containerURL = containerURL else {
@@ -42,7 +58,7 @@ public class SharedDataStore {
         ioQueue.async { [weak self] in
             do {
                 try data.write(to: fileURL, options: [.atomic])
-                self?.reloadWidgetTimelines()
+                self?.didWrite()
             } catch {
                 AppLog.storage.error("Failed to save shared metrics: \(error.localizedDescription, privacy: .public)")
             }
@@ -58,7 +74,13 @@ public class SharedDataStore {
         return MetricsCodec.decode(data)
     }
 
-    private func reloadWidgetTimelines() {
+    /// Blocks until any in-flight async write has completed. Test-only: lets a
+    /// test observe the on-disk result of `saveMetrics` deterministically.
+    func flushPendingWrites() {
+        ioQueue.sync {}
+    }
+
+    private static func reloadWidgetTimelines() {
         #if canImport(WidgetKit)
         if #available(macOS 11.0, *) {
             WidgetCenter.shared.reloadTimelines(ofKind: "UsageWidget")
