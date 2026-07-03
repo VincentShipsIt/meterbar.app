@@ -49,6 +49,7 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
     case overview = "Overview"
     case limits = "Limits"
     case costs = "Costs"
+    case diagnostics = "Diagnostics"
     case settings = "Settings"
 
     var id: String { rawValue }
@@ -61,6 +62,8 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
             return "chart.bar.fill"
         case .costs:
             return "dollarsign.circle.fill"
+        case .diagnostics:
+            return "stethoscope"
         case .settings:
             return "gearshape.fill"
         }
@@ -79,6 +82,8 @@ struct UsageDashboardView: View {
 
     @State private var selectedSection: DashboardSection = .overview
     @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @State private var readinessReports: [ProviderReadiness] = []
+    @State private var isRunningDiagnostics = false
 
     private var activeSection: DashboardSection { selectedSection }
 
@@ -122,6 +127,9 @@ struct UsageDashboardView: View {
         }
         .onChange(of: selectedSection) {
             Task { await refreshCostsIfMissingDays() }
+            if selectedSection == .diagnostics {
+                Task { await runDiagnostics() }
+            }
         }
     }
 
@@ -162,6 +170,8 @@ struct UsageDashboardView: View {
                     limitsContent
                 case .costs:
                     costsContent
+                case .diagnostics:
+                    diagnosticsContent
                 case .settings:
                     settingsContent
                 }
@@ -399,6 +409,87 @@ struct UsageDashboardView: View {
             + "Tracking \(providerSnapshots.count) local provider sources."
     }
 
+    private var diagnosticsContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            DashboardCard(title: "Provider Diagnostics", trailing: diagnosticsSummary) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("These checks run locally. Every line is redacted — safe to paste into a GitHub issue.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+
+                    HStack(spacing: 10) {
+                        Button {
+                            Task { await runDiagnostics() }
+                        } label: {
+                            Label("Re-run checks", systemImage: "arrow.clockwise")
+                        }
+                        .disabled(isRunningDiagnostics)
+
+                        Button {
+                            copyDiagnosticsToClipboard()
+                        } label: {
+                            Label("Copy report", systemImage: "doc.on.doc")
+                        }
+                        .disabled(readinessReports.isEmpty)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+
+            if readinessReports.isEmpty {
+                DashboardCard(title: "Running checks…") {
+                    Text("Gathering provider setup status.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+            } else {
+                ReadinessChecklist(reports: readinessReports)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task {
+            if readinessReports.isEmpty {
+                await runDiagnostics()
+            }
+        }
+    }
+
+    private var diagnosticsSummary: String? {
+        guard !readinessReports.isEmpty else { return nil }
+        let ready = readinessReports.filter(\.isHealthy).count
+        let attention = readinessReports.filter { $0.overall == .fail }.count
+        return "\(ready) ready · \(attention) need attention"
+    }
+
+    /// Runs the readiness inspector off the main actor (it does keychain / file /
+    /// SQLite I/O) and publishes the reports back on the main actor.
+    private func runDiagnostics() async {
+        isRunningDiagnostics = true
+        let errors = currentRefreshErrors()
+        let reports = await Task.detached(priority: .userInitiated) {
+            ProviderReadinessInspector.reports(refreshErrors: errors)
+        }.value
+        readinessReports = reports
+        isRunningDiagnostics = false
+    }
+
+    /// Each provider's live last-refresh error, fed into the readiness core so the
+    /// "Last refresh" check reflects the app's actual runtime state.
+    private func currentRefreshErrors() -> [ServiceType: ServiceError] {
+        var result: [ServiceType: ServiceError] = [:]
+        if let error = claudeCodeService.lastError { result[.claudeCode] = error }
+        if let error = codexCliService.lastError { result[.codexCli] = error }
+        if let error = cursorService.lastError { result[.cursor] = error }
+        return result
+    }
+
+    private func copyDiagnosticsToClipboard() {
+        let text = DiagnosticsReportText.plainText(readinessReports)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
     private var sectionSubtitle: String {
         switch activeSection {
         case .overview:
@@ -407,6 +498,8 @@ struct UsageDashboardView: View {
             return "Every tracked quota window"
         case .costs:
             return "Local 30-day token spend"
+        case .diagnostics:
+            return "Provider setup health — safe to share"
         case .settings:
             return "Accounts, refresh, and local sources"
         }
@@ -430,7 +523,7 @@ struct UsageDashboardView: View {
         switch activeSection {
         case .costs:
             return costTracker.isRefreshInProgress
-        case .overview, .limits, .settings:
+        case .overview, .limits, .diagnostics, .settings:
             return dataManager.isLoading
         }
     }

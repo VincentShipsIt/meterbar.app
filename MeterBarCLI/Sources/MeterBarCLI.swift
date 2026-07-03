@@ -10,7 +10,7 @@ struct MeterBarCLI: ParsableCommand {
         commandName: "meterbar",
         abstract: "Track AI coding assistant usage from the command line",
         version: MeterBarCLIVersion.current,
-        subcommands: [Usage.self, Cost.self],
+        subcommands: [Usage.self, Cost.self, Doctor.self],
         defaultSubcommand: Usage.self
     )
 }
@@ -296,5 +296,102 @@ struct Cost: ParsableCommand {
         print("Total:          \(summary.formattedTotalCost)")
         print("Daily Average:  \(summary.formattedDailyCost)")
         print("Tokens:         \(UsageFormat.groupedTokens(summary.totalTokens))")
+    }
+}
+
+struct Doctor: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Diagnose provider setup (installed, signed in, data readable)"
+    )
+
+    @Flag(name: .shortAndLong, help: "Output as JSON")
+    var json: Bool = false
+
+    @Option(name: .shortAndLong, help: "Filter by provider (claude, codex, cursor)")
+    var provider: String?
+
+    func run() throws {
+        // Same readiness core the app's Diagnostics view uses. No live refresh in
+        // a one-shot CLI run, so last-refresh checks report "no recent errors".
+        // Every string below is redacted by the inspector — safe to paste into an issue.
+        let reports = filtered(ProviderReadinessInspector.reports())
+
+        if json {
+            printJSON(reports)
+        } else {
+            printText(reports)
+        }
+    }
+
+    private func filtered(_ reports: [ProviderReadiness]) -> [ProviderReadiness] {
+        let ordered = reports.sorted { $0.provider.sortOrder < $1.provider.sortOrder }
+        guard let needle = provider?.lowercased() else { return ordered }
+        return ordered.filter {
+            $0.provider.rawValue.lowercased().contains(needle)
+                || $0.provider.displayName.lowercased().contains(needle)
+        }
+    }
+
+    private func printJSON(_ reports: [ProviderReadiness]) {
+        let dtos = reports.map(DoctorReportDTO.init)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? encoder.encode(dtos),
+           let str = String(data: data, encoding: .utf8) {
+            print(str)
+        }
+    }
+
+    private func printText(_ reports: [ProviderReadiness]) {
+        print("╭─────────────────────────────────────────╮")
+        print("│             MeterBar Doctor             │")
+        print("╰─────────────────────────────────────────╯")
+        print()
+
+        if reports.isEmpty {
+            print("No matching providers.")
+            return
+        }
+
+        for report in reports {
+            print("▸ \(report.provider.displayName)  [\(report.overall.rawValue.uppercased())]")
+            for check in report.checks {
+                print("  \(symbol(for: check.level)) \(check.title): \(check.detail)")
+                if let recovery = check.recovery {
+                    print("      → \(recovery)")
+                }
+            }
+            print()
+        }
+
+        let healthy = reports.filter { $0.isHealthy }.count
+        let failing = reports.filter { $0.overall == .fail }.count
+        let warning = reports.filter { $0.overall == .warn }.count
+        print("Summary: \(healthy) healthy, \(failing) need attention, \(warning) with warnings.")
+    }
+
+    private func symbol(for level: ReadinessLevel) -> String {
+        switch level {
+        case .pass: return "✓"
+        case .warn: return "⚠"
+        case .fail: return "✗"
+        }
+    }
+}
+
+/// JSON shape for `meterbar doctor --json`: the report plus its rolled-up
+/// `overall`/`healthy` (which are computed, so not part of the core's own
+/// Codable form). Redacted upstream by `ProviderReadinessInspector`.
+private struct DoctorReportDTO: Encodable {
+    let provider: String
+    let overall: String
+    let healthy: Bool
+    let checks: [ReadinessCheck]
+
+    init(_ report: ProviderReadiness) {
+        provider = report.provider.rawValue
+        overall = report.overall.rawValue
+        healthy = report.isHealthy
+        checks = report.checks
     }
 }
