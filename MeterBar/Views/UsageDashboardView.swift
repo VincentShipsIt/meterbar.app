@@ -661,7 +661,8 @@ struct UsageDashboardView: View {
     }
 
     private func refreshCostsIfMissingDays() async {
-        guard activeSection == .overview || activeSection == .costs || activeSection == .share || activeSection == .optimize else { return }
+        let costBackedSections: Set<DashboardSection> = [.overview, .costs, .share, .optimize]
+        guard costBackedSections.contains(activeSection) else { return }
         await costTracker.refreshMissingDaysInBackground(days: 30)
     }
 
