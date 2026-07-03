@@ -18,21 +18,30 @@ class CodexCliLocalService: ObservableObject {
     // API endpoint for Codex CLI usage
     private let usageEndpoint = "https://chatgpt.com/backend-api/wham/usage"
 
-    // Path to Codex CLI auth file
-    private var authFilePath: String {
-        let homeDir = ServiceSupport.realHomeDirectory()
-        return "\(homeDir)/.codex/auth.json"
-    }
-
     // Shared URLSession with the standard usage-request timeouts
     private let urlSession = ServiceSupport.session
+
+    /// Raw bytes of `~/.codex/auth.json`, behind a closure so tests can supply a
+    /// fixture without a real credential file on disk (the auth file never
+    /// exists on CI). Defaults to reading the real path.
+    private let authFileDataProvider: () -> Data?
 
     @Published private(set) var hasAccess: Bool = false
     @Published private(set) var lastError: ServiceError?
     @Published private(set) var subscriptionType: String?
 
-    private init() {
+    /// Defaults reproduce the production singleton; tests inject a fixture
+    /// auth-file provider.
+    init(authFileDataProvider: (() -> Data?)? = nil) {
+        self.authFileDataProvider = authFileDataProvider ?? CodexCliLocalService.defaultAuthFileDataProvider
         Task.detached(priority: .utility) { [weak self] in self?.checkAccess() }
+    }
+
+    /// Reads `~/.codex/auth.json` from the real (non-sandboxed) home directory.
+    private static func defaultAuthFileDataProvider() -> Data? {
+        let path = "\(ServiceSupport.realHomeDirectory())/.codex/auth.json"
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        return FileManager.default.contents(atPath: path)
     }
 
     // MARK: - Auth File Access
@@ -58,11 +67,7 @@ class CodexCliLocalService: ObservableObject {
     }
 
     private func readAuthFile() -> CodexAuthFile? {
-        guard FileManager.default.fileExists(atPath: authFilePath),
-              let data = FileManager.default.contents(atPath: authFilePath) else {
-            return nil
-        }
-
+        guard let data = authFileDataProvider() else { return nil }
         return try? JSONDecoder().decode(CodexAuthFile.self, from: data)
     }
 
@@ -142,6 +147,16 @@ class CodexCliLocalService: ObservableObject {
             }
             throw serviceError
         }
+    }
+
+    // MARK: - Response Mapping
+
+    /// Maps a decoded Codex usage response onto the shared `UsageMetrics` shape.
+    /// Thin alias over `CodexCliUsageResponse.toUsageMetrics()` — the single
+    /// implementation of the window/limit derivation — kept so both fixture
+    /// test suites exercise the same code path.
+    static func mapUsageResponse(_ usageResponse: CodexCliUsageResponse) -> UsageMetrics {
+        usageResponse.toUsageMetrics()
     }
 }
 
