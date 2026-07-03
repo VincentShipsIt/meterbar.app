@@ -50,6 +50,7 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
     case overview = "Overview"
     case limits = "Limits"
     case costs = "Costs"
+    case optimize = "Optimize"
     case diagnostics = "Diagnostics"
     case share = "Share"
     case settings = "Settings"
@@ -64,6 +65,8 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
             return "chart.bar.fill"
         case .costs:
             return "dollarsign.circle.fill"
+        case .optimize:
+            return "leaf.fill"
         case .diagnostics:
             return "stethoscope"
         case .share:
@@ -176,6 +179,8 @@ struct UsageDashboardView: View {
                     limitsContent
                 case .costs:
                     costsContent
+                case .optimize:
+                    OptimizeInsightsView()
                 case .diagnostics:
                     diagnosticsContent
                 case .share:
@@ -612,6 +617,8 @@ struct UsageDashboardView: View {
             return "Every tracked quota window"
         case .costs:
             return "Local 30-day token spend"
+        case .optimize:
+            return "Where tokens go and how to trim them"
         case .diagnostics:
             return "Provider setup health — safe to share"
         case .share:
@@ -637,7 +644,7 @@ struct UsageDashboardView: View {
 
     private var isRefreshButtonAnimating: Bool {
         switch activeSection {
-        case .costs, .share:
+        case .costs, .share, .optimize:
             return costTracker.isRefreshInProgress
         case .overview, .limits, .diagnostics, .settings:
             return dataManager.isLoading
@@ -645,7 +652,7 @@ struct UsageDashboardView: View {
     }
 
     private func refreshDashboard() async {
-        if activeSection == .costs || activeSection == .share {
+        if activeSection == .costs || activeSection == .share || activeSection == .optimize {
             await costTracker.scanCosts(days: 30)
             socialCardGeneratedAt = Date()
         } else {
@@ -654,7 +661,7 @@ struct UsageDashboardView: View {
     }
 
     private func refreshCostsIfMissingDays() async {
-        guard activeSection == .overview || activeSection == .costs || activeSection == .share else { return }
+        guard activeSection == .overview || activeSection == .costs || activeSection == .share || activeSection == .optimize else { return }
         await costTracker.refreshMissingDaysInBackground(days: 30)
     }
 
