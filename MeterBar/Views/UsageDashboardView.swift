@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import MeterBarShared
+import UniformTypeIdentifiers
 
 @MainActor
 final class UsageDashboardWindowController {
@@ -50,6 +51,7 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
     case limits = "Limits"
     case costs = "Costs"
     case diagnostics = "Diagnostics"
+    case share = "Share"
     case settings = "Settings"
 
     var id: String { rawValue }
@@ -64,6 +66,8 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
             return "dollarsign.circle.fill"
         case .diagnostics:
             return "stethoscope"
+        case .share:
+            return "square.and.arrow.up.fill"
         case .settings:
             return "gearshape.fill"
         }
@@ -84,6 +88,8 @@ struct UsageDashboardView: View {
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var readinessReports: [ProviderReadiness] = []
     @State private var isRunningDiagnostics = false
+    @State private var socialCardGeneratedAt = Date()
+    @State private var socialShareStatus: String?
 
     private var activeSection: DashboardSection { selectedSection }
 
@@ -172,6 +178,8 @@ struct UsageDashboardView: View {
                     costsContent
                 case .diagnostics:
                     diagnosticsContent
+                case .share:
+                    shareContent
                 case .settings:
                     settingsContent
                 }
@@ -311,6 +319,91 @@ struct UsageDashboardView: View {
         }
     }
 
+    private var shareContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SocialShareCardPreview(content: socialShareCardContent)
+                .frame(maxWidth: 860)
+                .accessibilityLabel("MeterBar social share card preview")
+
+            HStack(spacing: 10) {
+                Button {
+                    copySocialCardImage()
+                } label: {
+                    Label("Copy PNG", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button {
+                    saveSocialCardImage()
+                } label: {
+                    Label("Save PNG", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.bordered)
+
+                Button {
+                    copyTweetText()
+                } label: {
+                    Label("Copy Text", systemImage: "text.quote")
+                }
+                .buttonStyle(.bordered)
+
+                if visibleCostSummary?.dailyUsage.isEmpty ?? true {
+                    Button {
+                        Task {
+                            await costTracker.scanCosts(days: 30)
+                            socialCardGeneratedAt = Date()
+                        }
+                    } label: {
+                        Label("Scan 30 Days", systemImage: "magnifyingglass")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(costTracker.isRefreshInProgress)
+                }
+
+                Spacer()
+
+                if let socialShareStatus {
+                    Text(socialShareStatus)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .transition(.opacity)
+                }
+            }
+
+            DashboardCard(title: "Tweet Text") {
+                Text(socialShareCardContent.tweetText)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func makeSocialShareCardContent(generatedAt: Date) -> SocialShareCardContent {
+        // Reuse the canonical tightest-quota window the overview already derives
+        // (`providerSnapshots.tightestLimit`) instead of re-deriving it locally.
+        let tightest = tightestLimit
+        return SocialShareCardContent(
+            tokenTotal: visibleCostSummary?.totalTokens,
+            estimatedCostUSD: visibleCostSummary?.totalCostUSD,
+            sourceCount: socialSourceCount,
+            providerNames: socialProviderNames,
+            tightestLimitTitle: tightest?.title,
+            tightestPercentLeft: tightest?.percentLeft,
+            dailyTokenTotals: socialDailyTokenTotals(generatedAt: generatedAt),
+            generatedAt: generatedAt
+        )
+    }
+
+    private func socialDailyTokenTotals(generatedAt: Date) -> [Int] {
+        guard let visibleCostSummary else { return [] }
+        return SocialShareCardContent.dailyTokenTotals(
+            from: visibleCostSummary.dailyUsage,
+            now: generatedAt
+        )
+    }
+
     private func costScanChart(height: CGFloat, compact: Bool, showsProgressBadge: Bool = true) -> some View {
         ZStack {
             if let summary = visibleCostSummary, !summary.dailyUsage.isEmpty {
@@ -358,6 +451,27 @@ struct UsageDashboardView: View {
 
     private var visibleCostSummary: CostSummary? {
         costTracker.costSummary?.filtered(to: providerVisibility.enabledServices)
+    }
+
+    private var socialShareCardContent: SocialShareCardContent {
+        makeSocialShareCardContent(generatedAt: socialCardGeneratedAt)
+    }
+
+    private var socialSourceCount: Int {
+        max(providerSnapshots.count, visibleCostSummary?.costs.count ?? 0)
+    }
+
+    private var socialProviderNames: [String] {
+        if let costs = visibleCostSummary?.costs, !costs.isEmpty {
+            return costs.map(\.provider.displayName)
+        }
+
+        let snapshotTitles = providerSnapshots.map(\.title)
+        if !snapshotTitles.isEmpty {
+            return snapshotTitles
+        }
+
+        return enabledSourceLabels
     }
 
     private var enabledSourceLabels: [String] {
@@ -500,6 +614,8 @@ struct UsageDashboardView: View {
             return "Local 30-day token spend"
         case .diagnostics:
             return "Provider setup health — safe to share"
+        case .share:
+            return "Social card export"
         case .settings:
             return "Accounts, refresh, and local sources"
         }
@@ -521,7 +637,7 @@ struct UsageDashboardView: View {
 
     private var isRefreshButtonAnimating: Bool {
         switch activeSection {
-        case .costs:
+        case .costs, .share:
             return costTracker.isRefreshInProgress
         case .overview, .limits, .diagnostics, .settings:
             return dataManager.isLoading
@@ -529,15 +645,100 @@ struct UsageDashboardView: View {
     }
 
     private func refreshDashboard() async {
-        if activeSection == .costs {
+        if activeSection == .costs || activeSection == .share {
             await costTracker.scanCosts(days: 30)
+            socialCardGeneratedAt = Date()
         } else {
             await dataManager.refreshAll()
         }
     }
 
     private func refreshCostsIfMissingDays() async {
-        guard activeSection == .overview || activeSection == .costs else { return }
+        guard activeSection == .overview || activeSection == .costs || activeSection == .share else { return }
         await costTracker.refreshMissingDaysInBackground(days: 30)
+    }
+
+    private func copySocialCardImage() {
+        let generatedAt = Date()
+        let content = makeSocialShareCardContent(generatedAt: generatedAt)
+        socialCardGeneratedAt = generatedAt
+
+        guard let image = renderSocialCardImage(content: content) else {
+            setSocialShareStatus("PNG render failed")
+            return
+        }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        if pasteboard.writeObjects([image]) {
+            setSocialShareStatus("PNG copied")
+        } else {
+            setSocialShareStatus("Copy failed")
+        }
+    }
+
+    private func saveSocialCardImage() {
+        let generatedAt = Date()
+        let content = makeSocialShareCardContent(generatedAt: generatedAt)
+        socialCardGeneratedAt = generatedAt
+
+        guard let pngData = renderSocialCardPNGData(content: content) else {
+            setSocialShareStatus("PNG render failed")
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = content.defaultFilename
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try pngData.write(to: url, options: .atomic)
+                setSocialShareStatus("PNG saved")
+            } catch {
+                setSocialShareStatus("Save failed")
+            }
+        }
+    }
+
+    private func copyTweetText() {
+        let generatedAt = Date()
+        let content = makeSocialShareCardContent(generatedAt: generatedAt)
+        socialCardGeneratedAt = generatedAt
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(content.tweetText, forType: .string)
+        setSocialShareStatus("Text copied")
+    }
+
+    private func renderSocialCardImage(content: SocialShareCardContent) -> NSImage? {
+        let exportSize = SocialShareCardLayout.exportSize
+        let renderer = ImageRenderer(
+            content: SocialShareCard(content: content)
+                .frame(width: exportSize.width, height: exportSize.height)
+        )
+        renderer.proposedSize = ProposedViewSize(width: exportSize.width, height: exportSize.height)
+        renderer.scale = 1
+        return renderer.nsImage
+    }
+
+    private func renderSocialCardPNGData(content: SocialShareCardContent) -> Data? {
+        guard
+            let image = renderSocialCardImage(content: content),
+            let tiffData = image.tiffRepresentation,
+            let bitmap = NSBitmapImageRep(data: tiffData)
+        else {
+            return nil
+        }
+
+        return bitmap.representation(using: .png, properties: [:])
+    }
+
+    private func setSocialShareStatus(_ status: String) {
+        withAnimation(.easeInOut(duration: 0.15)) {
+            socialShareStatus = status
+        }
     }
 }
