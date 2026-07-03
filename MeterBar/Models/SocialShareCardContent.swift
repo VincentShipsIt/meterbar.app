@@ -3,7 +3,6 @@ import Foundation
 // MARK: - SocialShareCardContent
 
 struct SocialShareCardContent: Equatable {
-
     // MARK: Lifecycle
 
     init(
@@ -149,7 +148,6 @@ struct SocialShareCardContent: Equatable {
 // MARK: - SocialShareCardDateFormat
 
 private enum SocialShareCardDateFormat {
-
     // MARK: Internal
 
     static func filename(_ date: Date) -> String {
@@ -166,5 +164,4 @@ private enum SocialShareCardDateFormat {
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         return formatter
     }()
-
 }
