@@ -49,6 +49,7 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
     case overview = "Overview"
     case limits = "Limits"
     case costs = "Costs"
+    case optimize = "Optimize"
     case settings = "Settings"
 
     var id: String { rawValue }
@@ -61,6 +62,8 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
             return "chart.bar.fill"
         case .costs:
             return "dollarsign.circle.fill"
+        case .optimize:
+            return "leaf.fill"
         case .settings:
             return "gearshape.fill"
         }
@@ -162,6 +165,8 @@ struct UsageDashboardView: View {
                     limitsContent
                 case .costs:
                     costsContent
+                case .optimize:
+                    OptimizeInsightsView()
                 case .settings:
                     settingsContent
                 }
@@ -407,6 +412,8 @@ struct UsageDashboardView: View {
             return "Every tracked quota window"
         case .costs:
             return "Local 30-day token spend"
+        case .optimize:
+            return "Where tokens go and how to trim them"
         case .settings:
             return "Accounts, refresh, and local sources"
         }
@@ -428,7 +435,7 @@ struct UsageDashboardView: View {
 
     private var isRefreshButtonAnimating: Bool {
         switch activeSection {
-        case .costs:
+        case .costs, .optimize:
             return costTracker.isRefreshInProgress
         case .overview, .limits, .settings:
             return dataManager.isLoading
@@ -436,7 +443,7 @@ struct UsageDashboardView: View {
     }
 
     private func refreshDashboard() async {
-        if activeSection == .costs {
+        if activeSection == .costs || activeSection == .optimize {
             await costTracker.scanCosts(days: 30)
         } else {
             await dataManager.refreshAll()
@@ -444,14 +451,18 @@ struct UsageDashboardView: View {
     }
 
     private func refreshCostsIfMissingDays() async {
-        guard activeSection == .overview || activeSection == .costs else { return }
+        guard activeSection == .overview || activeSection == .costs || activeSection == .optimize else { return }
         await costTracker.refreshMissingDaysInBackground(days: 30)
     }
 }
 
 private let overviewTileMinHeight: CGFloat = 220
 
-private struct DashboardStatusHero: View {
+// Shared with OptimizeInsightsView (own file) — internal, not private, so the
+// Optimize page can reuse the same card chrome, status hero, and token chart
+// instead of hand-rolling new ones. Full per-type file split is tracked
+// separately (backlog Tier 1f).
+struct DashboardStatusHero: View {
     let title: String
     let detail: String
     let iconName: String
@@ -665,7 +676,7 @@ private struct ProviderLimitsCard: View {
     }
 }
 
-private struct DashboardCard<Content: View>: View {
+struct DashboardCard<Content: View>: View {
     let title: String
     let trailing: String?
     @ViewBuilder let content: Content
@@ -921,7 +932,7 @@ private struct CostRefreshLockOverlay: View {
     }
 }
 
-private struct DailyUsageChart: View {
+struct DailyUsageChart: View {
     let dailyUsage: [DailyTokenUsage]
     let daysToShow: Int
 
