@@ -145,6 +145,43 @@ class CursorLocalService: ObservableObject {
         return (userId: userId, token: token)
     }
 
+    /// Probe the Cursor state database for provider-readiness diagnostics,
+    /// mapping the SQLite read onto the shared `CursorDatabaseProbe` states.
+    /// Uses the same path scan and read-only open as `getAccessTokenFromDatabase`,
+    /// but reports *why* auth is unavailable (not found / unreadable / no token)
+    /// instead of just a token, and never returns the token value itself.
+    func probeReadinessDatabase() -> CursorDatabaseProbe {
+        guard let dbPath = getCursorDatabasePath(forceRescan: false)
+            ?? getCursorDatabasePath(forceRescan: true) else {
+            return .notFound
+        }
+
+        guard FileManager.default.isReadableFile(atPath: dbPath) else {
+            return .unreadable
+        }
+
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            sqlite3_close(db)
+            return .unreadable
+        }
+        defer { sqlite3_close(db) }
+
+        let query = "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken'"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else {
+            return .unreadable
+        }
+        defer { sqlite3_finalize(statement) }
+
+        guard sqlite3_step(statement) == SQLITE_ROW,
+              let tokenCString = sqlite3_column_text(statement, 0) else {
+            return .missingToken
+        }
+
+        return String(cString: tokenCString).isEmpty ? .missingToken : .tokenPresent
+    }
+
     /// Extract userId from JWT token's 'sub' claim
     private func extractUserIdFromJWT(_ token: String) -> String? {
         guard let sub = JWT.claimString("sub", in: token) else { return nil }
