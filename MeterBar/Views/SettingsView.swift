@@ -412,8 +412,11 @@ struct SettingsView: View {
                     .controlSize(.small)
                 }
 
-                List {
-                    ForEach(claudeAccountStore.accounts) { account in
+                VStack(spacing: 0) {
+                    ForEach(Array(claudeAccountStore.accounts.enumerated()), id: \.element.id) { index, account in
+                        if index > 0 {
+                            SettingsDivider()
+                        }
                         AccountProfileRow(
                             account: account,
                             onSave: { name, configDirectory in
@@ -425,14 +428,8 @@ struct SettingsView: View {
                                 Task { await dataManager.refreshAll() }
                             }
                         )
-                        .listRowInsets(EdgeInsets())
-                        .listRowSeparator(.hidden)
                     }
-                    .onMove(perform: moveClaudeAccounts)
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .frame(height: claudeAccountListHeight)
             }
         }
     }
@@ -617,17 +614,9 @@ struct SettingsView: View {
         }
     }
 
-    private var claudeAccountListHeight: CGFloat {
-        min(420, max(118, CGFloat(claudeAccountStore.accounts.count) * 118))
-    }
-
     private func updateClaudeAccount(id: UUID, name: String, configDirectory: String?) {
         claudeAccountStore.updateAccount(id: id, name: name, configDirectory: configDirectory)
         Task { await dataManager.refreshAll() }
-    }
-
-    private func moveClaudeAccounts(from source: IndexSet, to destination: Int) {
-        claudeAccountStore.moveAccounts(fromOffsets: source, toOffset: destination)
     }
 
     private func reconnectClaudeAccount(_ account: ClaudeCodeAccount) {
@@ -708,9 +697,7 @@ private struct SettingsRowView<Content: View>: View {
     }
 
     var body: some View {
-        LabeledContent {
-            content
-        } label: {
+        HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                 if let detail {
@@ -719,6 +706,10 @@ private struct SettingsRowView<Content: View>: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            content
+                .fixedSize(horizontal: true, vertical: false)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -924,22 +915,15 @@ private struct AccountProfileRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "line.3.horizontal")
-                .foregroundStyle(.tertiary)
-                .frame(width: 14)
-                .padding(.top, 10)
-                .help("Drag to reorder")
-
+        HStack(alignment: .center, spacing: 12) {
             Image(systemName: account.isDefault ? "person.crop.circle" : "person.crop.circle.badge.plus")
                 .foregroundStyle(MeterBarTheme.claudeAccent)
                 .frame(width: 18)
-                .padding(.top, 8)
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     TextField("Account label", text: $nameDraft)
-                        .settingsInput(width: 260)
+                        .settingsInput(width: 240)
                         .onSubmit(saveChanges)
 
                     Text(account.isDefault ? "Default" : "Profile")
@@ -953,18 +937,19 @@ private struct AccountProfileRow: View {
                         )
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
                     Text(account.isDefault ? "Default config directory" : "Config directory")
                         .font(.caption2)
                         .fontWeight(.semibold)
                         .foregroundStyle(.secondary)
+                        .frame(width: 126, alignment: .leading)
 
                     if account.isDefault {
                         SettingsReadonlyField(text: displayConfigDirectory)
                     } else {
                         HStack(spacing: 8) {
                             TextField("Config directory", text: $configDirectoryDraft)
-                                .settingsInput(width: 320)
+                                .settingsInput(width: 280)
                                 .onSubmit(saveChanges)
 
                             Button {
@@ -978,20 +963,21 @@ private struct AccountProfileRow: View {
                     }
                 }
             }
-
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 8) {
                 Button(action: onReconnect) {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.small)
                 .help("Reconnect Claude profile")
 
                 Button(action: saveChanges) {
                     Image(systemName: "checkmark")
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.small)
                 .disabled(!hasChanges || !canSave)
                 .help("Save account changes")
 
@@ -1000,11 +986,13 @@ private struct AccountProfileRow: View {
                         Image(systemName: "trash")
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.small)
                     .help("Delete account")
                 }
             }
+            .frame(minWidth: 116, alignment: .trailing)
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 10)
         .onChange(of: account) { _, updatedAccount in
             nameDraft = updatedAccount.name
             configDirectoryDraft = updatedAccount.configDirectory ?? ""
@@ -1060,7 +1048,7 @@ private struct SettingsReadonlyField: View {
             .font(.caption)
             .lineLimit(1)
             .truncationMode(.middle)
-            .settingsInputSurface(width: 320)
+            .settingsInputSurface(width: 280)
             .help(text)
     }
 }

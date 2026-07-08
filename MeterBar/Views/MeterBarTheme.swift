@@ -64,10 +64,10 @@ enum MeterBarTheme {
   )
 
   static let glassCardStroke = Color.adaptive(
-    light: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.08),
-    dark: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.10),
-    lightHighContrast: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.18),
-    darkHighContrast: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.20)
+    light: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.05),
+    dark: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.06),
+    lightHighContrast: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.14),
+    darkHighContrast: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.16)
   )
 
   static func accent(for service: ServiceType) -> Color {
@@ -121,8 +121,8 @@ struct MeterBarDetailBackground: View {
 
         LinearGradient(
           colors: [
-            MeterBarTheme.codexAccent.opacity(0.12),
-            MeterBarTheme.appAccent.opacity(0.06),
+            MeterBarTheme.codexAccent.opacity(0.04),
+            MeterBarTheme.appAccent.opacity(0.025),
             .clear,
           ],
           startPoint: .topLeading,
