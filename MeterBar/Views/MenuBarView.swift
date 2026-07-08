@@ -36,7 +36,6 @@ struct MenuBarView: View {
         configureMenuWindow(window)
       }
     )
-    .meterBarSurfaceStyle(.toolbar)
     .onAppear {
       notifyContentSize()
     }

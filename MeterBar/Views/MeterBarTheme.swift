@@ -78,30 +78,6 @@ enum MeterBarTheme {
   }
 }
 
-enum MeterBarWindowChrome {
-  private static let red: CGFloat = 0.080
-  private static let green: CGFloat = 0.086
-  private static let blue: CGFloat = 0.084
-
-  static let dashboardCornerRadius: CGFloat = 14
-  static let titlebarContentInset: CGFloat = 48
-  static let sidebarTitlebarWidth: CGFloat = 256
-  static let collapsedSidebarWidth: CGFloat = 72
-
-  static let color = Color(
-    red: Double(red),
-    green: Double(green),
-    blue: Double(blue)
-  )
-
-  static let backgroundColor = NSColor(
-    calibratedRed: red,
-    green: green,
-    blue: blue,
-    alpha: 1
-  )
-}
-
 extension QuotaBand {
   /// Appearance-adaptive color for the band (single place where severity
   /// maps to color, shared by every surface).
@@ -121,62 +97,14 @@ struct MeterBarDetailBackground: View {
   var body: some View {
     ZStack {
       if reduceTransparency {
-        MeterBarWindowChrome.color
+        Color(nsColor: .windowBackgroundColor)
       } else {
         Color.clear
           .background(.regularMaterial)
 
-        MeterBarWindowChrome.color.opacity(0.78)
-
         LinearGradient(
           colors: [
-            MeterBarTheme.codexAccent.opacity(0.15),
-            MeterBarTheme.appAccent.opacity(0.08),
-            .clear,
-          ],
-          startPoint: .topLeading,
-          endPoint: .bottomTrailing
-        )
-      }
-    }
-  }
-}
-
-struct MeterBarDashboardWindowBacking: View {
-  var body: some View {
-    ZStack(alignment: .topLeading) {
-      MeterBarDetailBackground()
-
-      HStack(spacing: 0) {
-        MeterBarSidebarTitlebarBackground()
-          .frame(width: MeterBarWindowChrome.sidebarTitlebarWidth)
-
-        MeterBarDetailBackground()
-      }
-      .frame(height: MeterBarWindowChrome.titlebarContentInset)
-      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-      .allowsHitTesting(false)
-    }
-  }
-}
-
-struct MeterBarSidebarBackground: View {
-  @Environment(\.accessibilityReduceTransparency)
-  private var reduceTransparency
-
-  var body: some View {
-    ZStack {
-      if reduceTransparency {
-        MeterBarWindowChrome.color
-      } else {
-        Color.clear
-          .background(.regularMaterial)
-
-        MeterBarWindowChrome.color.opacity(0.82)
-
-        LinearGradient(
-          colors: [
-            MeterBarTheme.codexAccent.opacity(0.10),
+            MeterBarTheme.codexAccent.opacity(0.12),
             MeterBarTheme.appAccent.opacity(0.06),
             .clear,
           ],
@@ -188,28 +116,21 @@ struct MeterBarSidebarBackground: View {
   }
 }
 
-struct MeterBarSidebarSurface: View {
-  var radius: CGFloat = MeterBarWindowChrome.dashboardCornerRadius
-
-  @Environment(\.accessibilityReduceTransparency)
-  private var reduceTransparency
+struct MeterBarCompanionSurface: View {
+  var radius: CGFloat = 16
 
   var body: some View {
     let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
 
-    ZStack {
-      if reduceTransparency {
-        shape.fill(MeterBarWindowChrome.color)
-      } else {
-        shape
-          .fill(.ultraThinMaterial)
-          .glassEffect(.regular, in: shape)
-
-        shape.fill(MeterBarWindowChrome.color.opacity(0.42))
-
+    shape
+      .fill(.ultraThinMaterial)
+      .overlay {
+        shape.fill(MeterBarTheme.glassCardTint)
+      }
+      .overlay(alignment: .topLeading) {
         LinearGradient(
           colors: [
-            MeterBarTheme.codexAccent.opacity(0.18),
+            MeterBarTheme.codexAccent.opacity(0.14),
             MeterBarTheme.appAccent.opacity(0.08),
             .clear,
           ],
@@ -218,102 +139,15 @@ struct MeterBarSidebarSurface: View {
         )
         .clipShape(shape)
       }
-    }
-    .overlay {
-      shape.stroke(MeterBarTheme.glassCardStroke, lineWidth: 1)
-    }
-    .shadow(color: .black.opacity(0.20), radius: 18, y: 10)
-  }
-}
-
-struct MeterBarTitlebarGlass: View {
-  @Environment(\.accessibilityReduceTransparency)
-  private var reduceTransparency
-
-  var body: some View {
-    ZStack {
-      if reduceTransparency {
-        MeterBarWindowChrome.color
-      } else {
-        Color.clear
-          .background(.thinMaterial)
-
-        MeterBarWindowChrome.color.opacity(0.58)
-
-        LinearGradient(
-          colors: [
-            MeterBarTheme.codexAccent.opacity(0.10),
-            .clear,
-          ],
-          startPoint: .topLeading,
-          endPoint: .bottomTrailing
-        )
-      }
-    }
-  }
-}
-
-struct MeterBarSidebarTitlebarBackground: View {
-  var body: some View {
-    MeterBarTitlebarGlass()
       .overlay {
-        MeterBarWindowChrome.color.opacity(0.18)
-      }
-  }
-}
-
-struct MeterBarCompanionSurface: View {
-  var radius: CGFloat = 16
-
-  var body: some View {
-    RoundedRectangle(cornerRadius: radius, style: .continuous)
-      .fill(.ultraThinMaterial)
-      .overlay {
-        RoundedRectangle(cornerRadius: radius, style: .continuous)
-          .fill(MeterBarWindowChrome.color.opacity(0.74))
-      }
-      .overlay(alignment: .topLeading) {
-        LinearGradient(
-          colors: [
-            MeterBarTheme.codexAccent.opacity(0.20),
-            MeterBarTheme.appAccent.opacity(0.08),
-            .clear,
-          ],
-          startPoint: .topLeading,
-          endPoint: .bottomTrailing
-        )
-        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-      }
-      .overlay {
-        RoundedRectangle(cornerRadius: radius, style: .continuous)
-          .stroke(MeterBarTheme.glassCardStroke, lineWidth: 1)
+        shape.stroke(MeterBarTheme.glassCardStroke, lineWidth: 1)
       }
   }
 }
 
 extension View {
-  func meterBarSurfaceStyle(_ style: MeterBarSurfaceStyle) -> some View {
-    environment(\.meterBarSurfaceStyle, style)
-  }
-
   func meterBarCardSurface(cornerRadius: CGFloat = 12) -> some View {
     modifier(MeterBarCardSurfaceModifier(cornerRadius: cornerRadius))
-  }
-}
-
-enum MeterBarSurfaceStyle {
-  case dashboard
-  case toolbar
-}
-
-private struct MeterBarSurfaceStyleKey: EnvironmentKey {
-  static let defaultValue: MeterBarSurfaceStyle = .dashboard
-}
-
-private extension EnvironmentValues {
-  var meterBarSurfaceStyle: MeterBarSurfaceStyle {
-    get { self[MeterBarSurfaceStyleKey.self] }
-    set { self[MeterBarSurfaceStyleKey.self] = newValue }
   }
 }
 

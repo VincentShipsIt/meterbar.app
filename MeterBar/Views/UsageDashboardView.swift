@@ -4,14 +4,6 @@ import SwiftUI
 import MeterBarShared
 import UniformTypeIdentifiers
 
-private final class MeterBarFullSizeHostingView<Content: View>: NSHostingView<Content> {
-    override var safeAreaRect: NSRect { bounds }
-
-    override var safeAreaInsets: NSEdgeInsets {
-        NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
-    }
-}
-
 @MainActor
 final class UsageDashboardWindowController {
     static let shared = UsageDashboardWindowController()
@@ -28,26 +20,19 @@ final class UsageDashboardWindowController {
         }
 
         if window == nil {
-            let hostingView = MeterBarFullSizeHostingView(rootView: UsageDashboardView())
-            hostingView.autoresizingMask = [.width, .height]
+            let hostingController = NSHostingController(rootView: UsageDashboardView())
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 1040, height: 700),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered,
                 defer: false
             )
-            window.title = "MeterBar Usage"
-            window.titleVisibility = .hidden
-            window.titlebarAppearsTransparent = true
-            window.titlebarSeparatorStyle = .none
-            window.toolbar = nil
-            window.isOpaque = false
-            window.backgroundColor = MeterBarWindowChrome.backgroundColor
-            window.isMovableByWindowBackground = true
+            window.title = DashboardNavigationStore.shared.selectedSection.rawValue
+            window.subtitle = DashboardNavigationStore.shared.selectedSection.titlebarSubtitle
+            window.backgroundColor = .windowBackgroundColor
             window.isRestorable = false
             window.contentMinSize = NSSize(width: 900, height: 600)
-            window.contentView = hostingView
-            applyCompanionWindowRadius(to: window)
+            window.contentViewController = hostingController
             window.isReleasedWhenClosed = false
             window.center()
             self.window = window
@@ -56,20 +41,12 @@ final class UsageDashboardWindowController {
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
-
-    private func applyCompanionWindowRadius(to window: NSWindow) {
-        window.contentView?.wantsLayer = true
-        window.contentView?.layer?.cornerRadius = MeterBarWindowChrome.dashboardCornerRadius
-        window.contentView?.layer?.cornerCurve = .continuous
-        window.contentView?.layer?.masksToBounds = true
-    }
 }
 
-enum DashboardSection: String, CaseIterable, Identifiable {
+enum DashboardSection: String, CaseIterable, Identifiable, Hashable {
     case overview = "Overview"
     case limits = "Limits"
     case costs = "Costs"
-    case apiUsage = "API Usage"
     case optimize = "Optimize"
     case diagnostics = "Diagnostics"
     case share = "Share"
@@ -85,8 +62,6 @@ enum DashboardSection: String, CaseIterable, Identifiable {
             return "chart.bar.fill"
         case .costs:
             return "dollarsign.circle.fill"
-        case .apiUsage:
-            return "server.rack"
         case .optimize:
             return "leaf.fill"
         case .diagnostics:
@@ -106,8 +81,6 @@ enum DashboardSection: String, CaseIterable, Identifiable {
             return "Every tracked quota window"
         case .costs:
             return "Local 30-day token spend"
-        case .apiUsage:
-            return "Provider API usage and spend"
         case .optimize:
             return "Where tokens go and how to trim them"
         case .diagnostics:
@@ -150,14 +123,18 @@ struct UsageDashboardView: View {
     @State private var isRunningDiagnostics = false
     @State private var socialCardGeneratedAt = Date()
     @State private var socialShareStatus: String?
-    @State private var isSidebarCollapsed = false
+    @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
 
     private var activeSection: DashboardSection { navigation.selectedSection }
 
-    private var sidebarWidth: CGFloat {
-        isSidebarCollapsed
-            ? MeterBarWindowChrome.collapsedSidebarWidth
-            : MeterBarWindowChrome.sidebarTitlebarWidth
+    private var selectedSection: Binding<DashboardSection?> {
+        Binding(
+            get: { navigation.selectedSection },
+            set: { section in
+                guard let section else { return }
+                navigation.selectedSection = section
+            }
+        )
     }
 
     private var overviewGridColumns: [GridItem] {
@@ -168,18 +145,26 @@ struct UsageDashboardView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            MeterBarDetailBackground()
-                .ignoresSafeArea()
-
-            appShell
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            sidebarList
+        } detail: {
+            detailContent
+                .navigationTitle(activeSection.rawValue)
+                .navigationSubtitle(activeSection.titlebarSubtitle)
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        refreshToolbarButton
+                    }
+                }
         }
-        .clipShape(
-            RoundedRectangle(
-                cornerRadius: MeterBarWindowChrome.dashboardCornerRadius,
-                style: .continuous
-            )
-        )
+        .navigationSplitViewStyle(.balanced)
+        .background {
+            MeterBarMenuWindowAccessor { window in
+                guard let window else { return }
+                window.title = activeSection.rawValue
+                window.subtitle = activeSection.titlebarSubtitle
+            }
+        }
         .task {
             await refreshCostsIfMissingDays()
         }
@@ -194,122 +179,30 @@ struct UsageDashboardView: View {
         }
     }
 
-    private var appShell: some View {
-        HStack(spacing: 0) {
-            sidebar
-                .frame(width: sidebarWidth)
-                .zIndex(2)
-                .animation(.easeInOut(duration: 0.18), value: isSidebarCollapsed)
-
-            ZStack(alignment: .top) {
-                detailContent
-
-                dashboardTitlebar
-                    .zIndex(20)
+    private var sidebarList: some View {
+        List(selection: selectedSection) {
+            ForEach(DashboardSection.allCases) { section in
+                Label(section.rawValue, systemImage: section.iconName)
+                    .tag(section)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .listStyle(.sidebar)
+        .navigationTitle("MeterBar")
+        .navigationSplitViewColumnWidth(min: 220, ideal: 248, max: 280)
     }
 
-    private var dashboardTitlebar: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(activeSection.rawValue)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.primary)
-
-                Text(activeSection.titlebarSubtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Spacer(minLength: 12)
-
-            Button {
-                Task { await refreshDashboard() }
-            } label: {
-                RefreshingIcon(isRefreshing: isRefreshButtonAnimating)
-                    .frame(width: 30, height: 30)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .background(MeterBarTheme.glassCardTint, in: Circle())
-            .overlay(Circle().stroke(MeterBarTheme.glassCardStroke, lineWidth: 0.5))
-            .help(isRefreshButtonAnimating ? "Refreshing usage" : "Refresh usage")
-            .disabled(isRefreshButtonDisabled)
-        }
-        .padding(.leading, 18)
-        .padding(.trailing, 12)
-        .frame(height: MeterBarWindowChrome.titlebarContentInset)
-        .frame(maxWidth: .infinity)
-        .background {
-            MeterBarTitlebarGlass()
-        }
-        .allowsHitTesting(true)
-    }
-
-    private var sidebar: some View {
-        ZStack(alignment: .topTrailing) {
-            MeterBarSidebarSurface()
-                .padding(.leading, 10)
-                .padding(.trailing, isSidebarCollapsed ? 10 : 8)
-                .padding(.vertical, 10)
-
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 4) {
-                    ForEach(DashboardSection.allCases) { section in
-                        DashboardSidebarRow(
-                            section: section,
-                            isSelected: section == activeSection,
-                            isCollapsed: isSidebarCollapsed
-                        ) {
-                            navigation.selectedSection = section
-                        }
-                    }
-                }
-                .padding(.horizontal, isSidebarCollapsed ? 20 : 22)
-                .padding(.top, MeterBarWindowChrome.titlebarContentInset + 10)
-                .padding(.bottom, 22)
-            }
-
-            sidebarCollapseButton
-        }
-        .background(Color.clear)
-    }
-
-    private var sidebarCollapseButton: some View {
+    private var refreshToolbarButton: some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                isSidebarCollapsed.toggle()
-            }
+            Task { await refreshDashboard() }
         } label: {
-            Image(systemName: isSidebarCollapsed ? "sidebar.right" : "sidebar.left")
-                .font(.system(size: 14, weight: .semibold))
-                .symbolRenderingMode(.hierarchical)
-                .frame(width: 30, height: 30)
+            RefreshingIcon(isRefreshing: isRefreshButtonAnimating)
+                .frame(width: 18, height: 18)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .background(
-            MeterBarTheme.glassCardTint,
-            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(MeterBarTheme.glassCardStroke, lineWidth: 0.5)
-        }
-        .padding(.top, 17)
-        .padding(.trailing, isSidebarCollapsed ? 21 : 18)
-        .help(isSidebarCollapsed ? "Show sidebar" : "Hide sidebar")
-        .accessibilityLabel(isSidebarCollapsed ? "Show sidebar" : "Hide sidebar")
-        .zIndex(10)
+        .help(isRefreshButtonAnimating ? "Refreshing usage" : "Refresh usage")
+        .disabled(isRefreshButtonDisabled)
     }
 
     private var detailContent: some View {
-        // Keep a real scroll backing in the detail column while the sidebar
-        // remains a plain native List.
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 switch activeSection {
@@ -319,8 +212,6 @@ struct UsageDashboardView: View {
                     limitsContent
                 case .costs:
                     costsContent
-                case .apiUsage:
-                    apiUsageContent
                 case .optimize:
                     OptimizeInsightsView()
                 case .diagnostics:
@@ -332,9 +223,15 @@ struct UsageDashboardView: View {
                 }
             }
             .padding(.horizontal, 22)
-            .padding(.top, MeterBarWindowChrome.titlebarContentInset + 18)
+            .padding(.top, 22)
             .padding(.bottom, 22)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollContentBackground(.hidden)
+        .scrollEdgeEffectStyle(.soft, for: .top)
+        .background {
+            MeterBarDetailBackground()
+                .ignoresSafeArea()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -420,6 +317,17 @@ struct UsageDashboardView: View {
                         .foregroundColor(.secondary)
                 }
             }
+
+            if apiUsageStore.hasAnyAuthenticated {
+                DashboardCard(title: "API spend (billed)") {
+                    ApiUsageSection(store: apiUsageStore, embedded: true)
+                }
+            }
+        }
+        .task {
+            if apiUsageStore.hasAnyAuthenticated {
+                await apiUsageStore.refresh()
+            }
         }
     }
 
@@ -455,24 +363,6 @@ struct UsageDashboardView: View {
                     .frame(height: 220, alignment: .center)
                 }
             }
-        }
-    }
-
-    private var apiUsageContent: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if apiUsageStore.hasAnyAuthenticated {
-                ApiUsageSection(store: apiUsageStore)
-            } else {
-                DashboardCard(title: "No API Admin Keys") {
-                    Text("Add an organization admin key in Settings to show OpenAI or Anthropic API usage.")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .task {
-            await apiUsageStore.refresh()
         }
     }
 
@@ -788,18 +678,17 @@ struct UsageDashboardView: View {
         switch activeSection {
         case .costs, .share, .optimize:
             return costTracker.isRefreshInProgress
-        case .apiUsage:
-            return apiUsageStore.isLoading
         case .overview, .limits, .diagnostics, .settings:
             return dataManager.isLoading
         }
     }
 
     private func refreshDashboard() async {
-        if activeSection == .apiUsage {
-            await apiUsageStore.refresh()
-        } else if activeSection == .costs || activeSection == .share || activeSection == .optimize {
+        if activeSection == .costs || activeSection == .share || activeSection == .optimize {
             await costTracker.scanCosts(days: 30)
+            if activeSection == .costs, apiUsageStore.hasAnyAuthenticated {
+                await apiUsageStore.refresh()
+            }
             socialCardGeneratedAt = Date()
         } else {
             await dataManager.refreshAll()
@@ -893,77 +782,6 @@ struct UsageDashboardView: View {
     private func setSocialShareStatus(_ status: String) {
         withAnimation(.easeInOut(duration: 0.15)) {
             socialShareStatus = status
-        }
-    }
-}
-
-private struct DashboardSidebarRow: View {
-    let section: DashboardSection
-    let isSelected: Bool
-    let isCollapsed: Bool
-    let action: () -> Void
-
-    @State private var isHovering = false
-
-    private let rowHeight: CGFloat = 32
-    private let rowRadius: CGFloat = 8
-
-    var body: some View {
-        Button(action: action) {
-            rowContent
-                .foregroundStyle(.primary)
-                .opacity(isSelected ? 1 : (isHovering ? 0.96 : 0.88))
-                .frame(
-                    maxWidth: .infinity,
-                    minHeight: rowHeight,
-                    maxHeight: rowHeight,
-                    alignment: isCollapsed ? .center : .leading
-                )
-                .padding(.horizontal, isCollapsed ? 0 : 10)
-                .contentShape(rowShape)
-        }
-        .buttonStyle(.plain)
-        .background {
-            sidebarSelectionSurface
-        }
-        .onHover { isHovering = $0 }
-        .help(section.rawValue)
-        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
-    }
-
-    @ViewBuilder
-    private var rowContent: some View {
-        if isCollapsed {
-            Image(systemName: section.iconName)
-                .font(.system(size: 15, weight: .semibold))
-                .symbolRenderingMode(.hierarchical)
-        } else {
-            Label(section.rawValue, systemImage: section.iconName)
-                .font(.system(size: 13, weight: .semibold))
-                .labelStyle(.titleAndIcon)
-        }
-    }
-
-    private var rowShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: rowRadius, style: .continuous)
-    }
-
-    @ViewBuilder
-    private var sidebarSelectionSurface: some View {
-        if isSelected || isHovering {
-            rowShape
-                .fill(Color.white.opacity(isSelected ? 0.13 : 0.065))
-                .overlay {
-                    rowShape.stroke(
-                        Color.white.opacity(isSelected ? 0.18 : 0.10),
-                        lineWidth: 0.6
-                    )
-                }
-                .shadow(
-                    color: .black.opacity(isSelected ? 0.10 : 0),
-                    radius: isSelected ? 5 : 0,
-                    y: isSelected ? 2 : 0
-                )
         }
     }
 }

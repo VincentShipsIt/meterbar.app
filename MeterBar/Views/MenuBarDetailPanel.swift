@@ -28,7 +28,6 @@ final class MeterBarMenuDetailPanel {
     panel.level = anchor.level
     let measuringView = NSHostingView(
       rootView: content
-        .meterBarSurfaceStyle(.toolbar)
         .frame(width: width)
         .fixedSize(horizontal: false, vertical: true)
     )
@@ -46,7 +45,6 @@ final class MeterBarMenuDetailPanel {
 
     panel.contentView = NSHostingView(
       rootView: content
-        .meterBarSurfaceStyle(.toolbar)
         .frame(width: width, height: height)
     )
     panel.setFrame(
