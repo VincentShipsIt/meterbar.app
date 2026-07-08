@@ -122,8 +122,10 @@ class ClaudeCodeLocalService: ObservableObject {
                     self.authState = .connected(.cli)
                 }
             }
-            // The CLI usage output does not expose the "extra usage" toggle, so query the
-            // OAuth usage endpoint separately for it. Best-effort: failures degrade to .unknown.
+            // The CLI output does not expose the "extra usage" toggle. Only read
+            // Claude's OAuth keychain item when the user explicitly enables the
+            // legacy OAuth fallback; ad-hoc local installs otherwise trigger a
+            // keychain approval prompt on every rebuilt binary.
             let extraUsage = await fetchExtraUsageStatus(account: account)
             return metrics.withExtraUsage(extraUsage)
         } catch {
@@ -231,6 +233,7 @@ class ClaudeCodeLocalService: ObservableObject {
     /// Reads credentials without mutating published state and never throws — any missing token,
     /// expired token, network failure, or decode failure resolves to `.unknown`.
     private func fetchExtraUsageStatus(account: ClaudeCodeAccount) async -> ExtraUsageStatus {
+        guard isOAuthFallbackEnabled else { return .unknown }
         guard account.isDefault else { return .unknown }
         guard let credentials = getCredentials(),
               !OAuthTokenExpiry.isExpired(unixTimestamp: credentials.claudeAiOauth.expiresAt) else {

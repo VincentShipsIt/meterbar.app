@@ -24,7 +24,7 @@ struct MeterBarApp: App {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
-    private var popover: NSPopover?
+    private var menuPanel: MeterBarMenuPanelController?
     private let providerVisibilityStore = ProviderVisibilityStore.shared
     private let dockVisibilityStore = DockVisibilityStore.shared
     private let notificationPreferences = NotificationPreferencesStore.shared
@@ -72,13 +72,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         button.imagePosition = .imageLeft
         button.font = .systemFont(ofSize: 14, weight: .semibold)
 
-        // Create popover
-        popover = NSPopover()
-        popover?.contentSize = NSSize(width: 520, height: 420)
-        popover?.behavior = .transient
-        popover?.contentViewController = NSHostingController(
-            rootView: MenuBarView { [weak self] size in
-                self?.popover?.contentSize = size
+        menuPanel = MeterBarMenuPanelController(
+            statusButtonProvider: { [weak self] in
+                self?.statusItem?.button
+            },
+            onDismiss: {
+                MeterBarMenuDetailPanel.shared.dismiss()
             }
         )
 
@@ -88,6 +87,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Setup notifications (also handles initial data refresh)
         setupNotifications()
+
+        if CommandLine.arguments.contains("--open-dashboard") {
+            Task { @MainActor in
+                UsageDashboardWindowController.shared.show()
+            }
+        }
     }
 
     /// Left-click opens the popover; right-click (or control-click) opens a
@@ -107,13 +112,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc
     func togglePopover() {
-        guard let button = statusItem?.button,
-              let popover = popover else { return }
+        guard let menuPanel else { return }
 
-        if popover.isShown {
-            popover.performClose(nil)
+        if menuPanel.isShown {
+            menuPanel.dismiss()
         } else {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            menuPanel.show()
             // Opening the popover always pulls fresh data — providers read
             // local files, so this is cheap and the popover never shows a
             // stale snapshot from the last timer tick.
@@ -126,9 +130,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func showStatusMenu() {
         guard let button = statusItem?.button else { return }
 
-        if popover?.isShown == true {
-            popover?.performClose(nil)
-        }
+        menuPanel?.dismiss()
 
         let menu = makeStatusMenu()
         let location = NSPoint(x: 0, y: button.bounds.height + 4)

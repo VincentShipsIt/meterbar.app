@@ -1,7 +1,16 @@
 import AppKit
+import Combine
 import SwiftUI
 import MeterBarShared
 import UniformTypeIdentifiers
+
+private final class MeterBarFullSizeHostingView<Content: View>: NSHostingView<Content> {
+    override var safeAreaRect: NSRect { bounds }
+
+    override var safeAreaInsets: NSEdgeInsets {
+        NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+    }
+}
 
 @MainActor
 final class UsageDashboardWindowController {
@@ -11,13 +20,16 @@ final class UsageDashboardWindowController {
 
     private init() {}
 
-    func show() {
+    func show(section: DashboardSection? = nil, focusedProviderID: String? = nil) {
+        if let section {
+            DashboardNavigationStore.shared.navigate(to: section, focusedProviderID: focusedProviderID)
+        } else if let focusedProviderID {
+            DashboardNavigationStore.shared.navigate(to: .limits, focusedProviderID: focusedProviderID)
+        }
+
         if window == nil {
-            let hostingController = NSHostingController(rootView: UsageDashboardView())
-            // Surface the SwiftUI NavigationSplitView title and toolbar through the
-            // AppKit window while the full-size content view keeps the sidebar glass
-            // running behind the titlebar.
-            hostingController.sceneBridgingOptions = [.all]
+            let hostingView = MeterBarFullSizeHostingView(rootView: UsageDashboardView())
+            hostingView.autoresizingMask = [.width, .height]
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 1040, height: 700),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -25,17 +37,17 @@ final class UsageDashboardWindowController {
                 defer: false
             )
             window.title = "MeterBar Usage"
-            window.titleVisibility = .visible
+            window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
-            // Unified transparent chrome so the native toolbar/titlebar glass
-            // reads as one surface with the sidebar (MacSweep-style native look).
-            window.toolbarStyle = .unified
             window.titlebarSeparatorStyle = .none
+            window.toolbar = nil
             window.isOpaque = false
-            window.backgroundColor = .clear
+            window.backgroundColor = MeterBarWindowChrome.backgroundColor
+            window.isMovableByWindowBackground = true
             window.isRestorable = false
             window.contentMinSize = NSSize(width: 900, height: 600)
-            window.contentViewController = hostingController
+            window.contentView = hostingView
+            applyCompanionWindowRadius(to: window)
             window.isReleasedWhenClosed = false
             window.center()
             self.window = window
@@ -44,12 +56,20 @@ final class UsageDashboardWindowController {
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
+
+    private func applyCompanionWindowRadius(to window: NSWindow) {
+        window.contentView?.wantsLayer = true
+        window.contentView?.layer?.cornerRadius = MeterBarWindowChrome.dashboardCornerRadius
+        window.contentView?.layer?.cornerCurve = .continuous
+        window.contentView?.layer?.masksToBounds = true
+    }
 }
 
-private enum DashboardSection: String, CaseIterable, Identifiable {
+enum DashboardSection: String, CaseIterable, Identifiable {
     case overview = "Overview"
     case limits = "Limits"
     case costs = "Costs"
+    case apiUsage = "API Usage"
     case optimize = "Optimize"
     case diagnostics = "Diagnostics"
     case share = "Share"
@@ -65,6 +85,8 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
             return "chart.bar.fill"
         case .costs:
             return "dollarsign.circle.fill"
+        case .apiUsage:
+            return "server.rack"
         case .optimize:
             return "leaf.fill"
         case .diagnostics:
@@ -74,6 +96,42 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
         case .settings:
             return "gearshape.fill"
         }
+    }
+
+    var titlebarSubtitle: String {
+        switch self {
+        case .overview:
+            return "Current health and local token history"
+        case .limits:
+            return "Every tracked quota window"
+        case .costs:
+            return "Local 30-day token spend"
+        case .apiUsage:
+            return "Provider API usage and spend"
+        case .optimize:
+            return "Where tokens go and how to trim them"
+        case .diagnostics:
+            return "Provider setup health"
+        case .share:
+            return "Social card export"
+        case .settings:
+            return "Accounts, refresh, and local sources"
+        }
+    }
+}
+
+@MainActor
+final class DashboardNavigationStore: ObservableObject {
+    static let shared = DashboardNavigationStore()
+
+    @Published var selectedSection: DashboardSection = .overview
+    @Published var focusedProviderID: ProviderSnapshot.ID?
+
+    private init() {}
+
+    func navigate(to section: DashboardSection, focusedProviderID: ProviderSnapshot.ID? = nil) {
+        selectedSection = section
+        self.focusedProviderID = focusedProviderID
     }
 }
 
@@ -86,15 +144,21 @@ struct UsageDashboardView: View {
     @StateObject private var codexCliService = CodexCliLocalService.shared
     @StateObject private var cursorService = CursorLocalService.shared
     @StateObject private var apiUsageStore = ApiUsageStore.shared
+    @StateObject private var navigation = DashboardNavigationStore.shared
 
-    @State private var selectedSection: DashboardSection = .overview
-    @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var readinessReports: [ProviderReadiness] = []
     @State private var isRunningDiagnostics = false
     @State private var socialCardGeneratedAt = Date()
     @State private var socialShareStatus: String?
+    @State private var isSidebarCollapsed = false
 
-    private var activeSection: DashboardSection { selectedSection }
+    private var activeSection: DashboardSection { navigation.selectedSection }
+
+    private var sidebarWidth: CGFloat {
+        isSidebarCollapsed
+            ? MeterBarWindowChrome.collapsedSidebarWidth
+            : MeterBarWindowChrome.sidebarTitlebarWidth
+    }
 
     private var overviewGridColumns: [GridItem] {
         Array(
@@ -104,67 +168,143 @@ struct UsageDashboardView: View {
     }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            sidebar
-                .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
-        } detail: {
-            ZStack {
-                // Keep the detail fill out of the titlebar area so the native
-                // toolbar glass shows there instead of a flat content background.
-                MeterBarDetailBackground()
-                    .ignoresSafeArea(edges: [.horizontal, .bottom])
+        ZStack(alignment: .topLeading) {
+            MeterBarDetailBackground()
+                .ignoresSafeArea()
 
-                detailContent
-            }
-            .navigationTitle(activeSection.rawValue)
-            .navigationSubtitle(sectionSubtitle)
-            .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    Button {
-                        Task { await refreshDashboard() }
-                    } label: {
-                        RefreshingIcon(isRefreshing: isRefreshButtonAnimating)
-                    }
-                    .help(isRefreshButtonAnimating ? "Refreshing usage" : "Refresh usage")
-                    .disabled(isRefreshButtonDisabled)
-                }
-            }
+            appShell
         }
-        .navigationSplitViewStyle(.balanced)
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: MeterBarWindowChrome.dashboardCornerRadius,
+                style: .continuous
+            )
+        )
         .task {
             await refreshCostsIfMissingDays()
         }
-        .onChange(of: selectedSection) {
+        .onChange(of: navigation.selectedSection) {
             Task { await refreshCostsIfMissingDays() }
-            if selectedSection == .diagnostics {
+            if navigation.selectedSection == .diagnostics {
                 Task { await runDiagnostics() }
+            }
+            if navigation.selectedSection != .limits {
+                navigation.focusedProviderID = nil
             }
         }
     }
 
-    private var sidebar: some View {
-        List(selection: $selectedSection) {
-            ForEach(DashboardSection.allCases) { section in
-                Label(section.rawValue, systemImage: section.iconName)
-                    .tag(section)
-            }
+    private var appShell: some View {
+        HStack(spacing: 0) {
+            sidebar
+                .frame(width: sidebarWidth)
+                .zIndex(2)
+                .animation(.easeInOut(duration: 0.18), value: isSidebarCollapsed)
 
-            Section("Local Sources") {
-                if enabledSourceLabels.isEmpty {
-                    Label("No sources enabled", systemImage: "circle")
-                } else {
-                    ForEach(enabledSourceLabels, id: \.self) { label in
-                        Label(label, systemImage: "checkmark.circle.fill")
+            ZStack(alignment: .top) {
+                detailContent
+
+                dashboardTitlebar
+                    .zIndex(20)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var dashboardTitlebar: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(activeSection.rawValue)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+
+                Text(activeSection.titlebarSubtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Spacer(minLength: 12)
+
+            Button {
+                Task { await refreshDashboard() }
+            } label: {
+                RefreshingIcon(isRefreshing: isRefreshButtonAnimating)
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .background(MeterBarTheme.glassCardTint, in: Circle())
+            .overlay(Circle().stroke(MeterBarTheme.glassCardStroke, lineWidth: 0.5))
+            .help(isRefreshButtonAnimating ? "Refreshing usage" : "Refresh usage")
+            .disabled(isRefreshButtonDisabled)
+        }
+        .padding(.leading, 18)
+        .padding(.trailing, 12)
+        .frame(height: MeterBarWindowChrome.titlebarContentInset)
+        .frame(maxWidth: .infinity)
+        .background {
+            MeterBarTitlebarGlass()
+        }
+        .allowsHitTesting(true)
+    }
+
+    private var sidebar: some View {
+        ZStack(alignment: .topTrailing) {
+            MeterBarSidebarSurface()
+                .padding(.leading, 10)
+                .padding(.trailing, isSidebarCollapsed ? 10 : 8)
+                .padding(.vertical, 10)
+
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 4) {
+                    ForEach(DashboardSection.allCases) { section in
+                        DashboardSidebarRow(
+                            section: section,
+                            isSelected: section == activeSection,
+                            isCollapsed: isSidebarCollapsed
+                        ) {
+                            navigation.selectedSection = section
+                        }
                     }
                 }
+                .padding(.horizontal, isSidebarCollapsed ? 20 : 22)
+                .padding(.top, MeterBarWindowChrome.titlebarContentInset + 10)
+                .padding(.bottom, 22)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+
+            sidebarCollapseButton
         }
-        .listStyle(.sidebar)
-        // No background overrides: the native sidebar owns its glass material,
-        // section rendering, and selected-row highlight. Stacking a custom
-        // `.glassEffect` here would double up on the system material.
+        .background(Color.clear)
+    }
+
+    private var sidebarCollapseButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                isSidebarCollapsed.toggle()
+            }
+        } label: {
+            Image(systemName: isSidebarCollapsed ? "sidebar.right" : "sidebar.left")
+                .font(.system(size: 14, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .frame(width: 30, height: 30)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .background(
+            MeterBarTheme.glassCardTint,
+            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(MeterBarTheme.glassCardStroke, lineWidth: 0.5)
+        }
+        .padding(.top, 17)
+        .padding(.trailing, isSidebarCollapsed ? 21 : 18)
+        .help(isSidebarCollapsed ? "Show sidebar" : "Hide sidebar")
+        .accessibilityLabel(isSidebarCollapsed ? "Show sidebar" : "Hide sidebar")
+        .zIndex(10)
     }
 
     private var detailContent: some View {
@@ -179,6 +319,8 @@ struct UsageDashboardView: View {
                     limitsContent
                 case .costs:
                     costsContent
+                case .apiUsage:
+                    apiUsageContent
                 case .optimize:
                     OptimizeInsightsView()
                 case .diagnostics:
@@ -190,10 +332,11 @@ struct UsageDashboardView: View {
                 }
             }
             .padding(.horizontal, 22)
-            .padding(.top, 18)
+            .padding(.top, MeterBarWindowChrome.titlebarContentInset + 18)
             .padding(.bottom, 22)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var overviewContent: some View {
@@ -207,30 +350,12 @@ struct UsageDashboardView: View {
 
             LazyVGrid(columns: overviewGridColumns, alignment: .leading, spacing: 12) {
                 ForEach(providerSnapshots) { snapshot in
-                    ProviderOverviewStatusCard(snapshot: snapshot)
+                    ProviderOverviewStatusCard(snapshot: snapshot) {
+                        navigation.navigate(to: .limits, focusedProviderID: snapshot.id)
+                    }
                 }
-
-                CostOverviewStatusCard(
-                    summary: visibleCostSummary,
-                    isScanning: costTracker.isScanning,
-                    isRefreshingMissingDays: costTracker.isRefreshingMissingDays,
-                    formattedTokens: UsageFormat.tokens(visibleCostSummary?.totalTokens ?? 0)
-                )
             }
             .frame(maxWidth: .infinity)
-
-            if apiUsageStore.hasAnyAuthenticated {
-                DashboardCard(title: "Organization API Spend", trailing: "") {
-                    ApiUsageSection(store: apiUsageStore, embedded: true)
-                }
-            }
-
-            DashboardCard(title: "Last 30 Days", trailing: costRefreshStatusText) {
-                costScanChart(height: 180, compact: true)
-            }
-        }
-        .task {
-            await apiUsageStore.refresh()
         }
     }
 
@@ -255,7 +380,7 @@ struct UsageDashboardView: View {
                         .foregroundColor(.secondary)
                 }
             } else {
-                ForEach(providerSnapshots) { snapshot in
+                ForEach(orderedProviderSnapshotsForLimits) { snapshot in
                     ProviderLimitsCard(snapshot: snapshot)
                 }
             }
@@ -265,62 +390,89 @@ struct UsageDashboardView: View {
 
     private var costsContent: some View {
         VStack(alignment: .leading, spacing: 14) {
-            DashboardCard(title: "30 Day API-Rate Token Spend", trailing: costRefreshStatusText) {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text(
-                        "Local subscription logs are estimated using API token rates "
-                            + "so Codex and Claude can be compared."
+            CostOverviewStatusCard(
+                summary: visibleCostSummary,
+                isScanning: costTracker.isScanning,
+                isRefreshingMissingDays: costTracker.isRefreshingMissingDays,
+                formattedTokens: UsageFormat.tokens(visibleCostSummary?.totalTokens ?? 0)
+            )
+            .frame(maxWidth: 420, alignment: .leading)
+
+            costTrendCard
+
+            if let summary = visibleCostSummary, !summary.dailyUsage.isEmpty {
+                DashboardCard(title: "Daily Details", trailing: "Last 30 days") {
+                    DailyUsageBreakdownList(dailyUsage: summary.dailyUsage)
+                }
+            }
+
+            if let summary = visibleCostSummary, !summary.costs.isEmpty {
+                ForEach(summary.costs) { cost in
+                    ProviderCostBreakdown(
+                        cost: cost,
+                        quotaSnapshot: providerSnapshot(for: cost.provider)
                     )
-                        .font(.caption)
+                }
+            } else {
+                DashboardCard(title: "No Local Logs Found") {
+                    Text("Run a local scan to load 30-day token history.")
+                        .font(.subheadline)
                         .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
 
-                    if costTracker.isScanning {
-                        costScanChart(height: 220, compact: false, showsProgressBadge: false)
-                    } else if let summary = visibleCostSummary {
-                        DailyUsageChart(dailyUsage: summary.dailyUsage)
-                            .frame(height: 220)
-                    } else {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Run a local scan to load 30-day token history.")
-                                .foregroundColor(.secondary)
-                            Button {
-                                Task {
-                                    await costTracker.scanCosts(days: 30)
-                                }
-                            } label: {
-                                Label("Scan 30 Days", systemImage: "magnifyingglass")
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(costTracker.isRefreshInProgress)
-                        }
-                        .frame(height: 220, alignment: .center)
-                    }
+    private var costTrendCard: some View {
+        DashboardCard(title: "30 Day Token Spend", trailing: costRefreshStatusText) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text(
+                    "Local subscription logs are estimated using API token rates "
+                        + "so Codex and Claude can be compared."
+                )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
 
-                    Divider()
-
-                    if let summary = visibleCostSummary, !summary.dailyUsage.isEmpty {
-                        DailyUsageBreakdownList(dailyUsage: summary.dailyUsage)
-                        Divider()
-                    }
-
-                    if let summary = visibleCostSummary, !summary.costs.isEmpty {
-                        ForEach(summary.costs) { cost in
-                            ProviderCostBreakdown(
-                                cost: cost,
-                                quotaSnapshot: providerSnapshot(for: cost.provider)
-                            )
-                        }
-                    } else {
-                        Text("No enabled provider token logs found yet.")
+                if costTracker.isScanning {
+                    costScanChart(height: 220, compact: false, showsProgressBadge: true)
+                } else if let summary = visibleCostSummary {
+                    DailyUsageChart(dailyUsage: summary.dailyUsage)
+                        .frame(height: 220)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Run a local scan to load 30-day token history.")
                             .foregroundColor(.secondary)
+                        Button {
+                            Task {
+                                await costTracker.scanCosts(days: 30)
+                            }
+                        } label: {
+                            Label("Scan 30 Days", systemImage: "magnifyingglass")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(costTracker.isRefreshInProgress)
                     }
+                    .frame(height: 220, alignment: .center)
                 }
             }
-            .overlay {
-                if costTracker.isScanning, visibleCostSummary != nil {
-                    CostRefreshLockOverlay()
+        }
+    }
+
+    private var apiUsageContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if apiUsageStore.hasAnyAuthenticated {
+                ApiUsageSection(store: apiUsageStore)
+            } else {
+                DashboardCard(title: "No API Admin Keys") {
+                    Text("Add an organization admin key in Settings to show OpenAI or Anthropic API usage.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
                 }
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task {
+            await apiUsageStore.refresh()
         }
     }
 
@@ -445,6 +597,15 @@ struct UsageDashboardView: View {
             cursorHasAccess: cursorService.hasAccess
         ))
         .filter(\.hasMetrics)
+    }
+
+    private var orderedProviderSnapshotsForLimits: [ProviderSnapshot] {
+        guard let focusedProviderID = navigation.focusedProviderID else {
+            return providerSnapshots
+        }
+        let focused = providerSnapshots.filter { $0.id == focusedProviderID }
+        guard !focused.isEmpty else { return providerSnapshots }
+        return focused + providerSnapshots.filter { $0.id != focusedProviderID }
     }
 
     /// The snapshot for a provider in the Costs panel — prefers an exhausted
@@ -609,25 +770,6 @@ struct UsageDashboardView: View {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    private var sectionSubtitle: String {
-        switch activeSection {
-        case .overview:
-            return "Current health and local token history"
-        case .limits:
-            return "Every tracked quota window"
-        case .costs:
-            return "Local 30-day token spend"
-        case .optimize:
-            return "Where tokens go and how to trim them"
-        case .diagnostics:
-            return "Provider setup health — safe to share"
-        case .share:
-            return "Social card export"
-        case .settings:
-            return "Accounts, refresh, and local sources"
-        }
-    }
-
     private var costRefreshStatusText: String? {
         if costTracker.isScanning {
             return "Scanning..."
@@ -646,13 +788,17 @@ struct UsageDashboardView: View {
         switch activeSection {
         case .costs, .share, .optimize:
             return costTracker.isRefreshInProgress
+        case .apiUsage:
+            return apiUsageStore.isLoading
         case .overview, .limits, .diagnostics, .settings:
             return dataManager.isLoading
         }
     }
 
     private func refreshDashboard() async {
-        if activeSection == .costs || activeSection == .share || activeSection == .optimize {
+        if activeSection == .apiUsage {
+            await apiUsageStore.refresh()
+        } else if activeSection == .costs || activeSection == .share || activeSection == .optimize {
             await costTracker.scanCosts(days: 30)
             socialCardGeneratedAt = Date()
         } else {
@@ -661,7 +807,7 @@ struct UsageDashboardView: View {
     }
 
     private func refreshCostsIfMissingDays() async {
-        let costBackedSections: Set<DashboardSection> = [.overview, .costs, .share, .optimize]
+        let costBackedSections: Set<DashboardSection> = [.costs, .share, .optimize]
         guard costBackedSections.contains(activeSection) else { return }
         await costTracker.refreshMissingDaysInBackground(days: 30)
     }
@@ -747,6 +893,77 @@ struct UsageDashboardView: View {
     private func setSocialShareStatus(_ status: String) {
         withAnimation(.easeInOut(duration: 0.15)) {
             socialShareStatus = status
+        }
+    }
+}
+
+private struct DashboardSidebarRow: View {
+    let section: DashboardSection
+    let isSelected: Bool
+    let isCollapsed: Bool
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    private let rowHeight: CGFloat = 32
+    private let rowRadius: CGFloat = 8
+
+    var body: some View {
+        Button(action: action) {
+            rowContent
+                .foregroundStyle(.primary)
+                .opacity(isSelected ? 1 : (isHovering ? 0.96 : 0.88))
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: rowHeight,
+                    maxHeight: rowHeight,
+                    alignment: isCollapsed ? .center : .leading
+                )
+                .padding(.horizontal, isCollapsed ? 0 : 10)
+                .contentShape(rowShape)
+        }
+        .buttonStyle(.plain)
+        .background {
+            sidebarSelectionSurface
+        }
+        .onHover { isHovering = $0 }
+        .help(section.rawValue)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+
+    @ViewBuilder
+    private var rowContent: some View {
+        if isCollapsed {
+            Image(systemName: section.iconName)
+                .font(.system(size: 15, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+        } else {
+            Label(section.rawValue, systemImage: section.iconName)
+                .font(.system(size: 13, weight: .semibold))
+                .labelStyle(.titleAndIcon)
+        }
+    }
+
+    private var rowShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: rowRadius, style: .continuous)
+    }
+
+    @ViewBuilder
+    private var sidebarSelectionSurface: some View {
+        if isSelected || isHovering {
+            rowShape
+                .fill(Color.white.opacity(isSelected ? 0.13 : 0.065))
+                .overlay {
+                    rowShape.stroke(
+                        Color.white.opacity(isSelected ? 0.18 : 0.10),
+                        lineWidth: 0.6
+                    )
+                }
+                .shadow(
+                    color: .black.opacity(isSelected ? 0.10 : 0),
+                    radius: isSelected ? 5 : 0,
+                    y: isSelected ? 2 : 0
+                )
         }
     }
 }

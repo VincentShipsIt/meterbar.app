@@ -48,6 +48,21 @@ struct ProviderSnapshot: Identifiable {
     var hasExhaustedLimit: Bool {
         limits.contains { $0.usageLimit.isAtLimit }
     }
+
+    /// Weekly exhaustion blocks the whole subscription even when the shorter
+    /// session window still has room. Compact overview cards should prioritize
+    /// that reset instead of spending space on the session gauge.
+    var hasExhaustedWeeklyLimit: Bool {
+        limits.contains { $0.kind == .weekly && $0.usageLimit.isAtLimit }
+    }
+
+    /// Detail panels should focus on the limit that is actually blocking use.
+    /// When the weekly subscription quota is exhausted, the shorter session
+    /// window is no longer actionable, even if it still has room.
+    var detailLimits: [SnapshotLimit] {
+        guard hasExhaustedWeeklyLimit else { return limits }
+        return limits.filter { $0.kind != .session }
+    }
 }
 
 struct SnapshotLimit: Identifiable {
