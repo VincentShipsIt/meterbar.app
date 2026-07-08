@@ -175,4 +175,47 @@ final class ProviderSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.band, .exhausted)
         XCTAssertEqual(snapshot.resetWindows.count, 2)
     }
+
+    func testWeeklyExhaustionIsDistinctFromSessionExhaustion() {
+        let weeklyOut = ProviderSnapshotBuilder.snapshot(
+            title: "Claude",
+            service: .claudeCode,
+            metrics: makeMetrics(service: .claudeCode, session: 0, weekly: 100),
+            emptyDetail: ""
+        )
+        let sessionOut = ProviderSnapshotBuilder.snapshot(
+            title: "Codex",
+            service: .codexCli,
+            metrics: makeMetrics(service: .codexCli, session: 100, weekly: 0),
+            emptyDetail: ""
+        )
+
+        XCTAssertTrue(weeklyOut.hasExhaustedLimit)
+        XCTAssertTrue(weeklyOut.hasExhaustedWeeklyLimit)
+        XCTAssertTrue(sessionOut.hasExhaustedLimit)
+        XCTAssertFalse(sessionOut.hasExhaustedWeeklyLimit)
+    }
+
+    func testDetailLimitsHideSessionWhenWeeklyIsExhausted() {
+        let snapshot = ProviderSnapshotBuilder.snapshot(
+            title: "Claude",
+            service: .claudeCode,
+            metrics: makeMetrics(service: .claudeCode, session: 0, weekly: 100, codeReview: 40),
+            emptyDetail: ""
+        )
+
+        XCTAssertEqual(snapshot.limits.map(\.id), ["session", "weekly", "codeReview"])
+        XCTAssertEqual(snapshot.detailLimits.map(\.id), ["weekly", "codeReview"])
+    }
+
+    func testDetailLimitsKeepSessionWhenOnlySessionIsExhausted() {
+        let snapshot = ProviderSnapshotBuilder.snapshot(
+            title: "Codex",
+            service: .codexCli,
+            metrics: makeMetrics(service: .codexCli, session: 100, weekly: 25),
+            emptyDetail: ""
+        )
+
+        XCTAssertEqual(snapshot.detailLimits.map(\.id), ["session", "weekly"])
+    }
 }

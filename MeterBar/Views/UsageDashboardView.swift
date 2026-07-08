@@ -1,7 +1,18 @@
 import AppKit
+import Combine
 import SwiftUI
 import MeterBarShared
 import UniformTypeIdentifiers
+
+@MainActor
+private func applyWindowChrome(_ window: NSWindow, section _: DashboardSection? = nil) {
+    window.title = ""
+    window.subtitle = ""
+    window.titleVisibility = .visible
+    window.titlebarAppearsTransparent = true
+    window.titlebarSeparatorStyle = .none
+    window.toolbarStyle = .unified
+}
 
 @MainActor
 final class UsageDashboardWindowController {
@@ -11,28 +22,23 @@ final class UsageDashboardWindowController {
 
     private init() {}
 
-    func show() {
+    func show(section: DashboardSection? = nil, focusedProviderID: String? = nil) {
+        if let section {
+            DashboardNavigationStore.shared.navigate(to: section, focusedProviderID: focusedProviderID)
+        } else if let focusedProviderID {
+            DashboardNavigationStore.shared.navigate(to: .limits, focusedProviderID: focusedProviderID)
+        }
+
         if window == nil {
             let hostingController = NSHostingController(rootView: UsageDashboardView())
-            // Surface the SwiftUI NavigationSplitView title and toolbar through the
-            // AppKit window while the full-size content view keeps the sidebar glass
-            // running behind the titlebar.
-            hostingController.sceneBridgingOptions = [.all]
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 1040, height: 700),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
             )
-            window.title = "MeterBar Usage"
-            window.titleVisibility = .visible
-            window.titlebarAppearsTransparent = true
-            // Unified transparent chrome so the native toolbar/titlebar glass
-            // reads as one surface with the sidebar (MacSweep-style native look).
-            window.toolbarStyle = .unified
-            window.titlebarSeparatorStyle = .none
-            window.isOpaque = false
-            window.backgroundColor = .clear
+            applyWindowChrome(window, section: DashboardNavigationStore.shared.selectedSection)
+            window.backgroundColor = .windowBackgroundColor
             window.isRestorable = false
             window.contentMinSize = NSSize(width: 900, height: 600)
             window.contentViewController = hostingController
@@ -46,7 +52,7 @@ final class UsageDashboardWindowController {
     }
 }
 
-private enum DashboardSection: String, CaseIterable, Identifiable {
+enum DashboardSection: String, CaseIterable, Identifiable, Hashable {
     case overview = "Overview"
     case limits = "Limits"
     case costs = "Costs"
@@ -75,6 +81,40 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
             return "gearshape.fill"
         }
     }
+
+    var titlebarSubtitle: String {
+        switch self {
+        case .overview:
+            return "Current health and local token history"
+        case .limits:
+            return "Every tracked quota window"
+        case .costs:
+            return "Local 30-day token spend"
+        case .optimize:
+            return "Where tokens go and how to trim them"
+        case .diagnostics:
+            return "Provider setup health"
+        case .share:
+            return "Social card export"
+        case .settings:
+            return "Accounts, refresh, and local sources"
+        }
+    }
+}
+
+@MainActor
+final class DashboardNavigationStore: ObservableObject {
+    static let shared = DashboardNavigationStore()
+
+    @Published var selectedSection: DashboardSection = .overview
+    @Published var focusedProviderID: ProviderSnapshot.ID?
+
+    private init() {}
+
+    func navigate(to section: DashboardSection, focusedProviderID: ProviderSnapshot.ID? = nil) {
+        selectedSection = section
+        self.focusedProviderID = focusedProviderID
+    }
 }
 
 struct UsageDashboardView: View {
@@ -86,15 +126,25 @@ struct UsageDashboardView: View {
     @StateObject private var codexCliService = CodexCliLocalService.shared
     @StateObject private var cursorService = CursorLocalService.shared
     @StateObject private var apiUsageStore = ApiUsageStore.shared
+    @StateObject private var navigation = DashboardNavigationStore.shared
 
-    @State private var selectedSection: DashboardSection = .overview
-    @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var readinessReports: [ProviderReadiness] = []
     @State private var isRunningDiagnostics = false
     @State private var socialCardGeneratedAt = Date()
     @State private var socialShareStatus: String?
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
-    private var activeSection: DashboardSection { selectedSection }
+    private var activeSection: DashboardSection { navigation.selectedSection }
+
+    private var selectedSection: Binding<DashboardSection?> {
+        Binding(
+            get: { navigation.selectedSection },
+            set: { section in
+                guard let section else { return }
+                navigation.selectedSection = section
+            }
+        )
+    }
 
     private var overviewGridColumns: [GridItem] {
         Array(
@@ -104,74 +154,66 @@ struct UsageDashboardView: View {
     }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            sidebar
-                .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
-        } detail: {
-            ZStack {
-                // Keep the detail fill out of the titlebar area so the native
-                // toolbar glass shows there instead of a flat content background.
-                MeterBarDetailBackground()
-                    .ignoresSafeArea(edges: [.horizontal, .bottom])
-
-                detailContent
-            }
-            .navigationTitle(activeSection.rawValue)
-            .navigationSubtitle(sectionSubtitle)
-            .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    Button {
-                        Task { await refreshDashboard() }
-                    } label: {
-                        RefreshingIcon(isRefreshing: isRefreshButtonAnimating)
-                    }
-                    .help(isRefreshButtonAnimating ? "Refreshing usage" : "Refresh usage")
-                    .disabled(isRefreshButtonDisabled)
-                }
+        dashboardSplitView
+        .background {
+            MeterBarMenuWindowAccessor { window in
+                guard let window else { return }
+                applyWindowChrome(window, section: activeSection)
             }
         }
-        .navigationSplitViewStyle(.balanced)
         .task {
             await refreshCostsIfMissingDays()
         }
-        .onChange(of: selectedSection) {
+        .onChange(of: navigation.selectedSection) {
             Task { await refreshCostsIfMissingDays() }
-            if selectedSection == .diagnostics {
+            if navigation.selectedSection == .diagnostics {
                 Task { await runDiagnostics() }
+            }
+            if navigation.selectedSection != .limits {
+                navigation.focusedProviderID = nil
             }
         }
     }
 
-    private var sidebar: some View {
-        List(selection: $selectedSection) {
+    private var dashboardSplitView: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            sidebarList
+        } detail: {
+            detailContent
+                .toolbar {
+                    ToolbarItemGroup(placement: .primaryAction) {
+                        refreshToolbarButton
+                    }
+                }
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+
+    private var sidebarList: some View {
+        List(selection: selectedSection) {
             ForEach(DashboardSection.allCases) { section in
                 Label(section.rawValue, systemImage: section.iconName)
                     .tag(section)
             }
-
-            Section("Local Sources") {
-                if enabledSourceLabels.isEmpty {
-                    Label("No sources enabled", systemImage: "circle")
-                } else {
-                    ForEach(enabledSourceLabels, id: \.self) { label in
-                        Label(label, systemImage: "checkmark.circle.fill")
-                    }
-                }
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
         .listStyle(.sidebar)
-        // No background overrides: the native sidebar owns its glass material,
-        // section rendering, and selected-row highlight. Stacking a custom
-        // `.glassEffect` here would double up on the system material.
+        .tint(MeterBarTheme.sidebarMenuTint)
+        .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
+    }
+
+    private var refreshToolbarButton: some View {
+        Button {
+            Task { await refreshDashboard() }
+        } label: {
+            RefreshingIcon(isRefreshing: isRefreshButtonAnimating)
+        }
+        .help(isRefreshButtonAnimating ? "Refreshing usage" : "Refresh usage")
+        .disabled(isRefreshButtonDisabled)
     }
 
     private var detailContent: some View {
-        // Keep a real scroll backing in the detail column while the sidebar
-        // remains a plain native List.
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 16) {
                 switch activeSection {
                 case .overview:
                     overviewContent
@@ -190,47 +232,39 @@ struct UsageDashboardView: View {
                 }
             }
             .padding(.horizontal, 22)
-            .padding(.top, 18)
+            .padding(.top, 12)
             .padding(.bottom, 22)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .scrollContentBackground(.hidden)
+        .scrollEdgeEffectStyle(.soft, for: .top)
+        .background {
+            MeterBarDetailBackground()
+                .ignoresSafeArea()
+        }
+        .navigationTitle("")
+        .navigationSubtitle("")
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var overviewContent: some View {
         VStack(alignment: .leading, spacing: 14) {
-            DashboardStatusHero(
-                title: overviewStatusTitle,
-                detail: overviewStatusDetail,
-                iconName: overviewStatusIconName,
-                color: overviewBand?.color ?? .secondary
+            OverviewSummaryStrip(
+                tightestLimit: tightestLimit,
+                sourceCount: providerSnapshots.count,
+                enabledSourceCount: enabledQuotaSourceCount,
+                estimatedCost: visibleCostSummary?.formattedTotalCost,
+                formattedTokens: UsageFormat.tokens(visibleCostSummary?.totalTokens ?? 0)
             )
 
             LazyVGrid(columns: overviewGridColumns, alignment: .leading, spacing: 12) {
                 ForEach(providerSnapshots) { snapshot in
-                    ProviderOverviewStatusCard(snapshot: snapshot)
+                    ProviderOverviewStatusCard(snapshot: snapshot) {
+                        navigation.navigate(to: .limits, focusedProviderID: snapshot.id)
+                    }
                 }
-
-                CostOverviewStatusCard(
-                    summary: visibleCostSummary,
-                    isScanning: costTracker.isScanning,
-                    isRefreshingMissingDays: costTracker.isRefreshingMissingDays,
-                    formattedTokens: UsageFormat.tokens(visibleCostSummary?.totalTokens ?? 0)
-                )
             }
             .frame(maxWidth: .infinity)
-
-            if apiUsageStore.hasAnyAuthenticated {
-                DashboardCard(title: "Organization API Spend", trailing: "") {
-                    ApiUsageSection(store: apiUsageStore, embedded: true)
-                }
-            }
-
-            DashboardCard(title: "Last 30 Days", trailing: costRefreshStatusText) {
-                costScanChart(height: 180, compact: true)
-            }
-        }
-        .task {
-            await apiUsageStore.refresh()
         }
     }
 
@@ -255,7 +289,7 @@ struct UsageDashboardView: View {
                         .foregroundColor(.secondary)
                 }
             } else {
-                ForEach(providerSnapshots) { snapshot in
+                ForEach(orderedProviderSnapshotsForLimits) { snapshot in
                     ProviderLimitsCard(snapshot: snapshot)
                 }
             }
@@ -265,60 +299,79 @@ struct UsageDashboardView: View {
 
     private var costsContent: some View {
         VStack(alignment: .leading, spacing: 14) {
-            DashboardCard(title: "30 Day API-Rate Token Spend", trailing: costRefreshStatusText) {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text(
-                        "Local subscription logs are estimated using API token rates "
-                            + "so Codex and Claude can be compared."
-                    )
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+            CostOverviewStatusCard(
+                summary: visibleCostSummary,
+                isScanning: costTracker.isScanning,
+                isRefreshingMissingDays: costTracker.isRefreshingMissingDays,
+                formattedTokens: UsageFormat.tokens(visibleCostSummary?.totalTokens ?? 0)
+            )
 
-                    if costTracker.isScanning {
-                        costScanChart(height: 220, compact: false, showsProgressBadge: false)
-                    } else if let summary = visibleCostSummary {
-                        DailyUsageChart(dailyUsage: summary.dailyUsage)
-                            .frame(height: 220)
-                    } else {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Run a local scan to load 30-day token history.")
-                                .foregroundColor(.secondary)
-                            Button {
-                                Task {
-                                    await costTracker.scanCosts(days: 30)
-                                }
-                            } label: {
-                                Label("Scan 30 Days", systemImage: "magnifyingglass")
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(costTracker.isRefreshInProgress)
-                        }
-                        .frame(height: 220, alignment: .center)
-                    }
+            costTrendCard
 
-                    Divider()
-
-                    if let summary = visibleCostSummary, !summary.dailyUsage.isEmpty {
-                        DailyUsageBreakdownList(dailyUsage: summary.dailyUsage)
-                        Divider()
-                    }
-
-                    if let summary = visibleCostSummary, !summary.costs.isEmpty {
-                        ForEach(summary.costs) { cost in
-                            ProviderCostBreakdown(
-                                cost: cost,
-                                quotaSnapshot: providerSnapshot(for: cost.provider)
-                            )
-                        }
-                    } else {
-                        Text("No enabled provider token logs found yet.")
-                            .foregroundColor(.secondary)
-                    }
+            if let summary = visibleCostSummary, !summary.dailyUsage.isEmpty {
+                DashboardCard(title: "Daily Details", trailing: "Last 30 days") {
+                    DailyUsageBreakdownList(dailyUsage: summary.dailyUsage)
                 }
             }
-            .overlay {
-                if costTracker.isScanning, visibleCostSummary != nil {
-                    CostRefreshLockOverlay()
+
+            if let summary = visibleCostSummary, !summary.costs.isEmpty {
+                ForEach(summary.costs) { cost in
+                    ProviderCostBreakdown(
+                        cost: cost,
+                        quotaSnapshot: providerSnapshot(for: cost.provider)
+                    )
+                }
+            } else {
+                DashboardCard(title: "No Local Logs Found") {
+                    Text("Run a local scan to load 30-day token history.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            if apiUsageStore.hasAnyAuthenticated {
+                DashboardCard(title: "API spend (billed)") {
+                    ApiUsageSection(store: apiUsageStore, embedded: true)
+                }
+            }
+        }
+        .task {
+            if apiUsageStore.hasAnyAuthenticated, !apiUsageStore.isLoading {
+                await apiUsageStore.refresh()
+            }
+        }
+    }
+
+    private var costTrendCard: some View {
+        DashboardCard(title: "30 Day Token Spend", trailing: costRefreshStatusText) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text(
+                    "Local subscription logs are estimated using API token rates "
+                        + "so Codex and Claude can be compared."
+                )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                if costTracker.isScanning {
+                    costScanChart(height: 220, compact: false, showsProgressBadge: true)
+                } else if let summary = visibleCostSummary {
+                    DailyUsageChart(dailyUsage: summary.dailyUsage)
+                        .frame(height: 220)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Run a local scan to load 30-day token history.")
+                            .foregroundColor(.secondary)
+                        Button {
+                            Task {
+                                await costTracker.scanCosts(days: 30)
+                            }
+                        } label: {
+                            Label("Scan 30 Days", systemImage: "magnifyingglass")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(costTracker.isRefreshInProgress)
+                    }
+                    .frame(height: 220, alignment: .center)
                 }
             }
         }
@@ -447,6 +500,15 @@ struct UsageDashboardView: View {
         .filter(\.hasMetrics)
     }
 
+    private var orderedProviderSnapshotsForLimits: [ProviderSnapshot] {
+        guard let focusedProviderID = navigation.focusedProviderID else {
+            return providerSnapshots
+        }
+        let focused = providerSnapshots.filter { $0.id == focusedProviderID }
+        guard !focused.isEmpty else { return providerSnapshots }
+        return focused + providerSnapshots.filter { $0.id != focusedProviderID }
+    }
+
     /// The snapshot for a provider in the Costs panel — prefers an exhausted
     /// one so the cost card can surface when that provider's quota resets.
     private func providerSnapshot(for service: ServiceType) -> ProviderSnapshot? {
@@ -493,39 +555,22 @@ struct UsageDashboardView: View {
         return labels
     }
 
+    private var enabledQuotaSourceCount: Int {
+        var count = 0
+        if providerVisibility.isEnabled(.codexCli) {
+            count += 1
+        }
+        if providerVisibility.isEnabled(.claudeCode) {
+            count += claudeAccountStore.accounts.count
+        }
+        if providerVisibility.isEnabled(.cursor) {
+            count += 1
+        }
+        return count
+    }
+
     private var tightestLimit: SnapshotLimit? {
         providerSnapshots.tightestLimit
-    }
-
-    private var overviewBand: QuotaBand? {
-        tightestLimit.map { QuotaBand.forPercentLeft($0.percentLeft) }
-    }
-
-    private var overviewStatusTitle: String {
-        guard !providerSnapshots.isEmpty else { return "No sources enabled" }
-        guard let overviewBand else { return "Waiting for usage" }
-        return overviewBand.overviewTitle
-    }
-
-    private var overviewStatusIconName: String {
-        // Neutral states (no providers enabled / no usage yet) should not show
-        // the healthy green shield, which falsely implies tracked quotas look good.
-        overviewBand?.iconName ?? "circle.dashed"
-    }
-
-    private var overviewStatusDetail: String {
-        guard !providerSnapshots.isEmpty else {
-            return "Enable providers in Settings to show quota status."
-        }
-        guard let tightestLimit else {
-            return "Refresh to load enabled provider status."
-        }
-        if tightestLimit.percentLeft <= 0 {
-            return "\(tightestLimit.title) is out until reset. "
-                + "Tracking \(providerSnapshots.count) local provider sources."
-        }
-        return "\(tightestLimit.title) has \(tightestLimit.percentLeft)% left. "
-            + "Tracking \(providerSnapshots.count) local provider sources."
     }
 
     private var diagnosticsContent: some View {
@@ -609,25 +654,6 @@ struct UsageDashboardView: View {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    private var sectionSubtitle: String {
-        switch activeSection {
-        case .overview:
-            return "Current health and local token history"
-        case .limits:
-            return "Every tracked quota window"
-        case .costs:
-            return "Local 30-day token spend"
-        case .optimize:
-            return "Where tokens go and how to trim them"
-        case .diagnostics:
-            return "Provider setup health — safe to share"
-        case .share:
-            return "Social card export"
-        case .settings:
-            return "Accounts, refresh, and local sources"
-        }
-    }
-
     private var costRefreshStatusText: String? {
         if costTracker.isScanning {
             return "Scanning..."
@@ -644,7 +670,9 @@ struct UsageDashboardView: View {
 
     private var isRefreshButtonAnimating: Bool {
         switch activeSection {
-        case .costs, .share, .optimize:
+        case .costs:
+            return costTracker.isRefreshInProgress || apiUsageStore.isLoading
+        case .share, .optimize:
             return costTracker.isRefreshInProgress
         case .overview, .limits, .diagnostics, .settings:
             return dataManager.isLoading
@@ -654,6 +682,9 @@ struct UsageDashboardView: View {
     private func refreshDashboard() async {
         if activeSection == .costs || activeSection == .share || activeSection == .optimize {
             await costTracker.scanCosts(days: 30)
+            if activeSection == .costs, apiUsageStore.hasAnyAuthenticated, !apiUsageStore.isLoading {
+                await apiUsageStore.refresh()
+            }
             socialCardGeneratedAt = Date()
         } else {
             await dataManager.refreshAll()
@@ -661,7 +692,7 @@ struct UsageDashboardView: View {
     }
 
     private func refreshCostsIfMissingDays() async {
-        let costBackedSections: Set<DashboardSection> = [.overview, .costs, .share, .optimize]
+        let costBackedSections: Set<DashboardSection> = [.costs, .share, .optimize]
         guard costBackedSections.contains(activeSection) else { return }
         await costTracker.refreshMissingDaysInBackground(days: 30)
     }
@@ -748,5 +779,95 @@ struct UsageDashboardView: View {
         withAnimation(.easeInOut(duration: 0.15)) {
             socialShareStatus = status
         }
+    }
+}
+
+private struct OverviewSummaryStrip: View {
+    let tightestLimit: SnapshotLimit?
+    let sourceCount: Int
+    let enabledSourceCount: Int
+    let estimatedCost: String?
+    let formattedTokens: String
+
+    private let columns = [
+        GridItem(.flexible(minimum: 180), spacing: 12),
+        GridItem(.flexible(minimum: 180), spacing: 12),
+        GridItem(.flexible(minimum: 180), spacing: 12)
+    ]
+
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
+            TimelineView(
+                .periodic(
+                    from: ResetCountdownSchedule.anchor,
+                    by: ResetCountdownSchedule.interval
+                )
+            ) { timeline in
+                DashboardMetricTile(
+                    title: "Tightest window",
+                    value: tightestValue(now: timeline.date),
+                    caption: tightestCaption,
+                    systemImage: tightestIconName,
+                    tint: tightestColor,
+                    style: .compact
+                )
+            }
+
+            DashboardMetricTile(
+                title: "30-day estimate",
+                value: estimatedCost ?? "Scan needed",
+                caption: "\(formattedTokens) tokens",
+                systemImage: "chart.bar.xaxis",
+                tint: MeterBarTheme.success,
+                style: .compact
+            )
+
+            DashboardMetricTile(
+                title: "Tracked sources",
+                value: "\(sourceCount)",
+                caption: sourceCaption,
+                systemImage: "checklist.checked",
+                tint: MeterBarTheme.appAccent,
+                style: .compact
+            )
+        }
+    }
+
+    private var tightestBand: QuotaBand? {
+        tightestLimit.map { QuotaBand.forPercentLeft($0.percentLeft) }
+    }
+
+    private var tightestColor: Color {
+        tightestBand?.color ?? .secondary
+    }
+
+    private var tightestIconName: String {
+        tightestBand?.iconName ?? "circle.dashed"
+    }
+
+    private var tightestCaption: String {
+        guard let tightestLimit else { return "Waiting for provider refresh" }
+        return "\(tightestLimit.title) quota"
+    }
+
+    private var sourceCaption: String {
+        if enabledSourceCount == 0 {
+            return "Enable providers in Settings"
+        }
+        if sourceCount == enabledSourceCount {
+            return "All enabled sources reporting"
+        }
+        return "\(sourceCount) of \(enabledSourceCount) enabled reporting"
+    }
+
+    private func tightestValue(now: Date) -> String {
+        guard let tightestLimit else { return "No data" }
+        guard tightestLimit.usageLimit.isAtLimit else {
+            return "\(tightestLimit.percentLeft)% left"
+        }
+        guard let countdown = tightestLimit.usageLimit.resetCountdownText(now: now) else {
+            return "Reset unknown"
+        }
+        return countdown == "now" ? "Reset due" : "Resets in \(countdown)"
     }
 }

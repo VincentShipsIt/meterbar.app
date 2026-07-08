@@ -21,6 +21,15 @@ struct ProviderSnapshot: Identifiable {
     var logoKind: ProviderLogoKind { .forService(service) }
     var accentColor: Color { MeterBarTheme.accent(for: service) }
 
+    var displayedExtraUsage: ExtraUsageStatus? {
+        ExtraUsageDisplayPolicy.visibleStatus(for: service, status: extraUsage)
+    }
+
+    var updatedText: String {
+        guard let updatedAt else { return "No data" }
+        return "Updated \(UsageFormat.relative(updatedAt))"
+    }
+
     /// Whether the provider has reported metrics at all (drives whether the
     /// dashboard renders a card for it).
     var hasMetrics: Bool { updatedAt != nil }
@@ -47,6 +56,31 @@ struct ProviderSnapshot: Identifiable {
 
     var hasExhaustedLimit: Bool {
         limits.contains { $0.usageLimit.isAtLimit }
+    }
+
+    /// Weekly exhaustion blocks the whole subscription even when the shorter
+    /// session window still has room. Compact overview cards should prioritize
+    /// that reset instead of spending space on the session gauge.
+    var hasExhaustedWeeklyLimit: Bool {
+        limits.contains { $0.kind == .weekly && $0.usageLimit.isAtLimit }
+    }
+
+    /// Detail panels should focus on the limit that is actually blocking use.
+    /// When the weekly subscription quota is exhausted, the shorter session
+    /// window is no longer actionable, even if it still has room.
+    var detailLimits: [SnapshotLimit] {
+        guard hasExhaustedWeeklyLimit else { return limits }
+        return limits.filter { $0.kind != .session }
+    }
+}
+
+enum ExtraUsageDisplayPolicy {
+    static func visibleStatus(for service: ServiceType, status: ExtraUsageStatus?) -> ExtraUsageStatus? {
+        guard let status else { return nil }
+        guard service == .claudeCode, status.state == .unknown else {
+            return status
+        }
+        return UserDefaults.standard.bool(forKey: StorageKeys.claudeCodeOAuthFallback) ? status : nil
     }
 }
 
