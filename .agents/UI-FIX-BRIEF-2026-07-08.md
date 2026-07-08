@@ -19,10 +19,13 @@ session patched one symptom of that decision, which surfaced the next symptom.
 the sidebar collapse, and the scroll-edge blur for free. Delete the hand-rolled
 chrome instead of patching it.**
 
-Before touching anything: commit the current working tree to a branch
-(`git checkout -b ui-fix-baseline && git add -A && git commit`). The current
-+3,084/−2,294 uncommitted diff is unrevertable churn; every next step must be
-diffable.
+Current state (2026-07-08): the churn is committed as baseline `0da923c` on
+branch `ui-fix-baseline`. ONE uncommitted, NON-COMPILING partial edit exists in
+`MeterBar/Views/MenuBarDetailPanel.swift` (someone started A2/A4: changed
+`present(anchor:preferredHeight:content:)` to `present(anchor:content:)` with
+`fittingSize` measurement, but never updated the caller in `MenuBarView.swift:163`).
+**First action: `git checkout -- MeterBar/Views/MenuBarDetailPanel.swift` to get
+back to a compiling tree, then implement A2/A4 properly per this brief.**
 
 ---
 
@@ -155,6 +158,89 @@ Conventions (macOS 26 / HIG):
 
 ---
 
+## Part C — Deep cleanup (verified findings; do alongside Part B)
+
+### C1. Delete dead code (all verified unreferenced)
+- `MeterBarDashboardWindowBacking` — `MeterBar/Views/MeterBarTheme.swift:145-161`
+- `MeterBarSidebarBackground` — `MeterBarTheme.swift:163-189`
+- `MeterBarSidebarTitlebarBackground` — `MeterBarTheme.swift:256-263`
+  (only referenced from the dead view above)
+- The ENTIRE `meterBarSurfaceStyle` environment plumbing —
+  `MeterBarTheme.swift:295-297, 304-318` (`MeterBarSurfaceStyle`,
+  `MeterBarSurfaceStyleKey`, private `EnvironmentValues` extension, View
+  modifier) plus its two no-op call sites `MenuBarView.swift:39` and
+  `MenuBarDetailPanel.swift:42`. It is WRITTEN but never READ — no
+  `@Environment(\.meterBarSurfaceStyle)` exists anywhere. The session-5
+  "toolbar vs dashboard surface split" it was built for never functioned.
+
+### C2. Consolidate duplicates (behavior-preserving)
+- `dashboardCardBackground(cornerRadius:)` (`DashboardCard.swift:99-105`) is a
+  pure pass-through alias of `meterBarCardSurface`. Delete it and update the
+  4 call sites (`DashboardCard.swift:34`, `MenuBarDetailPanel.swift:152/228/298`).
+- `updatedText` is byte-identical in `ProviderOverviewStatusCard`
+  (`DashboardProviderCards.swift:115`) and `ProviderLimitsCard` (`:164`) —
+  hoist onto `ProviderSnapshot`.
+- The exhausted-provider branch (`isEmpty / hasExhaustedWeeklyLimit →
+  BlockingLimitResetCounter / else ForEach`) is duplicated verbatim at
+  `DashboardProviderCards.swift:78-98` and `:137-152` — extract one view.
+- `DailyUsageMetricCell` / `DailyUsageCostCell` (`DailyUsageChart.swift:553-575`)
+  differ only by frame width — collapse into one cell with a width parameter.
+
+### C3. CostTracker cleanup (`MeterBar/Services/CostTracker.swift`)
+- Delete the six test-only shim methods at lines 196-263 (`parseSessionFile`,
+  `claudePricing`, `normalizeClaudeModel`, `scanCodexArchivedSessions`,
+  `calculateCost`, `calculateClaudeCost`) — zero production callers; they exist
+  only so `CostTrackerTests` can call instance methods. Migrate the tests to
+  the static `CostTracker.` calls instead.
+- Remove the `nonisolated` keyword throughout — `CostTracker` is a plain class,
+  not an actor, so every `nonisolated` in the file is a no-op that fakes
+  actor-isolation. Keep `static`.
+- Document (code comment) that `isLocalDirectory` intentionally skips
+  network/mounted volumes so "my usage disappeared" reports are triaged fast.
+
+### C4. Extra-usage indicator regression (`MeterBar/Services/ClaudeCodeLocalService.swift:236`)
+The new `guard isOAuthFallbackEnabled else { return .unknown }` means every
+normal user (fallback defaults to OFF) now permanently sees "unknown" for
+Claude's Extra usage state — the on/off pill silently died. The keychain-prompt
+motivation is valid, so keep the gate, but make the UI honest: when the state
+is `.unknown` AND the fallback is disabled, HIDE the extra-usage row/badge
+(popover, detail panel, settings pill) instead of rendering a dead "unknown"
+indicator. Live usage metrics are unaffected (separate CLI path).
+
+### C5. Light-mode fixes (beyond B3)
+- `DashboardProviderCards.swift:18` — icon well changed from `.quaternary` to
+  `Circle().fill(MeterBarTheme.glassCardTint)`; glassCardTint is a white-alpha
+  overlay tint, near-invisible over a light card. Revert to `.quaternary`.
+- After B1/B3, grep the codebase for `Color.white.opacity` and
+  `MeterBarWindowChrome.color` — every survivor needs a semantic replacement.
+
+### C6. Smaller debts
+- `DailyUsageTableLayout` (`DailyUsageChart.swift:346-352`) hard-codes a
+  ~668pt minimum table width; numeric cells only shrink to 75% then truncate.
+  Acceptable for now at the 900pt min window — fix only if window min shrinks.
+- `ProviderOverviewStatusCard` (`DashboardProviderCards.swift:46-58`): add
+  `.accessibilityElement(children: .combine)` + an `.accessibilityLabel` so
+  VoiceOver reads one named button, not an untitled group.
+- Delete stale `MeterBar/Info.plist` (dead file, hardcodes version 1.0;
+  generated plist wins — remainder of issue #20).
+- Issue #86: one unresolved CodeRabbit thread on
+  `MeterBar/Services/AccountActivityInspector.swift:52` from PR #85 — verify
+  against master and resolve while in there.
+
+---
+
+## Suggested run order (budget-aware)
+
+1. Revert the non-compiling partial edit (see "Current state" above).
+2. **Part A** (popover) + C4 + C5 first — small, high-visibility, cheap to verify.
+3. **Part B** (native chrome rewrite) + C1 (most dead code IS the old chrome).
+4. **C2/C3/C6** cleanup pass, then release chores.
+
+Commit each step separately on top of `ui-fix-baseline` so any step can be
+reverted alone.
+
+---
+
 ## Acceptance criteria (verify each, in the running app)
 
 Popover:
@@ -176,7 +262,16 @@ Dashboard:
       radius, no fake titlebar views left in the codebase.
 - [ ] Sidebar has no "API Usage" item; Costs shows the API spend section only
       when an admin key is authenticated; popover has no API section.
-- [ ] `swift test` passes; Release build succeeds.
+
+Cleanup:
+- [ ] Grep proves zero references to: MeterBarDashboardWindowBacking,
+      MeterBarSidebarBackground, MeterBarSidebarTitlebarBackground,
+      MeterBarSurfaceStyle, meterBarSurfaceStyle, dashboardCardBackground,
+      preferredHeight(for:), and the six CostTracker shims.
+- [ ] Claude Extra-usage row is hidden (not "unknown") when OAuth fallback is
+      disabled; shows real on/off when enabled.
+- [ ] `swift test` passes (including migrated CostTrackerTests); Release build
+      succeeds.
 
 Non-goals: do not touch the data layer, providers, cost scanning, snapshot
 builders, or card content/copy beyond what's listed. Do not redesign cards.

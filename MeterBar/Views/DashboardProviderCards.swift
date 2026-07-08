@@ -15,7 +15,7 @@ struct DashboardStatusHero: View {
       HStack(alignment: .center, spacing: 14) {
         ZStack {
           Circle()
-            .fill(MeterBarTheme.glassCardTint)
+            .fill(.quaternary)
             .frame(width: 46, height: 46)
           Image(systemName: iconName)
             .font(.system(size: 23, weight: .semibold))

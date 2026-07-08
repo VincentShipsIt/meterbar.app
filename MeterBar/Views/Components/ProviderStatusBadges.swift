@@ -25,7 +25,7 @@ struct ProviderStatusBadges: View {
     /// every field these badges need.
     init(snapshot: ProviderSnapshot, style: Style = .compact) {
         self.resetCreditsAvailable = snapshot.resetCreditsAvailable
-        self.extraUsage = snapshot.extraUsage
+        self.extraUsage = snapshot.displayedExtraUsage
         self.accentColor = snapshot.accentColor
         self.hasExhaustedLimit = snapshot.hasExhaustedLimit
         self.style = style

@@ -5,7 +5,7 @@ import SwiftUI
 struct MenuBarView: View {
   private let popoverWidth: CGFloat = 390
   private let minPopoverHeight: CGFloat = 180
-  private let chromeHeight: CGFloat = 56
+  private let chromeHeight: CGFloat = 41
   private let screenPadding: CGFloat = 8
 
   let onContentSizeChange: (NSSize) -> Void
@@ -82,6 +82,7 @@ struct MenuBarView: View {
           }
         )
       }
+      .scrollIndicators(.hidden)
       .scrollContentBackground(.hidden)
       .frame(height: scrollHeight)
     }
@@ -113,11 +114,6 @@ struct MenuBarView: View {
 
   private var popoverHeader: some View {
     HStack(spacing: 8) {
-      Image(systemName: "chart.line.uptrend.xyaxis")
-        .font(.system(size: 16, weight: .semibold))
-        .foregroundStyle(MeterBarTheme.appAccent)
-        .frame(width: 28, height: 24)
-
       Spacer()
 
       Button(action: openDashboard) {
@@ -142,7 +138,7 @@ struct MenuBarView: View {
     }
     .font(.body)
     .padding(.horizontal, 14)
-    .padding(.vertical, 10)
+    .padding(.vertical, 8)
   }
 
   private func openDashboard() {
@@ -162,7 +158,6 @@ struct MenuBarView: View {
     expandedProviderID = snapshot.id
     MeterBarMenuDetailPanel.shared.present(
       anchor: menuWindow,
-      preferredHeight: MenuBarProviderDetailContent.preferredHeight(for: snapshot),
       content: AnyView(
         MenuBarProviderDetailContent(snapshot: snapshot) {
           UsageDashboardWindowController.shared.show(section: .limits, focusedProviderID: snapshot.id)
@@ -192,7 +187,6 @@ struct PopoverOverviewPanel: View {
   let openDashboard: () -> Void
   let openProviderOverview: (ProviderSnapshot) -> Void
 
-  @StateObject private var apiUsageStore = ApiUsageStore.shared
   @State private var setupReports: [ProviderReadiness] = []
 
   /// The enabled providers currently shown in the popover.
@@ -240,11 +234,6 @@ struct PopoverOverviewPanel: View {
           }
         }
       }
-
-      ApiUsageSection(store: apiUsageStore, compact: true)
-    }
-    .task {
-      await apiUsageStore.refresh()
     }
     .task {
       await loadSetupReports()

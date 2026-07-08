@@ -21,6 +21,10 @@ struct ProviderSnapshot: Identifiable {
     var logoKind: ProviderLogoKind { .forService(service) }
     var accentColor: Color { MeterBarTheme.accent(for: service) }
 
+    var displayedExtraUsage: ExtraUsageStatus? {
+        ExtraUsageDisplayPolicy.visibleStatus(for: service, status: extraUsage)
+    }
+
     /// Whether the provider has reported metrics at all (drives whether the
     /// dashboard renders a card for it).
     var hasMetrics: Bool { updatedAt != nil }
@@ -62,6 +66,16 @@ struct ProviderSnapshot: Identifiable {
     var detailLimits: [SnapshotLimit] {
         guard hasExhaustedWeeklyLimit else { return limits }
         return limits.filter { $0.kind != .session }
+    }
+}
+
+enum ExtraUsageDisplayPolicy {
+    static func visibleStatus(for service: ServiceType, status: ExtraUsageStatus?) -> ExtraUsageStatus? {
+        guard let status else { return nil }
+        guard service == .claudeCode, status.state == .unknown else {
+            return status
+        }
+        return UserDefaults.standard.bool(forKey: StorageKeys.claudeCodeOAuthFallback) ? status : nil
     }
 }
 

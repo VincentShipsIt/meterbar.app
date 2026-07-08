@@ -164,7 +164,15 @@ struct SettingsView: View {
     }
 
     private var showExtraUsageSection: Bool {
-        providerVisibility.isEnabled(.claudeCode) || providerVisibility.isEnabled(.codexCli)
+        (providerVisibility.isEnabled(.claudeCode) && claudeExtraUsageStatus != nil)
+            || providerVisibility.isEnabled(.codexCli)
+    }
+
+    private var claudeExtraUsageStatus: ExtraUsageStatus? {
+        ExtraUsageDisplayPolicy.visibleStatus(
+            for: .claudeCode,
+            status: dataManager.metrics[.claudeCode]?.extraUsage
+        )
     }
 
     private var extraUsageSection: some View {
@@ -176,11 +184,13 @@ struct SettingsView: View {
             )
 
             if providerVisibility.isEnabled(.claudeCode) {
-                extraUsageRow(
-                    title: "Claude Code",
-                    status: dataManager.metrics[.claudeCode]?.extraUsage,
-                    manageURL: "https://claude.ai/settings"
-                )
+                if let claudeExtraUsageStatus {
+                    extraUsageRow(
+                        title: "Claude Code",
+                        status: claudeExtraUsageStatus,
+                        manageURL: "https://claude.ai/settings"
+                    )
+                }
             }
 
             if providerVisibility.isEnabled(.codexCli) {

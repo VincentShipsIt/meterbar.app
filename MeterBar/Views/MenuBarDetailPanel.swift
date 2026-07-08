@@ -22,10 +22,16 @@ final class MeterBarMenuDetailPanel {
 
   private var panel: NSPanel?
 
-  func present(anchor: NSWindow, preferredHeight: CGFloat, content: AnyView) {
+  func present(anchor: NSWindow, content: AnyView) {
     let width = MeterBarMenuDetailPanelLayout.detailWidth
     let panel = ensurePanel()
     panel.level = anchor.level
+    let measuringView = NSHostingView(
+      rootView: content
+        .meterBarSurfaceStyle(.toolbar)
+        .frame(width: width)
+        .fixedSize(horizontal: false, vertical: true)
+    )
 
     let anchorFrame = anchor.frame
     let visibleFrame = anchor.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? anchorFrame
@@ -33,7 +39,8 @@ final class MeterBarMenuDetailPanel {
       MeterBarMenuDetailPanelLayout.minDetailHeight,
       visibleFrame.height - (MeterBarMenuDetailPanelLayout.screenPadding * 2)
     )
-    let height = min(max(preferredHeight, MeterBarMenuDetailPanelLayout.minDetailHeight), maxHeight)
+    let measuredHeight = measuringView.fittingSize.height
+    let height = min(max(measuredHeight, MeterBarMenuDetailPanelLayout.minDetailHeight), maxHeight)
     let topY = min(anchorFrame.maxY, visibleFrame.maxY - MeterBarMenuDetailPanelLayout.screenPadding)
     let y = max(visibleFrame.minY + MeterBarMenuDetailPanelLayout.screenPadding, topY - height)
 
@@ -41,10 +48,14 @@ final class MeterBarMenuDetailPanel {
       rootView: content
         .meterBarSurfaceStyle(.toolbar)
         .frame(width: width, height: height)
-        .clipped()
     )
     panel.setFrame(
-      NSRect(x: anchorFrame.minX - width, y: y, width: width, height: height),
+      NSRect(
+        x: anchorFrame.minX - width - MeterBarMenuDetailPanelLayout.panelGap,
+        y: y,
+        width: width,
+        height: height
+      ),
       display: true
     )
     panel.orderFront(nil)
@@ -81,21 +92,14 @@ final class MeterBarMenuDetailPanel {
 enum MeterBarMenuDetailPanelLayout {
   static let detailWidth: CGFloat = 340
   static let cornerRadius: CGFloat = 16
-  static let minDetailHeight: CGFloat = 260
+  static let minDetailHeight: CGFloat = 120
+  static let panelGap: CGFloat = 10
   static let screenPadding: CGFloat = 8
 }
 
 struct MenuBarProviderDetailContent: View {
   let snapshot: ProviderSnapshot
   let onOpenFull: () -> Void
-
-  private var statusText: String {
-    snapshot.band?.shortLabel ?? "No data"
-  }
-
-  private var statusColor: Color {
-    snapshot.band?.color ?? .secondary
-  }
 
   private var detailLimits: [SnapshotLimit] {
     snapshot.detailLimits
@@ -118,6 +122,7 @@ struct MenuBarProviderDetailContent: View {
         ScrollView(showsIndicators: false) {
           detailRows
         }
+        .scrollIndicators(.hidden)
         .scrollContentBackground(.hidden)
       }
     }
@@ -134,8 +139,6 @@ struct MenuBarProviderDetailContent: View {
 
   private var detailRows: some View {
     VStack(alignment: .leading, spacing: 12) {
-      summaryRow
-
       if detailLimits.isEmpty {
         Text(snapshot.emptyDetail)
           .font(.caption)
@@ -200,46 +203,6 @@ struct MenuBarProviderDetailContent: View {
     }
   }
 
-  private var summaryRow: some View {
-    HStack(alignment: .top, spacing: 10) {
-      VStack(alignment: .leading, spacing: 3) {
-        Text("Status")
-          .font(.caption2)
-          .foregroundColor(.secondary)
-        Text(statusText)
-          .font(.subheadline)
-          .fontWeight(.semibold)
-          .foregroundColor(statusColor)
-      }
-
-      Spacer(minLength: 8)
-
-      VStack(alignment: .trailing, spacing: 3) {
-        Text("Updated")
-          .font(.caption2)
-          .foregroundColor(.secondary)
-        Text(updatedText)
-          .font(.caption)
-          .fontWeight(.medium)
-          .foregroundColor(.primary)
-      }
-    }
-    .padding(10)
-    .dashboardCardBackground(cornerRadius: 10)
-  }
-
-  private var updatedText: String {
-    guard let updatedAt = snapshot.updatedAt else { return "No data" }
-    return UsageFormat.relative(updatedAt)
-  }
-
-  static func preferredHeight(for snapshot: ProviderSnapshot) -> CGFloat {
-    let detailLimits = snapshot.detailLimits
-    let limitHeight = detailLimits.isEmpty ? 78 : CGFloat(detailLimits.count) * 84
-    let blockingHeight: CGFloat = snapshot.hasExhaustedLimit ? 106 : 0
-    let badgeHeight: CGFloat = ProviderStatusBadges(snapshot: snapshot, style: .compact).hasContent ? 52 : 0
-    return 206 + limitHeight + blockingHeight + badgeHeight
-  }
 }
 
 private struct MenuBarProviderLimitDetailRow: View {
