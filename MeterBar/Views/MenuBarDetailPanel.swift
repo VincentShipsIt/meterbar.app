@@ -86,7 +86,6 @@ final class MeterBarMenuDetailPanel {
     self.panel = panel
     return panel
   }
-
 }
 
 enum MeterBarMenuDetailPanelLayout {
@@ -202,7 +201,6 @@ struct MenuBarProviderDetailContent: View {
         .foregroundStyle(MeterBarTheme.appAccent)
     }
   }
-
 }
 
 private struct MenuBarProviderLimitDetailRow: View {

@@ -795,7 +795,12 @@ private struct OverviewSummaryStrip: View {
 
     var body: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
-            TimelineView(.periodic(from: ResetCountdownSchedule.anchor, by: ResetCountdownSchedule.interval)) { timeline in
+            TimelineView(
+                .periodic(
+                    from: ResetCountdownSchedule.anchor,
+                    by: ResetCountdownSchedule.interval
+                )
+            ) { timeline in
                 DashboardMetricTile(
                     title: "Tightest window",
                     value: tightestValue(now: timeline.date),

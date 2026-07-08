@@ -757,6 +757,10 @@ private struct AdminKeySettingsRow: View {
         draft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var connectedMessage: String {
+        "Connected. Usage appears on the billed API card."
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -764,7 +768,7 @@ private struct AdminKeySettingsRow: View {
                     Text(provider.displayName)
                         .font(.subheadline)
                         .fontWeight(.semibold)
-                    Text(connected ? "Connected. Usage appears on the billed API card." : "Required for organization usage.")
+                    Text(connected ? connectedMessage : "Required for organization usage.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

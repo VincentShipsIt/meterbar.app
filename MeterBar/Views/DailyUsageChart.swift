@@ -25,9 +25,10 @@ struct DailyUsageChart: View {
 
   private static let providerOrder: [ServiceType] = [.claudeCode, .codexCli, .cursor]
 
-  private static func buildDays(from dailyUsage: [DailyTokenUsage], daysToShow: Int)
-    -> [DailyUsageDay]
-  {
+  private static func buildDays(
+    from dailyUsage: [DailyTokenUsage],
+    daysToShow: Int
+  ) -> [DailyUsageDay] {
     let calendar = Calendar.current
     let normalizedDaysToShow = max(1, daysToShow)
     let endDate = calendar.startOfDay(for: Date())
@@ -356,8 +357,10 @@ struct DailyUsageTableHeader: View {
     HStack(spacing: DailyUsageTableLayout.rowSpacing) {
       Text("Day")
         .frame(
-          minWidth: DailyUsageTableLayout.dayColumnMinWidth, maxWidth: .infinity,
-          alignment: .leading)
+          minWidth: DailyUsageTableLayout.dayColumnMinWidth,
+          maxWidth: .infinity,
+          alignment: .leading
+        )
       Text("Sources")
         .frame(width: DailyUsageTableLayout.sourceColumnWidth, alignment: .leading)
       DailyUsageColumnHeader("Input")
@@ -450,8 +453,10 @@ struct DailyUsageDetailRow: View {
               .lineLimit(1)
           }
           .frame(
-            minWidth: DailyUsageTableLayout.dayColumnMinWidth, maxWidth: .infinity,
-            alignment: .leading)
+            minWidth: DailyUsageTableLayout.dayColumnMinWidth,
+            maxWidth: .infinity,
+            alignment: .leading
+          )
 
           Text(providerCountLabel)
             .font(.caption)
