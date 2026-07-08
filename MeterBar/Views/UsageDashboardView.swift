@@ -23,12 +23,14 @@ final class UsageDashboardWindowController {
             let hostingController = NSHostingController(rootView: UsageDashboardView())
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 1040, height: 700),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
             )
             window.title = DashboardNavigationStore.shared.selectedSection.rawValue
             window.subtitle = DashboardNavigationStore.shared.selectedSection.titlebarSubtitle
+            window.titlebarAppearsTransparent = true
+            window.titlebarSeparatorStyle = .none
             window.backgroundColor = .windowBackgroundColor
             window.isRestorable = false
             window.contentMinSize = NSSize(width: 900, height: 600)
@@ -123,7 +125,7 @@ struct UsageDashboardView: View {
     @State private var isRunningDiagnostics = false
     @State private var socialCardGeneratedAt = Date()
     @State private var socialShareStatus: String?
-    @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     private var activeSection: DashboardSection { navigation.selectedSection }
 
@@ -188,7 +190,7 @@ struct UsageDashboardView: View {
         }
         .listStyle(.sidebar)
         .navigationTitle("MeterBar")
-        .navigationSplitViewColumnWidth(min: 220, ideal: 248, max: 280)
+        .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
     }
 
     private var refreshToolbarButton: some View {

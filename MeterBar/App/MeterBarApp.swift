@@ -89,9 +89,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupNotifications()
 
         if CommandLine.arguments.contains("--open-dashboard") {
-            Task { @MainActor in
-                UsageDashboardWindowController.shared.show()
-            }
+            UsageDashboardWindowController.shared.show()
         }
     }
 
