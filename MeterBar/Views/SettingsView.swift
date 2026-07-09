@@ -1,60 +1,145 @@
-import SwiftUI
 import AppKit
 import MeterBarShared
+import SwiftUI
+
+// MARK: - SettingsPane
+
+private enum SettingsPane: Hashable, Identifiable {
+    case general
+    case apiUsage
+    case costTracking
+    case provider(ServiceType)
+
+    // MARK: Internal
+
+    static let windowMinWidth: CGFloat = 840
+    static let windowMinHeight: CGFloat = 560
+    static let sidebarWidth: CGFloat = 238
+    static let detailMaxWidth: CGFloat = 760
+    static let appPanes: [SettingsPane] = [.general, .apiUsage, .costTracking]
+    static let providerPanes: [SettingsPane] = ServiceType.allCases
+        .sorted { $0.sortOrder < $1.sortOrder }
+        .map(SettingsPane.provider)
+
+    var id: String {
+        switch self {
+        case .general:
+            "general"
+        case .apiUsage:
+            "api-usage"
+        case .costTracking:
+            "cost-tracking"
+        case let .provider(service):
+            "provider-\(service.rawValue)"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .general:
+            "General"
+        case .apiUsage:
+            "API Usage"
+        case .costTracking:
+            "Cost Tracking"
+        case let .provider(service):
+            service.displayName
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .general:
+            "Launch, refresh, notifications"
+        case .apiUsage:
+            "Admin keys and overage"
+        case .costTracking:
+            "Local token spend"
+        case let .provider(service):
+            switch service {
+            case .claudeCode:
+                "Claude CLI profiles"
+            case .codexCli:
+                "Codex CLI OAuth"
+            case .cursor:
+                "Cursor local state"
+            }
+        }
+    }
+
+    var systemImage: String? {
+        switch self {
+        case .general:
+            "gearshape.fill"
+        case .apiUsage:
+            "network"
+        case .costTracking:
+            "chart.bar.xaxis"
+        case .provider:
+            nil
+        }
+    }
+
+    var logoKind: ProviderLogoKind? {
+        guard case let .provider(service) = self else {
+            return nil
+        }
+        return .forService(service)
+    }
+
+    var color: Color {
+        switch self {
+        case .general,
+             .apiUsage:
+            MeterBarTheme.appAccent
+        case .costTracking:
+            MeterBarTheme.success
+        case let .provider(service):
+            MeterBarTheme.accent(for: service)
+        }
+    }
+
+    var service: ServiceType? {
+        guard case let .provider(service) = self else {
+            return nil
+        }
+        return service
+    }
+}
+
+// MARK: - SettingsView
 
 struct SettingsView: View {
-    let embeddedInDashboard: Bool
-
-    @StateObject private var dataManager = UsageDataManager.shared
-    @StateObject private var claudeCodeService = ClaudeCodeLocalService.shared
-    @StateObject private var claudeAccountStore = ClaudeCodeAccountStore.shared
-    @StateObject private var cursorService = CursorLocalService.shared
-    @StateObject private var costTracker = CostTracker.shared
-    @StateObject private var providerVisibility = ProviderVisibilityStore.shared
-    @StateObject private var dockVisibility = DockVisibilityStore.shared
-    @StateObject private var notificationPreferences = NotificationPreferencesStore.shared
-    @StateObject private var launchAtLogin = LaunchAtLoginStore.shared
-    @StateObject private var authManager = AuthenticationManager.shared
-    @StateObject private var apiUsageStore = ApiUsageStore.shared
-
-    @State private var isAddingClaudeAccount = false
-    @State private var claudeReconnectError: String?
-    @State private var claudeAdminKeyDraft: String = ""
-    @State private var openaiAdminKeyDraft: String = ""
-
-    /// Same key ClaudeCodeLocalService reads. Previously this flag was only
-    /// settable via `defaults write`; exposing it here makes the legacy OAuth
-    /// fallback discoverable instead of a hidden switch.
-    @AppStorage(StorageKeys.claudeCodeOAuthFallback)
-    private var oauthFallbackEnabled = false
+    // MARK: Lifecycle
 
     init(embeddedInDashboard: Bool = false) {
         self.embeddedInDashboard = embeddedInDashboard
     }
+
+    // MARK: Internal
+
+    let embeddedInDashboard: Bool
 
     var body: some View {
         Group {
             if embeddedInDashboard {
                 settingsStack
             } else {
-                ScrollView {
-                    settingsStack
-                        .padding(22)
-                }
-                .scrollContentBackground(.hidden)
-                .background(Color(nsColor: .windowBackgroundColor))
+                settingsWindow
             }
         }
         .frame(
-            minWidth: embeddedInDashboard ? nil : 560,
-            minHeight: embeddedInDashboard ? nil : 500
+            minWidth: embeddedInDashboard ? nil : SettingsPane.windowMinWidth,
+            minHeight: embeddedInDashboard ? nil : SettingsPane.windowMinHeight
         )
         .alert(
             "Claude Reconnect Failed",
             isPresented: Binding(
                 get: { claudeReconnectError != nil },
                 set: { isPresented in
-                    if !isPresented { claudeReconnectError = nil }
+                    if !isPresented {
+                        claudeReconnectError = nil
+                    }
                 }
             )
         ) {
@@ -68,6 +153,222 @@ struct SettingsView: View {
                 isAddingClaudeAccount = false
             }
         }
+    }
+
+    // MARK: Private
+
+    @StateObject private var dataManager = UsageDataManager.shared
+    @StateObject private var claudeCodeService = ClaudeCodeLocalService.shared
+    @StateObject private var codexCliService = CodexCliLocalService.shared
+    @StateObject private var claudeAccountStore = ClaudeCodeAccountStore.shared
+    @StateObject private var cursorService = CursorLocalService.shared
+    @StateObject private var costTracker = CostTracker.shared
+    @StateObject private var providerVisibility = ProviderVisibilityStore.shared
+    @StateObject private var dockVisibility = DockVisibilityStore.shared
+    @StateObject private var notificationPreferences = NotificationPreferencesStore.shared
+    @StateObject private var launchAtLogin = LaunchAtLoginStore.shared
+    @StateObject private var authManager = AuthenticationManager.shared
+    @StateObject private var apiUsageStore = ApiUsageStore.shared
+
+    @State private var isAddingClaudeAccount = false
+    @State private var claudeReconnectError: String?
+    @State private var claudeAdminKeyDraft = ""
+    @State private var openaiAdminKeyDraft = ""
+    @State private var selectedPane: SettingsPane = .general
+    @State private var providerSearchText = ""
+
+    /// Same key ClaudeCodeLocalService reads. Previously this flag was only
+    /// settable via `defaults write`; exposing it here makes the legacy OAuth
+    /// fallback discoverable instead of a hidden switch.
+    @AppStorage(StorageKeys.claudeCodeOAuthFallback)
+    private var oauthFallbackEnabled = false
+
+    private var filteredProviderPanes: [SettingsPane] {
+        let query = providerSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            return SettingsPane.providerPanes
+        }
+
+        return SettingsPane.providerPanes.filter { pane in
+            pane.title.localizedCaseInsensitiveContains(query)
+                || pane.subtitle.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private var enabledProviderCount: Int {
+        ServiceType.allCases.filter { providerVisibility.isEnabled($0) }.count
+    }
+
+    private var providerSnapshots: [ProviderSnapshot] {
+        ProviderSnapshotBuilder.snapshots(
+            ProviderSnapshotBuilder.Input(
+                metrics: dataManager.metrics,
+                claudeAccounts: claudeAccountStore.accounts,
+                claudeAccountMetrics: dataManager.claudeCodeAccountMetrics,
+                enabledServices: providerVisibility.enabledServices,
+                claudeCodeHasAccess: claudeCodeService.hasAccess,
+                codexCliHasAccess: codexCliService.hasAccess,
+                cursorHasAccess: cursorService.hasAccess
+            )
+        )
+    }
+
+    private var showExtraUsageSection: Bool {
+        (providerVisibility.isEnabled(.claudeCode) && claudeExtraUsageStatus != nil)
+            || providerVisibility.isEnabled(.codexCli)
+    }
+
+    private var claudeExtraUsageStatus: ExtraUsageStatus? {
+        ExtraUsageDisplayPolicy.visibleStatus(
+            for: .claudeCode,
+            status: dataManager.metrics[.claudeCode]?.extraUsage
+        )
+    }
+
+    private var visibleCostSummary: CostSummary? {
+        costTracker.costSummary?.filtered(to: providerVisibility.enabledServices)
+    }
+
+    private var canScanCosts: Bool {
+        providerVisibility.isEnabled(.claudeCode) || providerVisibility.isEnabled(.codexCli)
+    }
+
+    private var settingsWindow: some View {
+        HStack(spacing: 0) {
+            settingsSidebar
+
+            Divider()
+
+            ScrollView {
+                settingsDetail
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 22)
+                    .frame(maxWidth: SettingsPane.detailMaxWidth, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .scrollContentBackground(.hidden)
+            .scrollEdgeEffectStyle(.soft, for: .top)
+        }
+        .frame(
+            minWidth: SettingsPane.windowMinWidth,
+            idealWidth: 920,
+            minHeight: SettingsPane.windowMinHeight,
+            idealHeight: 620
+        )
+        .background {
+            MeterBarDetailBackground()
+                .ignoresSafeArea()
+        }
+    }
+
+    private var settingsSidebar: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SettingsSidebarSearchField(searchText: $providerSearchText)
+                .padding(.horizontal, 10)
+                .padding(.top, 16)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    SettingsSidebarSectionHeader(title: "Settings")
+
+                    VStack(spacing: 3) {
+                        ForEach(SettingsPane.appPanes) { pane in
+                            SettingsSidebarRow(
+                                pane: pane,
+                                isSelected: selectedPane == pane,
+                                isEnabled: true,
+                                statusColor: nil
+                            ) {
+                                selectedPane = pane
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        SettingsSidebarSectionHeader(title: "Providers", trailing: "\(enabledProviderCount) on")
+
+                        VStack(spacing: 3) {
+                            ForEach(filteredProviderPanes) { pane in
+                                SettingsSidebarRow(
+                                    pane: pane,
+                                    isSelected: selectedPane == pane,
+                                    isEnabled: pane.service.map { providerVisibility.isEnabled($0) } ?? true,
+                                    statusColor: pane.service.flatMap(providerSidebarStatusColor)
+                                ) {
+                                    selectedPane = pane
+                                }
+                            }
+
+                            if filteredProviderPanes.isEmpty {
+                                Text("No matching providers")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 9)
+                                    .padding(.vertical, 6)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 14)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .frame(width: SettingsPane.sidebarWidth)
+        .background(.thinMaterial)
+    }
+
+    private var settingsDetail: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            settingsDetailHeader
+
+            switch selectedPane {
+            case .general:
+                trackedProvidersSection
+                refreshSection
+                notificationsSection
+                generalSection
+            case .apiUsage:
+                if showExtraUsageSection {
+                    extraUsageSection
+                }
+                apiUsageSection
+            case .costTracking:
+                costTrackingSection
+            case let .provider(service):
+                providerSettingsPane(for: service)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .onAppear {
+            keepSelectedPaneValid()
+        }
+        .onChange(of: providerVisibility.enabledServices) {
+            keepSelectedPaneValid()
+        }
+    }
+
+    private var settingsDetailHeader: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                if let logoKind = selectedPane.logoKind {
+                    ProviderLogoView(kind: logoKind, size: 18, foregroundColor: selectedPane.color)
+                } else if let systemImage = selectedPane.systemImage {
+                    Image(systemName: systemImage)
+                        .foregroundStyle(selectedPane.color)
+                }
+
+                Text(selectedPane.title)
+                    .font(.title2)
+                    .fontWeight(.semibold)
+            }
+
+            Text(selectedPane.subtitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.bottom, 2)
     }
 
     private var settingsStack: some View {
@@ -89,6 +390,42 @@ struct SettingsView: View {
             generalSection
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private var codexCliSection: some View {
+        SettingsPanelSection(title: "OpenAI Codex", logoKind: .codex, color: MeterBarTheme.codexAccent) {
+            SettingsRowView(
+                title: "Connection",
+                detail: "Reads the OAuth session from ~/.codex/auth.json."
+            ) {
+                HStack(spacing: 8) {
+                    StatusPill(
+                        title: codexCliService.hasAccess ? "Connected" : "Not Connected",
+                        isConnected: codexCliService.hasAccess
+                    )
+
+                    Button(codexCliService.hasAccess ? "Refresh" : "Check Again") {
+                        codexCliService.checkAccess()
+                        if codexCliService.hasAccess {
+                            Task {
+                                await dataManager.refresh(service: .codexCli)
+                            }
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+
+            if let subscriptionType = codexCliService.subscriptionType, codexCliService.hasAccess {
+                SettingsRowView(title: "Plan") {
+                    Text(subscriptionType.capitalized)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                }
+            } else if !codexCliService.hasAccess {
+                SettingsNotice(text: "Run codex login, then check again.", color: MeterBarTheme.warning)
+            }
+        }
     }
 
     private var notificationsSection: some View {
@@ -181,18 +518,6 @@ struct SettingsView: View {
         }
     }
 
-    private var showExtraUsageSection: Bool {
-        (providerVisibility.isEnabled(.claudeCode) && claudeExtraUsageStatus != nil)
-            || providerVisibility.isEnabled(.codexCli)
-    }
-
-    private var claudeExtraUsageStatus: ExtraUsageStatus? {
-        ExtraUsageDisplayPolicy.visibleStatus(
-            for: .claudeCode,
-            status: dataManager.metrics[.claudeCode]?.extraUsage
-        )
-    }
-
     private var extraUsageSection: some View {
         SettingsPanelSection(title: "Extra Usage", systemImage: "creditcard", color: MeterBarTheme.warning) {
             SettingsNotice(
@@ -218,34 +543,6 @@ struct SettingsView: View {
                     manageURL: "https://chatgpt.com"
                 )
             }
-        }
-    }
-
-    private func extraUsageRow(title: String, status: ExtraUsageStatus?, manageURL: String) -> some View {
-        SettingsRowView(title: title, detail: extraUsageDetailText(status)) {
-            HStack(spacing: 8) {
-                ExtraUsageStatusPill(status: status ?? .unknown)
-
-                Button("Manage") {
-                    if let url = URL(string: manageURL) {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-                .buttonStyle(.bordered)
-                .help("Open \(manageURL) to change extra usage settings")
-            }
-        }
-    }
-
-    private func extraUsageDetailText(_ status: ExtraUsageStatus?) -> String {
-        guard let status else { return "Waiting for refresh." }
-        switch status.state {
-        case .on:
-            return status.detail.map { "Enabled · \($0)" } ?? "Enabled — overage can be billed beyond your plan."
-        case .off:
-            return "Disabled — capped at your subscription quota."
-        case .unknown:
-            return "Could not determine. Sign in to the CLI and refresh."
         }
     }
 
@@ -278,39 +575,6 @@ struct SettingsView: View {
                 helpURL: "https://platform.openai.com/settings/organization/admin-keys"
             )
         }
-    }
-
-    private func adminKeyRow(
-        provider: ApiProvider,
-        draft: Binding<String>,
-        placeholder: String,
-        helpURL: String
-    ) -> some View {
-        let connected = authManager.isAuthenticated(provider)
-        return AdminKeySettingsRow(
-            provider: provider,
-            connected: connected,
-            draft: draft,
-            placeholder: placeholder,
-            onSave: {
-                saveAdminKey(provider, draft: draft)
-            },
-            onRemove: {
-                authManager.removeAdminKey(for: provider)
-                Task { await apiUsageStore.refresh() }
-            },
-            onHelp: {
-                if let url = URL(string: helpURL) {
-                    NSWorkspace.shared.open(url)
-                }
-            }
-        )
-    }
-
-    private func saveAdminKey(_ provider: ApiProvider, draft: Binding<String>) {
-        guard authManager.setAdminKey(draft.wrappedValue, for: provider) else { return }
-        draft.wrappedValue = ""
-        Task { await apiUsageStore.refresh() }
     }
 
     private var trackedProvidersSection: some View {
@@ -576,12 +840,198 @@ struct SettingsView: View {
         }
     }
 
-    private var visibleCostSummary: CostSummary? {
-        costTracker.costSummary?.filtered(to: providerVisibility.enabledServices)
+    private func providerSettingsPane(for service: ServiceType) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            providerHeader(for: service)
+            providerInfoSection(for: service)
+            providerUsageSection(for: service)
+            providerSpecificSettings(for: service)
+        }
     }
 
-    private var canScanCosts: Bool {
-        providerVisibility.isEnabled(.claudeCode) || providerVisibility.isEnabled(.codexCli)
+    private func providerHeader(for service: ServiceType) -> some View {
+        DashboardTile(padding: 12) {
+            HStack(alignment: .center, spacing: 12) {
+                ProviderLogoView(
+                    kind: .forService(service),
+                    size: 26,
+                    foregroundColor: MeterBarTheme.accent(for: service)
+                )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(service.displayName)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                    Text(providerSourceText(for: service))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 12)
+
+                Button {
+                    refreshProvider(service)
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .help("Refresh \(service.displayName)")
+                .disabled(dataManager.isLoading)
+
+                Toggle("", isOn: providerEnabledBinding(for: service))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+            }
+        }
+    }
+
+    private func providerInfoSection(for service: ServiceType) -> some View {
+        SettingsPanelSection(
+            title: "Overview",
+            logoKind: .forService(service),
+            color: MeterBarTheme.accent(for: service)
+        ) {
+            SettingsInfoRow(label: "Source", value: providerSourceText(for: service))
+            SettingsInfoRow(label: "Updated", value: providerUpdatedText(for: service))
+            SettingsInfoRow(label: "Status", value: providerStatusText(for: service))
+
+            if let plan = providerPlanText(for: service) {
+                SettingsInfoRow(label: "Plan", value: plan)
+            }
+
+            if let error = providerErrorText(for: service) {
+                SettingsNotice(text: error, color: MeterBarTheme.warning)
+            }
+        }
+    }
+
+    private func providerUsageSection(for service: ServiceType) -> some View {
+        SettingsPanelSection(
+            title: "Usage",
+            systemImage: "chart.bar.xaxis",
+            color: MeterBarTheme.accent(for: service)
+        ) {
+            let snapshots = providerSnapshots(for: service).filter(\.hasMetrics)
+            if snapshots.isEmpty {
+                SettingsNotice(
+                    text: providerVisibility
+                        .isEnabled(service) ? "No usage data yet. Refresh after signing in." : "Provider is disabled.",
+                    color: .secondary
+                )
+            } else {
+                ForEach(snapshots) { snapshot in
+                    VStack(alignment: .leading, spacing: 10) {
+                        if snapshots.count > 1 {
+                            ProviderTitle(
+                                title: snapshot.title,
+                                logoKind: snapshot.logoKind,
+                                color: snapshot.accentColor,
+                                font: .subheadline
+                            )
+                        }
+
+                        if snapshot.detailLimits.isEmpty {
+                            SettingsNotice(text: "No quota windows reported.", color: .secondary)
+                        } else {
+                            ForEach(snapshot.detailLimits) { limit in
+                                DashboardLimitRow(limit: limit, accentColor: snapshot.accentColor)
+                            }
+                        }
+
+                        let badges = ProviderStatusBadges(snapshot: snapshot, style: .regular)
+                        if badges.hasContent {
+                            badges
+                        }
+                    }
+                    .padding(.vertical, snapshots.count > 1 ? 4 : 0)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func providerSpecificSettings(for service: ServiceType) -> some View {
+        switch service {
+        case .claudeCode:
+            claudeCodeSection
+            providerExtraUsageSection(for: service)
+        case .codexCli:
+            codexCliSection
+            providerExtraUsageSection(for: service)
+        case .cursor:
+            cursorSection
+        }
+    }
+
+    @ViewBuilder
+    private func providerExtraUsageSection(for service: ServiceType) -> some View {
+        switch service {
+        case .claudeCode:
+            if let claudeExtraUsageStatus {
+                SettingsPanelSection(title: "Extra Usage", systemImage: "creditcard", color: MeterBarTheme.warning) {
+                    extraUsageRow(
+                        title: "Claude Code",
+                        status: claudeExtraUsageStatus,
+                        manageURL: "https://claude.ai/settings"
+                    )
+                }
+            }
+        case .codexCli:
+            SettingsPanelSection(title: "Credits", systemImage: "creditcard", color: MeterBarTheme.warning) {
+                extraUsageRow(
+                    title: "OpenAI Codex",
+                    status: dataManager.metrics[.codexCli]?.extraUsage,
+                    manageURL: "https://chatgpt.com"
+                )
+            }
+        case .cursor:
+            EmptyView()
+        }
+    }
+
+    private func extraUsageRow(title: String, status: ExtraUsageStatus?, manageURL: String) -> some View {
+        SettingsRowView(title: title, detail: extraUsageDetailText(status)) {
+            HStack(spacing: 8) {
+                ExtraUsageStatusPill(status: status ?? .unknown)
+
+                Button("Manage") {
+                    if let url = URL(string: manageURL) {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .help("Open \(manageURL) to change extra usage settings")
+            }
+        }
+    }
+
+    private func adminKeyRow(
+        provider: ApiProvider,
+        draft: Binding<String>,
+        placeholder: String,
+        helpURL: String
+    ) -> some View {
+        let connected = authManager.isAuthenticated(provider)
+        return AdminKeySettingsRow(
+            provider: provider,
+            connected: connected,
+            draft: draft,
+            placeholder: placeholder,
+            onSave: {
+                saveAdminKey(provider, draft: draft)
+            },
+            onRemove: {
+                authManager.removeAdminKey(for: provider)
+                Task { await apiUsageStore.refresh() }
+            },
+            onHelp: {
+                if let url = URL(string: helpURL) {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        )
     }
 
     private func providerToggleRow(title: String, detail: String, service: ServiceType) -> some View {
@@ -598,6 +1048,158 @@ struct SettingsView: View {
             .labelsHidden()
             .toggleStyle(.switch)
         }
+    }
+
+    private func providerSnapshots(for service: ServiceType) -> [ProviderSnapshot] {
+        providerSnapshots.filter { $0.service == service }
+    }
+
+    private func keepSelectedPaneValid() {
+        guard case let .provider(service) = selectedPane else {
+            return
+        }
+        if !providerVisibility.isEnabled(service) {
+            selectedPane = .general
+        }
+    }
+
+    private func providerEnabledBinding(for service: ServiceType) -> Binding<Bool> {
+        Binding(
+            get: { providerVisibility.isEnabled(service) },
+            set: { isEnabled in
+                providerVisibility.set(service, isEnabled: isEnabled)
+                Task {
+                    await dataManager.refreshAll()
+                }
+            }
+        )
+    }
+
+    private func refreshProvider(_ service: ServiceType) {
+        Task {
+            switch service {
+            case .claudeCode:
+                claudeCodeService.checkAccess()
+            case .codexCli:
+                codexCliService.checkAccess()
+            case .cursor:
+                cursorService.checkAccess(forceRescan: true)
+            }
+            await dataManager.refresh(service: service)
+        }
+    }
+
+    private func providerSourceText(for service: ServiceType) -> String {
+        switch service {
+        case .claudeCode:
+            "Claude CLI /usage"
+        case .codexCli:
+            "~/.codex/auth.json + ChatGPT usage API"
+        case .cursor:
+            "Cursor local state + usage API"
+        }
+    }
+
+    private func providerUpdatedText(for service: ServiceType) -> String {
+        providerSnapshots(for: service)
+            .filter(\.hasMetrics)
+            .map(\.updatedText)
+            .first ?? "No data"
+    }
+
+    private func providerStatusText(for service: ServiceType) -> String {
+        guard providerVisibility.isEnabled(service) else {
+            return "Disabled"
+        }
+        guard providerHasAccess(service) else {
+            return "Not connected"
+        }
+        if providerErrorText(for: service) != nil {
+            return "Refresh failed"
+        }
+        if let band = providerSnapshots(for: service).compactMap(\.band).max(by: { $0.severity < $1.severity }) {
+            return band.shortLabel
+        }
+        return "Waiting for refresh"
+    }
+
+    private func providerStatusColor(for service: ServiceType) -> Color {
+        guard providerVisibility.isEnabled(service), providerHasAccess(service) else {
+            return .secondary
+        }
+        if providerErrorText(for: service) != nil {
+            return MeterBarTheme.warning
+        }
+        if let band = providerSnapshots(for: service).compactMap(\.band).max(by: { $0.severity < $1.severity }) {
+            return band.color
+        }
+        return .secondary
+    }
+
+    private func providerSidebarStatusColor(for service: ServiceType) -> Color? {
+        guard providerVisibility.isEnabled(service) else {
+            return nil
+        }
+        return providerStatusColor(for: service)
+    }
+
+    private func providerPlanText(for service: ServiceType) -> String? {
+        switch service {
+        case .claudeCode:
+            let plan = claudeCodeService.subscriptionType?.capitalized
+            let tier = claudeCodeService.rateLimitTier?
+                .replacingOccurrences(of: "_", with: " ")
+                .capitalized
+            return [plan, tier].compactMap { $0 }.joined(separator: " · ").nilIfEmpty
+        case .codexCli:
+            return codexCliService.subscriptionType?.capitalized.nilIfEmpty
+        case .cursor:
+            return cursorService.subscriptionType?.capitalized.nilIfEmpty
+        }
+    }
+
+    private func providerHasAccess(_ service: ServiceType) -> Bool {
+        switch service {
+        case .claudeCode:
+            claudeCodeService.hasAccess
+        case .codexCli:
+            codexCliService.hasAccess
+        case .cursor:
+            cursorService.hasAccess
+        }
+    }
+
+    private func providerErrorText(for service: ServiceType) -> String? {
+        switch service {
+        case .claudeCode:
+            claudeCodeService.lastError?.localizedDescription
+        case .codexCli:
+            codexCliService.lastError?.localizedDescription
+        case .cursor:
+            cursorService.lastError?.localizedDescription
+        }
+    }
+
+    private func extraUsageDetailText(_ status: ExtraUsageStatus?) -> String {
+        guard let status else {
+            return "Waiting for refresh."
+        }
+        switch status.state {
+        case .on:
+            return status.detail.map { "Enabled · \($0)" } ?? "Enabled — overage can be billed beyond your plan."
+        case .off:
+            return "Disabled — capped at your subscription quota."
+        case .unknown:
+            return "Could not determine. Sign in to the CLI and refresh."
+        }
+    }
+
+    private func saveAdminKey(_ provider: ApiProvider, draft: Binding<String>) {
+        guard authManager.setAdminKey(draft.wrappedValue, for: provider) else {
+            return
+        }
+        draft.wrappedValue = ""
+        Task { await apiUsageStore.refresh() }
     }
 
     private func formatDate(_ date: Date) -> String {
@@ -628,12 +1230,176 @@ struct SettingsView: View {
     }
 }
 
-private struct SettingsPanelSection<Content: View>: View {
+// MARK: - SettingsSidebarSectionHeader
+
+private struct SettingsSidebarSectionHeader: View {
     let title: String
-    let logoKind: ProviderLogoKind?
-    let systemImage: String?
+    var trailing: String?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(title)
+            Spacer(minLength: 8)
+            if let trailing {
+                Text(trailing)
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+            }
+        }
+        .font(.caption)
+        .fontWeight(.semibold)
+        .foregroundStyle(.secondary)
+        .textCase(.uppercase)
+        .padding(.horizontal, 9)
+    }
+}
+
+// MARK: - SettingsSidebarSearchField
+
+private struct SettingsSidebarSearchField: View {
+    @Binding var searchText: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+
+            TextField("Search providers", text: $searchText)
+                .textFieldStyle(.plain)
+
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Clear search")
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .font(.callout)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(MeterBarTheme.glassCardStroke, lineWidth: 0.5)
+        }
+    }
+}
+
+// MARK: - SettingsSidebarRow
+
+private struct SettingsSidebarRow: View {
+    let pane: SettingsPane
+    let isSelected: Bool
+    let isEnabled: Bool
+    let statusColor: Color?
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if let logoKind = pane.logoKind {
+                    ProviderLogoView(
+                        kind: logoKind,
+                        size: 16,
+                        foregroundColor: isSelected ? .white : (isEnabled ? pane.color : .secondary)
+                    )
+                    .frame(width: SettingsSidebarIconChip.side, height: SettingsSidebarIconChip.side)
+                } else if let systemImage = pane.systemImage {
+                    SettingsSidebarIconChip(systemImage: systemImage, color: pane.color)
+                }
+
+                Text(pane.title)
+                    .font(.subheadline)
+                    .lineLimit(1)
+                    .foregroundStyle(isSelected ? Color.white : (isEnabled ? Color.primary : Color.secondary))
+
+                Spacer(minLength: 6)
+
+                if let statusColor {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 6, height: 6)
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .opacity(isEnabled ? 1 : 0.62)
+        .background {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.95))
+            }
+        }
+    }
+}
+
+// MARK: - SettingsSidebarIconChip
+
+private struct SettingsSidebarIconChip: View {
+    static let side: CGFloat = 20
+
+    let systemImage: String
     let color: Color
-    let content: Content
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: Self.side, height: Self.side)
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [color.opacity(0.82), color],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            )
+            .accessibilityHidden(true)
+    }
+}
+
+// MARK: - SettingsInfoRow
+
+private struct SettingsInfoRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 16) {
+            Text(label)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .frame(width: SettingsRowViewMetrics.labelWidth, alignment: .leading)
+
+            Text(value)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(2)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - SettingsPanelSection
+
+private struct SettingsPanelSection<Content: View>: View {
+    // MARK: Lifecycle
 
     init(
         title: String,
@@ -661,6 +1427,14 @@ private struct SettingsPanelSection<Content: View>: View {
         self.content = content()
     }
 
+    // MARK: Internal
+
+    let title: String
+    let logoKind: ProviderLogoKind?
+    let systemImage: String?
+    let color: Color
+    let content: Content
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -685,10 +1459,16 @@ private struct SettingsPanelSection<Content: View>: View {
     }
 }
 
+// MARK: - SettingsRowViewMetrics
+
+private enum SettingsRowViewMetrics {
+    static let labelWidth: CGFloat = 190
+}
+
+// MARK: - SettingsRowView
+
 private struct SettingsRowView<Content: View>: View {
-    let title: String
-    let detail: String?
-    let content: Content
+    // MARK: Lifecycle
 
     init(title: String, detail: String? = nil, @ViewBuilder content: () -> Content) {
         self.title = title
@@ -696,24 +1476,35 @@ private struct SettingsRowView<Content: View>: View {
         self.content = content()
     }
 
+    // MARK: Internal
+
+    let title: String
+    let detail: String?
+    let content: Content
+
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
                 if let detail {
                     Text(detail)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(width: SettingsRowViewMetrics.labelWidth, alignment: .leading)
 
             content
-                .fixedSize(horizontal: true, vertical: false)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
+
+// MARK: - SettingsNotice
 
 private struct SettingsNotice: View {
     let text: String
@@ -727,11 +1518,15 @@ private struct SettingsNotice: View {
     }
 }
 
+// MARK: - SettingsDivider
+
 private struct SettingsDivider: View {
     var body: some View {
         Divider()
     }
 }
+
+// MARK: - StatusPill
 
 private struct StatusPill: View {
     let title: String
@@ -744,22 +1539,19 @@ private struct StatusPill: View {
     }
 }
 
+// MARK: - AdminKeySettingsRow
+
 private struct AdminKeySettingsRow: View {
+    // MARK: Internal
+
     let provider: ApiProvider
     let connected: Bool
     @Binding var draft: String
+
     let placeholder: String
     let onSave: () -> Void
     let onRemove: () -> Void
     let onHelp: () -> Void
-
-    private var trimmedDraft: String {
-        draft.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var connectedMessage: String {
-        "Connected. Usage appears on the billed API card."
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -798,28 +1590,24 @@ private struct AdminKeySettingsRow: View {
         }
         .padding(.vertical, 6)
     }
+
+    // MARK: Private
+
+    private var trimmedDraft: String {
+        draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var connectedMessage: String {
+        "Connected. Usage appears on the billed API card."
+    }
 }
 
-private struct AddClaudeAccountSheet: View {
-    @Environment(\.dismiss)
-    private var dismiss
+// MARK: - AddClaudeAccountSheet
 
-    @State private var accountName = ""
-    @State private var configDirectory = ""
+private struct AddClaudeAccountSheet: View {
+    // MARK: Internal
 
     let onAdd: (String, String) -> Void
-
-    private var trimmedName: String {
-        accountName.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var trimmedConfigDirectory: String {
-        configDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var canAdd: Bool {
-        !trimmedName.isEmpty && !trimmedConfigDirectory.isEmpty
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -866,7 +1654,9 @@ private struct AddClaudeAccountSheet: View {
                 .keyboardShortcut(.cancelAction)
 
                 Button("Add Account") {
-                    guard canAdd else { return }
+                    guard canAdd else {
+                        return
+                    }
                     onAdd(trimmedName, trimmedConfigDirectory)
                     dismiss()
                 }
@@ -877,6 +1667,26 @@ private struct AddClaudeAccountSheet: View {
         }
         .padding(22)
         .frame(width: 520)
+    }
+
+    // MARK: Private
+
+    @Environment(\.dismiss)
+    private var dismiss
+
+    @State private var accountName = ""
+    @State private var configDirectory = ""
+
+    private var trimmedName: String {
+        accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedConfigDirectory: String {
+        configDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canAdd: Bool {
+        !trimmedName.isEmpty && !trimmedConfigDirectory.isEmpty
     }
 
     private func chooseConfigDirectory() {
@@ -895,14 +1705,10 @@ private struct AddClaudeAccountSheet: View {
     }
 }
 
-private struct AccountProfileRow: View {
-    let account: ClaudeCodeAccount
-    let onSave: (String, String?) -> Void
-    let onReconnect: () -> Void
-    let onRemove: () -> Void
+// MARK: - AccountProfileRow
 
-    @State private var nameDraft: String
-    @State private var configDirectoryDraft: String
+private struct AccountProfileRow: View {
+    // MARK: Lifecycle
 
     init(
         account: ClaudeCodeAccount,
@@ -917,6 +1723,13 @@ private struct AccountProfileRow: View {
         _nameDraft = State(initialValue: account.name)
         _configDirectoryDraft = State(initialValue: account.configDirectory ?? "")
     }
+
+    // MARK: Internal
+
+    let account: ClaudeCodeAccount
+    let onSave: (String, String?) -> Void
+    let onReconnect: () -> Void
+    let onRemove: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -1003,6 +1816,11 @@ private struct AccountProfileRow: View {
         }
     }
 
+    // MARK: Private
+
+    @State private var nameDraft: String
+    @State private var configDirectoryDraft: String
+
     private var trimmedName: String {
         nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -1027,7 +1845,9 @@ private struct AccountProfileRow: View {
     }
 
     private func saveChanges() {
-        guard hasChanges, canSave else { return }
+        guard hasChanges, canSave else {
+            return
+        }
         onSave(trimmedName, account.isDefault ? nil : trimmedConfigDirectory)
     }
 
@@ -1044,6 +1864,8 @@ private struct AccountProfileRow: View {
     }
 }
 
+// MARK: - SettingsReadonlyField
+
 private struct SettingsReadonlyField: View {
     let text: String
 
@@ -1057,6 +1879,8 @@ private struct SettingsReadonlyField: View {
     }
 }
 
+// MARK: - SettingsInputModifier
+
 private struct SettingsInputModifier: ViewModifier {
     let width: CGFloat?
 
@@ -1069,10 +1893,14 @@ private struct SettingsInputModifier: ViewModifier {
     }
 }
 
+// MARK: - SettingsInputSurfaceShape
+
 private enum SettingsInputSurfaceShape {
     case roundedRectangle
     case capsule
 }
+
+// MARK: - SettingsInputSurfaceModifier
 
 private struct SettingsInputSurfaceModifier: ViewModifier {
     let width: CGFloat?
@@ -1080,7 +1908,6 @@ private struct SettingsInputSurfaceModifier: ViewModifier {
     let verticalPadding: CGFloat
     let shape: SettingsInputSurfaceShape
 
-    @ViewBuilder
     func body(content: Content) -> some View {
         switch shape {
         case .roundedRectangle:
@@ -1126,5 +1953,26 @@ private extension View {
                 shape: shape
             )
         )
+    }
+}
+
+private extension QuotaBand {
+    var severity: Int {
+        switch self {
+        case .healthy:
+            0
+        case .tight:
+            1
+        case .critical:
+            2
+        case .exhausted:
+            3
+        }
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }
