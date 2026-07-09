@@ -9,7 +9,7 @@ final class ClaudeCodeCLIUsageService: Sendable {
     /// Dedicated queue for the blocking process run so the semaphore wait happens
     /// on a GCD thread rather than blocking a Swift-concurrency cooperative thread.
     private let processQueue = DispatchQueue(
-        label: "dev.meterbar.app.ClaudeCLI.process",
+        label: "dev.shipshit.meterbar.ClaudeCLI.process",
         qos: .userInitiated,
         attributes: .concurrent
     )
