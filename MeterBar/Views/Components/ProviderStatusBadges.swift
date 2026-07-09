@@ -18,7 +18,6 @@ struct ProviderStatusBadges: View {
     let resetCreditsAvailable: Int?
     let extraUsage: ExtraUsageStatus?
     let accentColor: Color
-    let hasExhaustedLimit: Bool
     var style: Style = .compact
 
     /// Convenience initializer from a `ProviderSnapshot`, which already carries
@@ -27,7 +26,6 @@ struct ProviderStatusBadges: View {
         self.resetCreditsAvailable = snapshot.resetCreditsAvailable
         self.extraUsage = snapshot.displayedExtraUsage
         self.accentColor = snapshot.accentColor
-        self.hasExhaustedLimit = snapshot.hasExhaustedLimit
         self.style = style
     }
 
@@ -36,7 +34,7 @@ struct ProviderStatusBadges: View {
     }
 
     private var showsExtraUsage: Bool {
-        !hasExhaustedLimit && extraUsage != nil
+        extraUsage != nil
     }
 
     /// Whether either badge will render — lets callers skip the surrounding

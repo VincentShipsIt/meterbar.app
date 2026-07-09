@@ -85,15 +85,6 @@ final class AccountActivityInspectorTests: XCTestCase {
     // MARK: - Provider probes
 
     func testCodexCliActivityHonorsCodexHomeOverride() throws {
-        let previousCodexHome = getenv("CODEX_HOME").map { String(cString: $0) }
-        defer {
-            if let previousCodexHome {
-                setenv("CODEX_HOME", previousCodexHome, 1)
-            } else {
-                unsetenv("CODEX_HOME")
-            }
-        }
-
         let codexHome = tempDir.appendingPathComponent("custom-codex", isDirectory: true)
         try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
         let newest = Date(timeIntervalSinceNow: -90)
@@ -105,9 +96,27 @@ final class AccountActivityInspectorTests: XCTestCase {
             ofItemAtPath: codexHome.path
         )
 
-        setenv("CODEX_HOME", codexHome.path, 1)
-
-        let activity = try XCTUnwrap(AccountActivityInspector.codexCliActivity())
+        let activity = try XCTUnwrap(AccountActivityInspector.codexCliActivity(
+            environment: ["CODEX_HOME": codexHome.path],
+            realHomeDirectory: tempDir.path
+        ))
         XCTAssertEqual(activity.timeIntervalSince1970, newest.timeIntervalSince1970, accuracy: 2)
+    }
+
+    func testCodexHomeResolverDefaultsBlankValuesAndBuildsAuthPath() {
+        let home = tempDir.path
+
+        XCTAssertEqual(CodexHomeDirectory.path(environment: [:], realHomeDirectory: home), "\(home)/.codex")
+        XCTAssertEqual(
+            CodexHomeDirectory.path(environment: ["CODEX_HOME": "   "], realHomeDirectory: home),
+            "\(home)/.codex"
+        )
+        XCTAssertEqual(
+            CodexHomeDirectory.authFilePath(
+                environment: ["CODEX_HOME": "~/custom-codex"],
+                realHomeDirectory: home
+            ),
+            "\(home)/custom-codex/auth.json"
+        )
     }
 }

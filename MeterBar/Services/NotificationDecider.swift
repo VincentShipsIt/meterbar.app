@@ -21,6 +21,23 @@ struct FiredNotification: Equatable, Sendable {
     let serviceDisplayName: String
     /// Clamped `0...100` percentage used, for the warning body copy.
     let percentUsed: Int
+    /// True only when the quota is actually fully spent. A user can configure
+    /// the critical alert at 10% remaining, which must not claim exhaustion.
+    let isExhausted: Bool
+
+    var title: String {
+        if level == .critical, isExhausted {
+            return "\(serviceDisplayName) Limit Reached"
+        }
+        return "\(serviceDisplayName) \(level == .warning ? "Usage Warning" : "Usage Alert")"
+    }
+
+    var body: String {
+        if level == .critical, isExhausted {
+            return "You've reached your usage limit"
+        }
+        return "You're at \(percentUsed)% of your limit"
+    }
 }
 
 /// The result of evaluating one service's metrics: the notifications to post and
@@ -64,26 +81,19 @@ struct NotificationDecider {
         alreadyNotified: Set<String>,
         now: Date = Date()
     ) -> NotificationEvaluation {
-        // Gate 1: notifications turned off globally.
-        guard preferences.isEnabled else {
-            return NotificationEvaluation(notifications: [], notifiedKeys: alreadyNotified)
-        }
+        // Delivery gates suppress banners, not state transitions. Continuing to
+        // evolve band keys while notifications are disabled (or data is stale)
+        // lets a recovery clear old keys so the next genuine upward crossing is
+        // not silently suppressed.
+        let mayDeliver = preferences.isEnabled
+            && providerEnabled
+            && now.timeIntervalSince(metrics.lastUpdated) <= stalenessThreshold
 
-        // Gate 2: never notify for a provider the user has disabled.
-        guard providerEnabled else {
-            return NotificationEvaluation(notifications: [], notifiedKeys: alreadyNotified)
-        }
-
-        // Gate 3: never notify off stale cached data.
-        guard now.timeIntervalSince(metrics.lastUpdated) <= stalenessThreshold else {
-            return NotificationEvaluation(notifications: [], notifiedKeys: alreadyNotified)
-        }
-
-        let limits: [(limit: UsageLimit, type: String)] = [
+        let limits: [(limit: UsageLimit?, type: String)] = [
             (metrics.sessionLimit, "session"),
             (metrics.weeklyLimit, "weekly"),
             (metrics.codeReviewLimit, "codeReview")
-        ].compactMap { pair in pair.0.map { ($0, pair.1) } }
+        ]
 
         var keys = alreadyNotified
         var fired: [FiredNotification] = []
@@ -96,28 +106,41 @@ struct NotificationDecider {
             let warnKey = "\(baseKey)-warn"
             let criticalKey = "\(baseKey)-critical"
 
-            let bandRank = Self.severityRank(QuotaBand.forLimit(limit))
+            guard let limit else {
+                keys.remove(warnKey)
+                keys.remove(criticalKey)
+                continue
+            }
+
+            let band = QuotaBand.forLimit(limit)
+            let bandRank = Self.severityRank(band)
 
             if bandRank >= criticalRank {
-                // In (or past) the critical band. Supersede any pending warn
-                // alert, then fire once per crossing.
-                keys.remove(warnKey)
-                if keys.insert(criticalKey).inserted {
+                // Preserve the warning key while critical. Otherwise falling
+                // from exhausted to warning would look like a fresh rise and
+                // fire a recovery notification.
+                keys.insert(warnKey)
+                if keys.insert(criticalKey).inserted, mayDeliver {
                     fired.append(FiredNotification(
                         key: criticalKey,
                         level: .critical,
                         serviceDisplayName: metrics.service.displayName,
-                        percentUsed: Int(limit.percentage)
+                        percentUsed: Int(limit.percentage),
+                        isExhausted: band == .exhausted
                     ))
                 }
             } else if bandRank >= warningRank {
                 // In the warning band but not yet critical.
-                if keys.insert(warnKey).inserted {
+                // Dropping below critical re-arms only the critical crossing;
+                // keeping the warning key prevents a banner on recovery.
+                keys.remove(criticalKey)
+                if keys.insert(warnKey).inserted, mayDeliver {
                     fired.append(FiredNotification(
                         key: warnKey,
                         level: .warning,
                         serviceDisplayName: metrics.service.displayName,
-                        percentUsed: Int(limit.percentage)
+                        percentUsed: Int(limit.percentage),
+                        isExhausted: false
                     ))
                 }
             } else {

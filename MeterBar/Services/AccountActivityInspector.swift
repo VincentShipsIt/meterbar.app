@@ -48,8 +48,14 @@ enum AccountActivityInspector {
 
     /// Codex CLI keeps all state (sqlite + WAL, caches, snapshots) under
     /// `CODEX_HOME`, defaulting to `~/.codex`.
-    static func codexCliActivity() -> Date? {
-        lastActivity(inDirectory: codexHomeDirectory())
+    static func codexCliActivity(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        realHomeDirectory: String = ServiceSupport.realHomeDirectory()
+    ) -> Date? {
+        lastActivity(inDirectory: CodexHomeDirectory.path(
+            environment: environment,
+            realHomeDirectory: realHomeDirectory
+        ))
     }
 
     /// Cursor continuously checkpoints its state database while running; the
@@ -70,12 +76,5 @@ enum AccountActivityInspector {
     private static func modificationDate(atPath path: String) -> Date? {
         let attributes = try? FileManager.default.attributesOfItem(atPath: path)
         return attributes?[.modificationDate] as? Date
-    }
-
-    private static func codexHomeDirectory() -> String {
-        let trimmed = ProcessInfo.processInfo.environment["CODEX_HOME"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return (trimmed?.isEmpty == false ? trimmed : nil)
-            ?? "\(ServiceSupport.realHomeDirectory())/.codex"
     }
 }

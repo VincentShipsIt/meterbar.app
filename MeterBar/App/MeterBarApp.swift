@@ -454,8 +454,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let decider = NotificationDecider(preferences: notificationPreferences.preferences)
         let now = Date()
         var keys = notifiedLimitKeys
+        let currentMetrics = UsageDataManager.shared.metrics
 
-        for (service, metrics) in UsageDataManager.shared.metrics {
+        for service in ServiceType.allCases {
+            // Disabled providers are removed from UsageDataManager. Evaluate an
+            // empty snapshot so their stale band keys are cleared instead of
+            // suppressing a future crossing after the provider is re-enabled.
+            let metrics = currentMetrics[service] ?? UsageMetrics(service: service, lastUpdated: now)
             let evaluation = decider.evaluate(
                 metrics: metrics,
                 providerEnabled: providerVisibilityStore.isEnabled(service),
@@ -472,17 +477,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func postNotification(_ fired: FiredNotification) {
-        let title: String
-        let body: String
-        switch fired.level {
-        case .warning:
-            title = "\(fired.serviceDisplayName) Usage Warning"
-            body = "You're at \(fired.percentUsed)% of your limit"
-        case .critical:
-            title = "\(fired.serviceDisplayName) Limit Reached"
-            body = "You've reached your usage limit"
-        }
-        sendNotification(identifier: fired.key, title: title, body: body)
+        sendNotification(identifier: fired.key, title: fired.title, body: fired.body)
     }
 
     private func sendNotification(identifier: String, title: String, body: String) {

@@ -7,13 +7,15 @@ final class ProviderSnapshotTests: XCTestCase {
         service: ServiceType,
         session: Double? = nil,
         weekly: Double? = nil,
-        codeReview: Double? = nil
+        codeReview: Double? = nil,
+        extraUsage: ExtraUsageStatus? = nil
     ) -> UsageMetrics {
         UsageMetrics(
             service: service,
             sessionLimit: session.map { UsageLimit(used: $0, total: 100, resetTime: nil) },
             weeklyLimit: weekly.map { UsageLimit(used: $0, total: 100, resetTime: nil) },
-            codeReviewLimit: codeReview.map { UsageLimit(used: $0, total: 100, resetTime: nil) }
+            codeReviewLimit: codeReview.map { UsageLimit(used: $0, total: 100, resetTime: nil) },
+            extraUsage: extraUsage
         )
     }
 
@@ -173,7 +175,7 @@ final class ProviderSnapshotTests: XCTestCase {
 
         XCTAssertTrue(snapshot.hasExhaustedLimit)
         XCTAssertEqual(snapshot.band, .exhausted)
-        XCTAssertEqual(snapshot.resetWindows.count, 2)
+        XCTAssertEqual(snapshot.resetWindows.map(\.title), ["Session"])
     }
 
     func testWeeklyExhaustionIsDistinctFromSessionExhaustion() {
@@ -194,6 +196,83 @@ final class ProviderSnapshotTests: XCTestCase {
         XCTAssertTrue(weeklyOut.hasExhaustedWeeklyLimit)
         XCTAssertTrue(sessionOut.hasExhaustedLimit)
         XCTAssertFalse(sessionOut.hasExhaustedWeeklyLimit)
+    }
+
+    func testSecondaryQuotaExhaustionDoesNotBlockProvider() {
+        let snapshot = ProviderSnapshotBuilder.snapshot(
+            title: "Codex",
+            service: .codexCli,
+            metrics: makeMetrics(
+                service: .codexCli,
+                session: 20,
+                weekly: 30,
+                codeReview: 100,
+                extraUsage: ExtraUsageStatus(state: .off)
+            ),
+            emptyDetail: ""
+        )
+
+        XCTAssertFalse(snapshot.hasExhaustedLimit)
+        XCTAssertFalse(snapshot.hasExhaustedWeeklyLimit)
+        XCTAssertTrue(snapshot.blockingLimits.isEmpty)
+        XCTAssertTrue(snapshot.resetWindows.isEmpty)
+        XCTAssertEqual(snapshot.detailLimits.map(\.id), ["session", "weekly", "codeReview"])
+        XCTAssertNotNil(snapshot.displayedExtraUsage)
+        XCTAssertTrue(ProviderStatusBadges(snapshot: snapshot).hasContent)
+    }
+
+    func testConfirmedExtraUsageKeepsExhaustedPrimaryWindowNonblocking() {
+        let snapshot = ProviderSnapshotBuilder.snapshot(
+            title: "Codex",
+            service: .codexCli,
+            metrics: makeMetrics(
+                service: .codexCli,
+                session: 100,
+                weekly: 20,
+                extraUsage: ExtraUsageStatus(state: .on, detail: "$5.00 in credits")
+            ),
+            emptyDetail: ""
+        )
+
+        XCTAssertFalse(snapshot.hasExhaustedLimit)
+        XCTAssertTrue(snapshot.blockingLimits.isEmpty)
+        XCTAssertTrue(snapshot.resetWindows.isEmpty)
+        XCTAssertEqual(snapshot.displayedExtraUsage?.state, .on)
+    }
+
+    func testPrimaryExhaustionStillBlocksWhenExtraUsageIsOff() {
+        let snapshot = ProviderSnapshotBuilder.snapshot(
+            title: "Codex",
+            service: .codexCli,
+            metrics: makeMetrics(
+                service: .codexCli,
+                session: 100,
+                weekly: 20,
+                extraUsage: ExtraUsageStatus(state: .off)
+            ),
+            emptyDetail: ""
+        )
+
+        XCTAssertTrue(snapshot.hasExhaustedLimit)
+        XCTAssertEqual(snapshot.blockingLimits.map(\.kind), [.session])
+        XCTAssertEqual(snapshot.resetWindows.map(\.title), ["Session"])
+        XCTAssertTrue(
+            ProviderStatusBadges(snapshot: snapshot).hasContent,
+            "Overage On/Off remains relevant when the subscription quota is exhausted."
+        )
+    }
+
+    func testBlockingResetWindowsExcludeSimultaneouslyExhaustedSecondaryQuota() {
+        let snapshot = ProviderSnapshotBuilder.snapshot(
+            title: "Claude",
+            service: .claudeCode,
+            metrics: makeMetrics(service: .claudeCode, session: 100, weekly: 30, codeReview: 100),
+            emptyDetail: ""
+        )
+
+        XCTAssertTrue(snapshot.hasExhaustedLimit)
+        XCTAssertEqual(snapshot.blockingLimits.map(\.kind), [.session])
+        XCTAssertEqual(snapshot.resetWindows.map(\.title), ["Session"])
     }
 
     func testDetailLimitsHideSessionWhenWeeklyIsExhausted() {

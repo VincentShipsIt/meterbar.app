@@ -57,7 +57,7 @@ final class NotificationDeciderTests: XCTestCase {
         XCTAssertTrue(result.notifiedKeys.contains("Claude Code-session-warn"))
     }
 
-    func testCriticalFiresAndSupersedesWarning() {
+    func testCriticalFiresAndPreservesWarningState() {
         // Already warned; usage climbs into the exhausted band.
         let result = decider().evaluate(
             metrics: metrics(session: exhaustedLimit()),
@@ -69,8 +69,9 @@ final class NotificationDeciderTests: XCTestCase {
         XCTAssertEqual(result.notifications.count, 1)
         XCTAssertEqual(result.notifications[0].level, .critical)
         XCTAssertEqual(result.notifications[0].key, "Claude Code-session-critical")
-        // Warn key superseded, critical key recorded.
-        XCTAssertFalse(result.notifiedKeys.contains("Claude Code-session-warn"))
+        // Preserve the warning key so a later recovery into the warning band
+        // cannot look like a new upward crossing.
+        XCTAssertTrue(result.notifiedKeys.contains("Claude Code-session-warn"))
         XCTAssertTrue(result.notifiedKeys.contains("Claude Code-session-critical"))
     }
 
@@ -97,7 +98,7 @@ final class NotificationDeciderTests: XCTestCase {
         )
 
         XCTAssertTrue(result.notifications.isEmpty)
-        XCTAssertEqual(result.notifiedKeys, ["Claude Code-session-critical"])
+        XCTAssertEqual(result.notifiedKeys, ["Claude Code-session-warn", "Claude Code-session-critical"])
     }
 
     // MARK: - Falling
@@ -125,6 +126,18 @@ final class NotificationDeciderTests: XCTestCase {
 
         XCTAssertTrue(result.notifications.isEmpty)
         XCTAssertFalse(result.notifiedKeys.contains("Claude Code-session-warn"))
+    }
+
+    func testRecoveryFromExhaustedIntoWarningBandDoesNotFire() {
+        let result = decider().evaluate(
+            metrics: metrics(session: criticalLimit()),
+            providerEnabled: true,
+            alreadyNotified: ["Claude Code-session-warn", "Claude Code-session-critical"],
+            now: now
+        )
+
+        XCTAssertTrue(result.notifications.isEmpty)
+        XCTAssertEqual(result.notifiedKeys, ["Claude Code-session-warn"])
     }
 
     // MARK: - Threshold change
@@ -157,6 +170,9 @@ final class NotificationDeciderTests: XCTestCase {
             .critical,
             "At the critical threshold the critical band should alert, not warn."
         )
+        XCTAssertFalse(result.notifications[0].isExhausted)
+        XCTAssertEqual(result.notifications[0].title, "Claude Code Usage Alert")
+        XCTAssertFalse(result.notifications[0].body.lowercased().contains("reached"))
     }
 
     // MARK: - Gates
@@ -171,7 +187,7 @@ final class NotificationDeciderTests: XCTestCase {
         )
 
         XCTAssertTrue(result.notifications.isEmpty)
-        XCTAssertTrue(result.notifiedKeys.isEmpty)
+        XCTAssertEqual(result.notifiedKeys, ["Claude Code-session-warn", "Claude Code-session-critical"])
     }
 
     func testDisabledProviderNeverNotifies() {
@@ -183,6 +199,7 @@ final class NotificationDeciderTests: XCTestCase {
         )
 
         XCTAssertTrue(result.notifications.isEmpty)
+        XCTAssertEqual(result.notifiedKeys, ["Claude Code-session-warn", "Claude Code-session-critical"])
     }
 
     func testStaleDataNeverNotifies() {
@@ -195,6 +212,73 @@ final class NotificationDeciderTests: XCTestCase {
         )
 
         XCTAssertTrue(result.notifications.isEmpty, "A two-hour-old cache must not fire alerts.")
+        XCTAssertEqual(result.notifiedKeys, ["Claude Code-session-warn", "Claude Code-session-critical"])
+    }
+
+    func testDisabledRecoveryRearmsNextEnabledCrossing() {
+        let recoveredWhileDisabled = decider().evaluate(
+            metrics: metrics(session: healthyLimit()),
+            providerEnabled: false,
+            alreadyNotified: ["Claude Code-session-warn", "Claude Code-session-critical"],
+            now: now
+        )
+        XCTAssertTrue(recoveredWhileDisabled.notifiedKeys.isEmpty)
+
+        let nextCrossing = decider().evaluate(
+            metrics: metrics(session: criticalLimit()),
+            providerEnabled: true,
+            alreadyNotified: recoveredWhileDisabled.notifiedKeys,
+            now: now
+        )
+        XCTAssertEqual(nextCrossing.notifications.map(\.level), [.warning])
+    }
+
+    func testStaleRecoveryRearmsNextFreshCrossing() {
+        let staleRecovery = decider().evaluate(
+            metrics: metrics(
+                session: healthyLimit(),
+                lastUpdated: now.addingTimeInterval(-NotificationDecider.defaultStalenessThreshold - 1)
+            ),
+            providerEnabled: true,
+            alreadyNotified: ["Claude Code-session-warn"],
+            now: now
+        )
+        XCTAssertTrue(staleRecovery.notifications.isEmpty)
+        XCTAssertTrue(staleRecovery.notifiedKeys.isEmpty)
+
+        let nextCrossing = decider().evaluate(
+            metrics: metrics(session: criticalLimit()),
+            providerEnabled: true,
+            alreadyNotified: staleRecovery.notifiedKeys,
+            now: now
+        )
+        XCTAssertEqual(nextCrossing.notifications.map(\.level), [.warning])
+    }
+
+    func testMissingLimitClearsPreviousBandState() {
+        let result = decider().evaluate(
+            metrics: metrics(session: nil),
+            providerEnabled: false,
+            alreadyNotified: ["Claude Code-session-warn", "Claude Code-session-critical"],
+            now: now
+        )
+
+        XCTAssertTrue(result.notifications.isEmpty)
+        XCTAssertTrue(result.notifiedKeys.isEmpty)
+    }
+
+    func testExhaustedCriticalCopyClaimsLimitReached() {
+        let result = decider().evaluate(
+            metrics: metrics(session: exhaustedLimit()),
+            providerEnabled: true,
+            alreadyNotified: [],
+            now: now
+        )
+
+        let fired = result.notifications[0]
+        XCTAssertTrue(fired.isExhausted)
+        XCTAssertEqual(fired.title, "Claude Code Limit Reached")
+        XCTAssertTrue(fired.body.contains("reached"))
     }
 
     func testDataAtStalenessBoundaryStillNotifies() {

@@ -5,7 +5,8 @@ import Combine
 import os
 
 /// Service for fetching Codex CLI usage data from https://chatgpt.com/backend-api/wham/usage
-/// Reads authentication token from ~/.codex/auth.json (stored by Codex CLI).
+/// Reads the authentication token from `CODEX_HOME/auth.json` (stored by Codex
+/// CLI; `CODEX_HOME` defaults to `~/.codex`).
 /// Similar to ClaudeCodeLocalService, but for Codex CLI usage tracking.
 ///
 /// The API endpoint returns usage data with:
@@ -21,7 +22,7 @@ class CodexCliLocalService: ObservableObject {
     // Shared URLSession with the standard usage-request timeouts
     private let urlSession = ServiceSupport.session
 
-    /// Raw bytes of `~/.codex/auth.json`, behind a closure so tests can supply a
+    /// Raw bytes of `CODEX_HOME/auth.json`, behind a closure so tests can supply a
     /// fixture without a real credential file on disk (the auth file never
     /// exists on CI). Defaults to reading the real path.
     private let authFileDataProvider: () -> Data?
@@ -37,16 +38,17 @@ class CodexCliLocalService: ObservableObject {
         Task.detached(priority: .utility) { [weak self] in self?.checkAccess() }
     }
 
-    /// Reads `~/.codex/auth.json` from the real (non-sandboxed) home directory.
+    /// Reads `CODEX_HOME/auth.json` using the same resolver as readiness,
+    /// activity, and cost scans.
     private static func defaultAuthFileDataProvider() -> Data? {
-        let path = "\(ServiceSupport.realHomeDirectory())/.codex/auth.json"
+        let path = CodexHomeDirectory.authFilePath()
         guard FileManager.default.fileExists(atPath: path) else { return nil }
         return FileManager.default.contents(atPath: path)
     }
 
     // MARK: - Auth File Access
 
-    /// Read OAuth access token from ~/.codex/auth.json
+    /// Read OAuth access token from `CODEX_HOME/auth.json`.
     /// This file is created and maintained by the Codex CLI when user logs in
     func getAuthToken() -> String? {
         guard let token = readAuthFile()?.tokens?.accessToken else {
@@ -60,7 +62,7 @@ class CodexCliLocalService: ObservableObject {
         return token
     }
 
-    /// Read account ID from ~/.codex/auth.json
+    /// Read account ID from `CODEX_HOME/auth.json`.
     /// Required for the ChatGPT-Account-Id header to get team/workspace data
     func getAccountId() -> String? {
         readAuthFile()?.tokens?.accountId
@@ -100,7 +102,7 @@ class CodexCliLocalService: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
 
-        // Use Bearer token auth (from ~/.codex/auth.json)
+        // Use Bearer token auth (from CODEX_HOME/auth.json)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
         // CRITICAL: Include ChatGPT-Account-Id header to get team/workspace data
@@ -436,7 +438,7 @@ struct Credits: Codable {
 
 // MARK: - Auth File Models
 
-/// Structure of ~/.codex/auth.json
+/// Structure of `CODEX_HOME/auth.json`.
 struct CodexAuthFile: Codable {
     let openaiApiKey: String?
     let tokens: CodexTokens?

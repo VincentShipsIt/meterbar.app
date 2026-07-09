@@ -2,7 +2,7 @@ import Foundation
 import MeterBarShared
 
 /// Gathers the real, on-disk facts each provider-readiness check needs
-/// (binary on PATH, keychain credentials, `~/.codex/auth.json`, the Cursor
+/// (binary on PATH, keychain credentials, `CODEX_HOME/auth.json`, the Cursor
 /// state database) and feeds them to the pure `ProviderReadinessEvaluator`.
 ///
 /// This is the impure counterpart to the `MeterBarShared` core: it does the
@@ -14,20 +14,48 @@ import MeterBarShared
 /// All provider error text is sanitized here (`sanitize`) so nothing that could
 /// contain a token, account id, or raw response body reaches a pasteable report.
 public enum ProviderReadinessInspector {
-    /// Readiness reports for every provider, in stable display order.
+    /// Readiness reports for the requested providers, in stable display order.
     ///
     /// - Parameter refreshErrors: each provider's live last-refresh error. The app
     ///   passes these from the main actor (the services publish them); the CLI, a
     ///   one-shot process with no live refresh, passes none.
     public static func reports(
+        providers: Set<ServiceType> = Set(ServiceType.allCases),
         refreshErrors: [ServiceType: ServiceError] = [:],
         now: Date = Date()
     ) -> [ProviderReadiness] {
-        [
-            claudeReport(refreshError: refreshErrors[.claudeCode], now: now),
-            codexReport(refreshError: refreshErrors[.codexCli], now: now),
-            cursorReport(refreshError: refreshErrors[.cursor], now: now)
-        ]
+        reports(
+            providers: providers,
+            refreshErrors: refreshErrors,
+            now: now,
+            claudeReport: { claudeReport(refreshError: $0, now: $1) },
+            codexReport: { codexReport(refreshError: $0, now: $1) },
+            cursorReport: { cursorReport(refreshError: $0, now: $1) }
+        )
+    }
+
+    /// Injectable routing seam used to prove that disabled providers perform no
+    /// filesystem, SQLite, or Keychain work. Production callers use the public
+    /// overload above.
+    static func reports(
+        providers: Set<ServiceType>,
+        refreshErrors: [ServiceType: ServiceError],
+        now: Date,
+        claudeReport: (ServiceError?, Date) -> ProviderReadiness,
+        codexReport: (ServiceError?, Date) -> ProviderReadiness,
+        cursorReport: (ServiceError?, Date) -> ProviderReadiness
+    ) -> [ProviderReadiness] {
+        ServiceType.allCases.compactMap { provider in
+            guard providers.contains(provider) else { return nil }
+            switch provider {
+            case .claudeCode:
+                return claudeReport(refreshErrors[provider], now)
+            case .codexCli:
+                return codexReport(refreshErrors[provider], now)
+            case .cursor:
+                return cursorReport(refreshErrors[provider], now)
+            }
+        }
     }
 
     // MARK: - Per-provider gathering
@@ -37,11 +65,29 @@ public enum ProviderReadinessInspector {
     /// login, and a later breakage surfaces through the refresh-error check.
     static let recentUsageFetchWindow: TimeInterval = 24 * 60 * 60
 
-    static func claudeReport(refreshError: ServiceError? = nil, now: Date = Date()) -> ProviderReadiness {
+    static func claudeReport(
+        refreshError: ServiceError? = nil,
+        now: Date = Date(),
+        cachedMetrics: UsageMetrics? = SharedDataStore.shared.loadMetrics()[.claudeCode],
+        isOAuthFallbackEnabled: () -> Bool = {
+            UserDefaults.standard.bool(forKey: StorageKeys.claudeCodeOAuthFallback)
+        },
+        credentialsData: () -> Data? = { ClaudeCodeLocalService.shared.credentialsData() }
+    ) -> ProviderReadiness {
+        let hasRecentUsageFetch = hasRecentClaudeUsageFetch(metrics: cachedMetrics, now: now)
+        let credentialsJSON: Data?
+        if hasRecentUsageFetch || !isOAuthFallbackEnabled() {
+            credentialsJSON = nil
+        } else {
+            credentialsJSON = credentialsData()
+        }
         let input = ClaudeReadinessInput(
             isCLIInstalled: CLIBinaryLocator.isAvailable(command: "claude", overrideEnvVar: "CLAUDE_CLI_PATH"),
-            credentialsJSON: ClaudeCodeLocalService.shared.credentialsData(),
-            hasRecentUsageFetch: hasRecentClaudeUsageFetch(now: now),
+            // Direct CLI evidence wins, so do not even query Keychain when a
+            // recent successful fetch already proves readiness. The legacy
+            // credential is likewise irrelevant while fallback is disabled.
+            credentialsJSON: credentialsJSON,
+            hasRecentUsageFetch: hasRecentUsageFetch,
             refreshError: sanitize(refreshError),
             now: now
         )
@@ -54,8 +100,8 @@ public enum ProviderReadinessInspector {
     /// app cannot read (issue: keychain-only check false-negatived every
     /// `claude login` user). The cache is the same file `meterbar cost` and the
     /// widget already read, so the app and `meterbar doctor` agree.
-    private static func hasRecentClaudeUsageFetch(now: Date) -> Bool {
-        guard let metrics = SharedDataStore.shared.loadMetrics()[.claudeCode] else {
+    private static func hasRecentClaudeUsageFetch(metrics: UsageMetrics?, now: Date) -> Bool {
+        guard let metrics else {
             return false
         }
         let age = now.timeIntervalSince(metrics.lastUpdated)
@@ -64,7 +110,7 @@ public enum ProviderReadinessInspector {
 
     static func codexReport(refreshError: ServiceError? = nil, now: Date = Date()) -> ProviderReadiness {
         let fileManager = FileManager.default
-        let path = "\(ServiceSupport.realHomeDirectory())/.codex/auth.json"
+        let path = CodexHomeDirectory.authFilePath()
         let exists = fileManager.fileExists(atPath: path)
         let bytes = exists && fileManager.isReadableFile(atPath: path)
             ? fileManager.contents(atPath: path)
@@ -109,10 +155,9 @@ public enum ProviderReadinessInspector {
         "Request timed out"
     ]
 
-    /// Maps a `ServiceError` onto a short, paste-safe string. Crucially, an
-    /// `.apiError` may embed a slice of the raw API response body
-    /// (`ServiceSupport.validate`) — which can contain account data — so only a
-    /// leading HTTP status code (or a whitelisted connectivity message) survives.
+    /// Maps a `ServiceError` onto a short, paste-safe string. API messages stay
+    /// generic here as defense in depth; only a leading HTTP status code (or a
+    /// whitelisted connectivity message) survives.
     static func sanitize(_ error: ServiceError?) -> String? {
         guard let error else { return nil }
         switch error {

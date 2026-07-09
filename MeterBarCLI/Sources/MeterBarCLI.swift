@@ -314,7 +314,10 @@ struct Doctor: ParsableCommand {
         // Same readiness core the app's Diagnostics view uses. No live refresh in
         // a one-shot CLI run, so last-refresh checks report "no recent errors".
         // Every string below is redacted by the inspector — safe to paste into an issue.
-        let reports = filtered(ProviderReadinessInspector.reports())
+        // Resolve the filter before gathering so `meterbar doctor --provider`
+        // never probes another provider's filesystem, database, or Keychain.
+        let requestedProviders = matchingProviders()
+        let reports = filtered(ProviderReadinessInspector.reports(providers: requestedProviders))
 
         if json {
             try printJSON(reports)
@@ -330,6 +333,16 @@ struct Doctor: ParsableCommand {
             $0.provider.rawValue.lowercased().contains(needle)
                 || $0.provider.displayName.lowercased().contains(needle)
         }
+    }
+
+    private func matchingProviders() -> Set<ServiceType> {
+        guard let needle = provider?.lowercased() else {
+            return Set(ServiceType.allCases)
+        }
+        return Set(ServiceType.allCases.filter {
+            $0.rawValue.lowercased().contains(needle)
+                || $0.displayName.lowercased().contains(needle)
+        })
     }
 
     private func printJSON(_ reports: [ProviderReadiness]) throws {
