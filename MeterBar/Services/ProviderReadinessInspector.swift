@@ -152,7 +152,12 @@ public enum ProviderReadinessInspector {
     private static let safeNetworkMessages: Set<String> = [
         "No internet connection",
         "DNS lookup failed",
-        "Request timed out"
+        "Request timed out",
+        "Request cancelled",
+        "Network connection lost",
+        "Could not connect to provider",
+        "Secure connection failed",
+        "Network request failed"
     ]
 
     /// Maps a `ServiceError` onto a short, paste-safe string. API messages stay

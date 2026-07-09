@@ -58,7 +58,7 @@ A lightweight macOS menu bar app that monitors Claude Code, Codex CLI, and Curso
 Paste this into your local coding agent to have it install MeterBar for you:
 
 ```text
-Install MeterBar on this Mac. First verify this is macOS 26 or newer and that Homebrew is available. Install with: brew tap VincentShipsIt/tap && brew install --cask VincentShipsIt/tap/meterbar. If Homebrew is missing, ask before installing Homebrew. After installing, verify /Applications/MeterBar.app exists and that the meterbar CLI is linked, then open MeterBar. If macOS blocks the first launch because the app is unsigned, remove quarantine with xattr -cr /Applications/MeterBar.app and open it again. Do not ask me for API keys or paste secrets; for usage data, tell me to run claude login, codex login, and log into Cursor if I want those providers tracked.
+Install MeterBar on this Mac. First verify this is macOS 26 or newer and that Homebrew is available. Install with: brew tap VincentShipsIt/tap && brew install --cask VincentShipsIt/tap/meterbar. If Homebrew is missing, ask before installing Homebrew. After installing, verify /Applications/MeterBar.app exists and that the meterbar CLI is linked, then open MeterBar. If macOS blocks the first launch because the app is not Developer ID-signed or notarized, remove quarantine with xattr -cr /Applications/MeterBar.app and open it again. Do not ask me for API keys or paste secrets; for usage data, tell me to run claude login, codex login, and log into Cursor if I want those providers tracked.
 ```
 
 ### Homebrew (Recommended)
@@ -107,7 +107,7 @@ open MeterBar.xcodeproj
 1. Install Codex CLI: `npm install -g @openai/codex`
 2. Log in: `codex login`
 3. Select your team/workspace when prompted
-4. The app automatically reads credentials from `~/.codex/auth.json`
+4. The app automatically reads credentials from `$CODEX_HOME/auth.json` (`~/.codex/auth.json` by default)
 
 ### Cursor
 
@@ -172,7 +172,7 @@ MeterBar reads usage data from local CLI output, local credential stores, and pr
 claude /usage            # Claude Code usage
 macOS Keychain           # Legacy Claude Code OAuth fallback only
 ~/.claude/               # Claude Code account metadata and local sessions
-~/.codex/auth.json       # Codex CLI OAuth token
+$CODEX_HOME/auth.json    # Codex CLI OAuth token (defaults to ~/.codex/auth.json)
 ~/Library/Application Support/Cursor/  # Cursor local DB
 ```
 
@@ -222,7 +222,7 @@ Run `codex logout && codex login` and select your team workspace when prompted.
 
 ### App can't read credentials
 
-The app reads CLI credential files from your home directory (`~/.codex/auth.json`, Cursor's local database). If you built from source with App Sandbox enabled, those reads will fail — the shipped configuration keeps the main app un-sandboxed for this reason.
+The app reads CLI credential files from `$CODEX_HOME/auth.json` (`~/.codex/auth.json` by default) and Cursor's local database. If you built from source with App Sandbox enabled, those reads will fail — the shipped configuration keeps the main app un-sandboxed for this reason.
 
 ## Contributing
 

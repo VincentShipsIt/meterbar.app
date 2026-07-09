@@ -1,7 +1,7 @@
 # Architecture - MeterBar
 
 **Purpose:** Document what IS implemented (not what WILL BE).
-**Last Updated:** 2026-07-02 (rewritten from a full-repo audit; see `docs/audits/00-repo-map.md`)
+**Last Updated:** 2026-07-09 (rewritten from a full-repo audit; see `docs/audits/00-repo-map.md`)
 
 ---
 
@@ -14,12 +14,12 @@ Providers tracked:
 | Provider | `ServiceType` case | Data source |
 |---|---|---|
 | Claude Code | `.claudeCode` | Shells out to `claude /usage`, regex-parses terminal output. Legacy OAuth fallback (keychain item `Claude Code-credentials`) behind the `ClaudeCodeEnableOAuthFallback` UserDefaults flag |
-| OpenAI Codex CLI | `.codexCli` | Reads `~/.codex/auth.json`, calls `https://chatgpt.com/backend-api/wham/usage` |
+| OpenAI Codex CLI | `.codexCli` | Reads `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`), calls `https://chatgpt.com/backend-api/wham/usage` |
 | Cursor | `.cursor` | Reads session JWT from Cursor's `state.vscdb` SQLite, calls `https://cursor.com/api/usage-summary` |
 | Claude (admin) | `.claude` | Anthropic Admin API key (user-provided, stored in our keychain), `/v1/organizations/usage_report/messages` |
 | OpenAI (admin) | `.openai` | OpenAI Admin API key (user-provided, stored in our keychain), `/v1/organization/usage/completions` |
 
-Plus local **cost estimation**: `CostTracker` scans `~/.claude*/projects/**/*.jsonl` and Codex's `~/.codex/archived_sessions` + `~/.codex/logs_2.sqlite`, priced from a hardcoded per-model table.
+Plus local **cost estimation**: `CostTracker` scans `~/.claude*/projects/**/*.jsonl` and Codex's `$CODEX_HOME/archived_sessions` + `$CODEX_HOME/logs_2.sqlite` (`CODEX_HOME` defaults to `~/.codex`), priced from a hardcoded per-model table.
 
 ---
 
@@ -73,7 +73,7 @@ meterbar/
 - **SharedDataStore** — app-group JSON file (`cached_usage_metrics.json`), atomic writes on a serial queue, `WidgetCenter.reloadTimelines` after save.
 - **ProviderVisibilityStore / DockVisibilityStore / ClaudeCodeAccountStore** — UserDefaults-backed preference stores.
 - **OAuthTokenExpiry** — JWT/unix-timestamp expiry checks (60 s grace; unparseable ⇒ not-expired by design).
-- **ServiceSupport** — shared URLSession config, URLError copy, real (non-container) home dir via `getpwuid`.
+- **ServiceSupport** — shared URLSession config, secret-safe HTTP/URLError mapping, real (non-container) home dir via `getpwuid`.
 - **AppLog** — `os.Logger` categories: app, usage, cost, network, storage. This is the only observability; there is no crash reporting or analytics.
 
 ## App lifecycle
@@ -82,7 +82,7 @@ meterbar/
 
 ## Widget & CLI data contract
 
-The widget and CLI **duplicate** the model structs (`ServiceType`, `UsageLimit`, `UsageMetrics`) and decode the same app-group JSON. Because `JSONDecoder` ignores unknown keys, drift is silent — the widget already drops `extraUsage`/`resetCreditsAvailable`. The JSON contract is locked by tests in `MeterBarTests/CachedMetricsContractTests.swift`; extraction of a shared `MeterBarShared` package is deferred (needs Xcode project changes — see `.agents/docs/DEFERRED_WORK.md` §1).
+The app, widget, and CLI consume the canonical `ServiceType`, `UsageLimit`, and `UsageMetrics` definitions from `Packages/MeterBarShared`. The app-group JSON contract is locked by `CachedMetricsContractTests` and `CachedMetricsReplicaContractTests` so fields and date encoding cannot silently drift across targets.
 
 Dates in the shared JSON use `JSONEncoder`/`JSONDecoder` **default** strategies (seconds since 2001-01-01 reference date). Changing either side's date strategy breaks widget + CLI decode.
 
@@ -90,10 +90,10 @@ Dates in the shared JSON use `JSONEncoder`/`JSONDecoder` **default** strategies 
 
 ## CI / release
 
-- `ci.yml` (push/PR to master, macos-26 + Xcode 26.2): xcodebuild Debug build (app + widget), `swift test` via SwiftPM (real gate), coverage threshold via `scripts/check-coverage.sh`, SwiftLint.
-- `release.yml` (tag `v*`): Release build (unsigned — no Developer ID/notarization yet), builds CLI and embeds it in `Contents/Helpers/`, verifies CLI `--version` matches `CFBundleShortVersionString`, zips via `ditto`, publishes GitHub Release, then calls `update-homebrew.yml` to bump `VincentShipsIt/homebrew-tap` (`Casks/meterbar.rb`) using `TAP_GITHUB_TOKEN`.
+- `ci.yml` (push/PR to master, macos-26 + Xcode 26.2): the branch-protection-required `build` job compiles and verifies universal app, widget, and CLI artifacts; SwiftPM tests, coverage, and SwiftLint remain independent gates.
+- `release.yml` (canonical `vMAJOR.MINOR.PATCH` tag): builds universal arm64+x86_64 app/widget/CLI artifacts, checks tag/app/CLI version agreement, signs nested code inside-out with an ad-hoc hardened-runtime signature, verifies source entitlements and bundle integrity, zips via `ditto`, publishes GitHub Release, then calls `update-homebrew.yml`. Developer ID signing, authorized provisioning, and notarization remain pending credentials.
 - `secret-scan.yml`: gitleaks (pinned + checksum-verified) over full history.
 
 ## Known architectural risks
 
-Tracked in `docs/audits/00-repo-map.md` §6. Headlines: reverse-engineered provider interfaces (R1), unsigned distribution (R2), triplicated model structs (R4), hardcoded pricing (R5), three build systems (R6), god view files (R8).
+Tracked in `docs/audits/00-repo-map.md` §6. Headlines: reverse-engineered provider interfaces (R1), non-notarized distribution (R2), hardcoded pricing (R5), three build systems (R6), and god view files (R8). The shared model drift and unverifiable release-artifact findings have since been remediated.

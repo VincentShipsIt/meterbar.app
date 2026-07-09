@@ -1,6 +1,6 @@
 # Implementation Status
 
-**Last Updated:** 2026-07-02 (rewritten — the previous version described the original planning-phase
+**Last Updated:** 2026-07-09 (rewritten — the previous version described the original planning-phase
 design, including `CodexService`/`CursorService` classes and "Codex cookies" that were never shipped
 under those names; see `docs/audits/00-repo-map.md` for the audited current state)
 
@@ -9,7 +9,7 @@ under those names; see `docs/audits/00-repo-map.md` for the audited current stat
 ### Providers
 - ✅ Claude Code via `claude /usage` CLI parsing (multi-account via `CLAUDE_CONFIG_DIR`)
 - ✅ Claude Code legacy OAuth fallback (opt-in `ClaudeCodeEnableOAuthFallback` UserDefaults flag)
-- ✅ OpenAI Codex CLI via `~/.codex/auth.json` + wham/usage endpoint (incl. extra-usage + reset credits)
+- ✅ OpenAI Codex CLI via `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`) + wham/usage endpoint (incl. extra-usage + reset credits)
 - ✅ Cursor via local SQLite token + usage-summary endpoint
 - ✅ Anthropic Admin API org usage (optional, user-provided key)
 - ✅ OpenAI Admin API org usage (optional, user-provided key)
@@ -25,15 +25,14 @@ under those names; see `docs/audits/00-repo-map.md` for the audited current stat
 - ✅ `meterbar` CLI (usage/cost subcommands) bundled in `Contents/Helpers/`
 
 ### Infra
-- ✅ CI: xcodebuild build + `swift test` gate + coverage check + SwiftLint (`.github/workflows/ci.yml`)
-- ✅ Release: unsigned zip + GitHub Release + Homebrew tap bump
+- ✅ CI: required universal app/widget/CLI build + `swift test` gate + coverage check + SwiftLint (`.github/workflows/ci.yml`)
+- ✅ Release: universal ad-hoc-signed zip with architecture/version/entitlement verification + GitHub Release + Homebrew tap bump
 - ✅ Secret scanning (gitleaks, pinned + checksum-verified)
 
 ## ❌ Not implemented / known gaps
 
-- ❌ Code signing + notarization (releases are unsigned; users must clear quarantine)
-- ❌ Shared `MeterBarShared` package — model structs duplicated in widget + CLI (see `DEFERRED_WORK.md` §1)
+- ❌ Developer ID signing, authorized provisioning, and notarization (ad-hoc signatures do not provide Gatekeeper or app-group authorization)
 - ❌ Crash reporting / telemetry of any kind
-- ❌ Tests for `UsageDataManager` orchestration, `CostTracker` scan paths, view layer, CLI package
+- ❌ Credential-backed provider integration and notarized-install/widget verification remain environment-dependent
 - ❌ Mac App Store distribution (the app is deliberately un-sandboxed so it can read other tools'
   credential/log files; MAS would require a different architecture)

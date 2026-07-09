@@ -29,7 +29,7 @@ Download the latest release from:
 https://meterbar.dev
 ```
 
-The release build is currently unsigned/not notarized. If macOS blocks the first launch, right-click `MeterBar.app` and choose Open, or run:
+The release build is ad-hoc signed for bundle integrity but is not Developer ID-signed or notarized. If macOS blocks the first launch, right-click `MeterBar.app` and choose Open, or run:
 
 ```bash
 xattr -cr /Applications/MeterBar.app
@@ -91,7 +91,7 @@ open MeterBar.xcodeproj
 1. Install Codex CLI: `npm install -g @openai/codex`
 2. Log in: `codex login`
 3. Select your team/workspace when prompted.
-4. MeterBar reads Codex CLI credentials from `~/.codex/auth.json`.
+4. MeterBar reads Codex CLI credentials from `$CODEX_HOME/auth.json` (`~/.codex/auth.json` by default).
 
 ### Cursor
 

@@ -90,7 +90,7 @@ These two issues are one feature with three surfaces. Build the core once:
 
 `ProviderReadiness` service (new, in `MeterBar/Services/`, pure/testable):
 per provider (Claude Code, Codex CLI, Cursor) evaluate ordered checks —
-installed (CLI on PATH / app present) → auth present (`claude` login state, `~/.codex/auth.json`
+installed (CLI on PATH / app present) → auth present (`claude` login state, `$CODEX_HOME/auth.json`
 + token expiry via existing `OAuthTokenExpiry`, Cursor DB readable) → data readable →
 last refresh result/error. Output: `pass/warn/fail` + plain-language recovery action
 (`claude login`, `codex login`, open Cursor, rescan). Redact all secret values.

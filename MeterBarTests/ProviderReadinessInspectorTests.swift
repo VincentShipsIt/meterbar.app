@@ -101,6 +101,10 @@ final class ProviderReadinessInspectorTests: XCTestCase {
     func testSafeNetworkMessagesPassThrough() {
         XCTAssertEqual(ProviderReadinessInspector.sanitize(.apiError("No internet connection")), "No internet connection")
         XCTAssertEqual(ProviderReadinessInspector.sanitize(.apiError("Request timed out")), "Request timed out")
+        XCTAssertEqual(
+            ProviderReadinessInspector.sanitize(.apiError("Secure connection failed")),
+            "Secure connection failed"
+        )
     }
 
     func testKnownCasesMapToStableStrings() {

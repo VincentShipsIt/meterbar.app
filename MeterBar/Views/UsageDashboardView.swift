@@ -694,9 +694,13 @@ struct UsageDashboardView: View {
         isRunningDiagnostics = true
         defer { isRunningDiagnostics = false }
 
+        let enabledProviders = providerVisibility.enabledServices
         let errors = currentRefreshErrors()
         let reports = await Task.detached(priority: .userInitiated) {
-            ProviderReadinessInspector.reports(refreshErrors: errors)
+            ProviderReadinessInspector.reports(
+                providers: enabledProviders,
+                refreshErrors: errors
+            )
         }.value
         readinessReports = reports
     }
