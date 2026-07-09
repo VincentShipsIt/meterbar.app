@@ -553,8 +553,9 @@ struct SettingsView: View {
             color: MeterBarTheme.appAccent
         ) {
             SettingsNotice(
-                text: "Paste an organization admin key to show your pay-as-you-go API spend "
-                    + "(Anthropic / OpenAI) as its own card, separate from subscription quotas. "
+                text: "Paste an organization admin key to estimate pay-as-you-go API cost "
+                    + "(Anthropic / OpenAI) from available usage and approximate list rates. "
+                    + "Provider usage data may be incomplete and is not a billing statement. "
                     + "Keys are stored in the macOS Keychain and only used against the provider's usage API.",
                 color: .secondary
             )
@@ -1598,7 +1599,7 @@ private struct AdminKeySettingsRow: View {
     }
 
     private var connectedMessage: String {
-        "Connected. Usage appears on the billed API card."
+        "Connected. Estimated usage appears on the API cost card."
     }
 }
 

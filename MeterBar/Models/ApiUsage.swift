@@ -44,15 +44,20 @@ enum ApiUsageWindow: Equatable, Sendable {
         }
     }
 
-    /// Resolved `[start, end]` for the window, ending now for the presets.
-    func dateRange(now: Date = Date()) -> (start: Date, end: Date) {
+    /// Resolved `[start, end)` for the provider endpoints. Presets end at
+    /// `now`; custom date-only selections include the full final day by using
+    /// the start of the following day as their exclusive endpoint.
+    func dateRange(now: Date = Date(), calendar: Calendar = .current) -> (start: Date, end: Date) {
         switch self {
         case .last7Days:
-            return (Calendar.current.date(byAdding: .day, value: -7, to: now) ?? now, now)
+            return (calendar.date(byAdding: .day, value: -7, to: now) ?? now, now)
         case .last30Days:
-            return (Calendar.current.date(byAdding: .day, value: -30, to: now) ?? now, now)
+            return (calendar.date(byAdding: .day, value: -30, to: now) ?? now, now)
         case let .custom(start, end):
-            return (min(start, end), max(start, end))
+            let firstDay = calendar.startOfDay(for: min(start, end))
+            let lastDay = calendar.startOfDay(for: max(start, end))
+            let exclusiveEnd = calendar.date(byAdding: .day, value: 1, to: lastDay) ?? lastDay
+            return (firstDay, exclusiveEnd)
         }
     }
 }
@@ -89,9 +94,9 @@ struct ApiUsage: Sendable {
 
 // MARK: - ApiUsagePricing
 
-/// Self-contained per-model pricing for the API-usage cost estimate (USD per
-/// million tokens). Separate from `CostTracker`'s subscription pricing so the
-/// two can drift independently; covers Anthropic + OpenAI API models.
+/// Self-contained per-model pricing for an incomplete API-usage cost estimate
+/// (USD per million tokens). Separate from `CostTracker`'s subscription pricing
+/// so the two can drift independently; covers Anthropic + OpenAI API models.
 ///
 /// Prices are approximate list rates verified 2026-07-02 — they rot; update
 /// against the providers' pricing pages.

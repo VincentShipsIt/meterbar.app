@@ -338,7 +338,7 @@ struct UsageDashboardView: View {
             }
 
             if apiUsageStore.hasAnyAuthenticated {
-                DashboardCard(title: "API spend (billed)") {
+                DashboardCard(title: "Estimated API cost") {
                     ApiUsageSection(store: apiUsageStore, embedded: true)
                 }
             }

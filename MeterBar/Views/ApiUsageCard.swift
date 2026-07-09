@@ -36,6 +36,10 @@ struct ApiUsageSection: View {
           )
         }
 
+        Text("Estimated from available token usage and approximate list rates; provider data may be incomplete.")
+          .font(.caption2)
+          .foregroundColor(.secondary)
+
         if let error = store.lastError {
           Text(error)
             .font(.caption2)
@@ -61,14 +65,9 @@ struct ApiUsageWindowPicker: View {
     var id: String { rawValue }
   }
 
-  @State private var mode: Mode = .sevenDays
-  @State private var customStart =
-    Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
-  @State private var customEnd = Date()
-
   var body: some View {
     VStack(alignment: .trailing, spacing: 6) {
-      Picker("Window", selection: $mode) {
+      Picker("Window", selection: modeBinding) {
         ForEach(Mode.allCases) { mode in
           Text(mode.rawValue).tag(mode)
         }
@@ -76,23 +75,51 @@ struct ApiUsageWindowPicker: View {
       .pickerStyle(.segmented)
       .labelsHidden()
       .fixedSize()
-      .onChange(of: mode) { _, newMode in
-        applyMode(newMode)
-      }
 
-      if mode == .custom {
+      if selectedMode == .custom {
         HStack(spacing: 6) {
-          DatePicker("From", selection: $customStart, displayedComponents: .date)
+          DatePicker("From", selection: customStartBinding, displayedComponents: .date)
             .labelsHidden()
           Text("→").foregroundColor(.secondary)
-          DatePicker("To", selection: $customEnd, displayedComponents: .date)
+          DatePicker("To", selection: customEndBinding, displayedComponents: .date)
             .labelsHidden()
         }
         .font(.caption)
-        .onChange(of: customStart) { _, _ in applyCustom() }
-        .onChange(of: customEnd) { _, _ in applyCustom() }
       }
     }
+  }
+
+  private var selectedMode: Mode {
+    switch store.window {
+    case .last7Days: return .sevenDays
+    case .last30Days: return .thirtyDays
+    case .custom: return .custom
+    }
+  }
+
+  private var modeBinding: Binding<Mode> {
+    Binding(get: { selectedMode }, set: applyMode)
+  }
+
+  private var customStartBinding: Binding<Date> {
+    Binding(
+      get: { customDates.start },
+      set: { store.setWindow(.custom(start: $0, end: customDates.end)) }
+    )
+  }
+
+  private var customEndBinding: Binding<Date> {
+    Binding(
+      get: { customDates.end },
+      set: { store.setWindow(.custom(start: customDates.start, end: $0)) }
+    )
+  }
+
+  private var customDates: (start: Date, end: Date) {
+    if case let .custom(start, end) = store.window {
+      return (start, end)
+    }
+    return store.window.dateRange()
   }
 
   private func applyMode(_ newMode: Mode) {
@@ -102,19 +129,16 @@ struct ApiUsageWindowPicker: View {
     case .thirtyDays:
       store.setWindow(.last30Days)
     case .custom:
-      applyCustom()
+      let dates = customDates
+      store.setWindow(.custom(start: dates.start, end: dates.end))
     }
-  }
-
-  private func applyCustom() {
-    store.setWindow(.custom(start: customStart, end: customEnd))
   }
 }
 
 // MARK: - ApiUsageCard
 
-/// One provider's API spend + tokens over the selected window. No quota bar —
-/// API usage has no cap, so this shows real spend, not a percentage.
+/// One provider's API tokens plus an approximate cost over the selected window.
+/// API usage has no cap, so this does not show a quota percentage.
 struct ApiUsageCard: View {
   let provider: ApiProvider
   let usage: ApiUsage?
@@ -136,7 +160,7 @@ struct ApiUsageCard: View {
             .font(compact ? .subheadline : .headline)
             .fontWeight(.semibold)
           Spacer(minLength: 8)
-          Text(UsageFormat.cost(usage?.estimatedCostUSD ?? 0))
+          Text("Est. \(UsageFormat.cost(usage?.estimatedCostUSD ?? 0))")
             .font(compact ? .headline : .title3)
             .bold()
             .monospacedDigit()
