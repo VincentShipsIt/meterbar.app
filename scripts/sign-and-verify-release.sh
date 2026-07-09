@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ne 2 ]; then
+  echo "Usage: $0 APP_PATH EXPECTED_VERSION" >&2
+  exit 64
+fi
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+repository_root=$(cd "$script_dir/.." && pwd)
+app_path="$1"
+expected_version="$2"
+widget_path="$app_path/Contents/PlugIns/MeterBarWidgetExtension.appex"
+app_binary="$app_path/Contents/MacOS/MeterBar"
+widget_binary="$widget_path/Contents/MacOS/MeterBarWidgetExtension"
+cli_binary="$app_path/Contents/Helpers/meterbar"
+app_entitlements="$repository_root/MeterBar/MeterBar.entitlements"
+widget_entitlements="$repository_root/MeterBarWidget/MeterBarWidget.entitlements"
+
+if [[ ! "$expected_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+  echo "Expected version must match canonical MAJOR.MINOR.PATCH syntax." >&2
+  exit 64
+fi
+
+for directory in "$app_path" "$widget_path"; do
+  if [ ! -d "$directory" ]; then
+    echo "Required bundle not found: $directory" >&2
+    exit 1
+  fi
+done
+
+for file in "$app_binary" "$widget_binary" "$cli_binary" "$app_entitlements" "$widget_entitlements"; do
+  if [ ! -f "$file" ]; then
+    echo "Required release input not found: $file" >&2
+    exit 1
+  fi
+done
+
+verify_universal_binary() {
+  local binary="$1"
+  local label="$2"
+
+  if ! lipo "$binary" -verify_arch arm64 x86_64; then
+    echo "$label is not universal arm64+x86_64: $(file "$binary")" >&2
+    exit 1
+  fi
+  echo "$label architectures: $(lipo -archs "$binary")"
+}
+
+verify_universal_binary "$app_binary" "App"
+verify_universal_binary "$widget_binary" "Widget"
+verify_universal_binary "$cli_binary" "CLI"
+
+app_version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app_path/Contents/Info.plist")
+cli_version=$("$cli_binary" --version)
+
+echo "Tag version: $expected_version"
+echo "App version: $app_version"
+echo "CLI version: $cli_version"
+
+if [ "$app_version" != "$expected_version" ]; then
+  echo "App version $app_version does not match release version $expected_version." >&2
+  exit 1
+fi
+if [ "$cli_version" != "$expected_version" ]; then
+  echo "CLI version $cli_version does not match release version $expected_version." >&2
+  exit 1
+fi
+
+sign_adhoc() {
+  local target="$1"
+  shift
+  codesign \
+    --force \
+    --sign - \
+    --timestamp=none \
+    --options runtime \
+    --generate-entitlement-der \
+    "$@" \
+    "$target"
+}
+
+# Sign leaf code first so each containing bundle is sealed only after its
+# contents are final. Framework directories are currently absent, but handling
+# them here prevents a future embedded dependency from silently invalidating the
+# outer signature.
+for frameworks_path in "$widget_path/Contents/Frameworks" "$app_path/Contents/Frameworks"; do
+  if [ -d "$frameworks_path" ]; then
+    while IFS= read -r -d '' nested_code; do
+      echo "Signing nested code: $nested_code"
+      sign_adhoc "$nested_code"
+    done < <(find "$frameworks_path" -depth \( -name '*.framework' -o -name '*.dylib' \) -print0)
+  fi
+done
+
+sign_adhoc "$cli_binary"
+sign_adhoc "$widget_path" --entitlements "$widget_entitlements"
+sign_adhoc "$app_path" --entitlements "$app_entitlements"
+
+codesign --verify --strict --verbose=2 "$cli_binary"
+codesign --verify --strict --verbose=2 "$widget_path"
+codesign --verify --deep --strict --verbose=2 "$app_path"
+
+temporary_directory=$(mktemp -d "${TMPDIR:-/tmp}/meterbar-release-entitlements.XXXXXX")
+trap 'rm -rf "$temporary_directory"' EXIT
+
+dump_entitlements() {
+  local bundle="$1"
+  local output="$2"
+  local errors="$3"
+
+  if ! codesign -d --entitlements - --xml "$bundle" > "$output" 2> "$errors"; then
+    cat "$errors" >&2
+    return 1
+  fi
+  if [ ! -s "$output" ]; then
+    echo "Signed entitlement dump is empty for $bundle" >&2
+    return 1
+  fi
+}
+
+actual_app_entitlements="$temporary_directory/app.entitlements.plist"
+actual_widget_entitlements="$temporary_directory/widget.entitlements.plist"
+dump_entitlements "$app_path" "$actual_app_entitlements" "$temporary_directory/app.codesign.err"
+dump_entitlements "$widget_path" "$actual_widget_entitlements" "$temporary_directory/widget.codesign.err"
+
+python3 - \
+  "$app_entitlements" "$actual_app_entitlements" \
+  "$widget_entitlements" "$actual_widget_entitlements" <<'PY'
+import plistlib
+import sys
+
+pairs = (
+    ("app", sys.argv[1], sys.argv[2]),
+    ("widget", sys.argv[3], sys.argv[4]),
+)
+
+for label, expected_path, actual_path in pairs:
+    with open(expected_path, "rb") as expected_file:
+        expected = plistlib.load(expected_file)
+    with open(actual_path, "rb") as actual_file:
+        actual = plistlib.load(actual_file)
+    if actual != expected:
+        raise SystemExit(
+            f"{label} signed entitlements differ from source: "
+            f"expected={expected!r} actual={actual!r}"
+        )
+    print(f"{label.capitalize()} signed entitlements match {expected_path}")
+PY
+
+echo "Ad-hoc nested signature integrity verified."
+echo "Developer ID, notarization, and authorized app-group access remain separate release prerequisites."

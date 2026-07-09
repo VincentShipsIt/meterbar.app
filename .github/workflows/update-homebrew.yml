@@ -26,24 +26,32 @@ jobs:
       contents: read
 
     steps:
-      - name: Get version
+      - name: Checkout validation tooling
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Validate version
         id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          # `inputs.version` is populated for both workflow_call and workflow_dispatch.
-          VERSION="${{ inputs.version }}"
-          # Remove 'v' prefix for formula version
-          FORMULA_VERSION="${VERSION#v}"
-          echo "tag=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "formula=$FORMULA_VERSION" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          FORMULA_VERSION=$(scripts/validate-release-tag.sh "$INPUT_VERSION")
+          {
+            echo "tag=$INPUT_VERSION"
+            echo "formula=$FORMULA_VERSION"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Download SHA256
         id: sha
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          VERSION="${{ steps.version.outputs.tag }}"
           curl -fsSL \
             --connect-timeout 15 --max-time 120 --retry 3 \
-            "https://github.com/VincentShipsIt/meterbar.app/releases/download/${VERSION}/MeterBar-${VERSION}.zip.sha256" \
+            "https://github.com/VincentShipsIt/meterbar.app/releases/download/${RELEASE_TAG}/MeterBar-${RELEASE_TAG}.zip.sha256" \
             -o sha256.txt
           # Validate the asset is a bare 64-hex SHA256 before trusting it. On a 404 or
           # redirect-to-error, curl -f fails the step; this guards the case where a 200
@@ -62,25 +70,30 @@ jobs:
           path: homebrew-tap
 
       - name: Update Cask formula
+        env:
+          FORMULA_VERSION: ${{ steps.version.outputs.formula }}
+          RELEASE_SHA256: ${{ steps.sha.outputs.sha256 }}
         run: |
+          set -euo pipefail
           cd homebrew-tap
-          VERSION="${{ steps.version.outputs.formula }}"
-          SHA256="${{ steps.sha.outputs.sha256 }}"
 
           # Update version
-          sed -i "s/version \".*\"/version \"${VERSION}\"/" Casks/meterbar.rb
+          sed -i "s/version \".*\"/version \"${FORMULA_VERSION}\"/" Casks/meterbar.rb
 
           # Update sha256
-          sed -i "s/sha256 \".*\"/sha256 \"${SHA256}\"/" Casks/meterbar.rb
+          sed -i "s/sha256 \".*\"/sha256 \"${RELEASE_SHA256}\"/" Casks/meterbar.rb
 
           echo "Updated formula:"
           cat Casks/meterbar.rb
 
       - name: Commit and push
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
+          set -euo pipefail
           cd homebrew-tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Casks/meterbar.rb
-          git diff --staged --quiet || git commit -m "Update meterbar to ${{ steps.version.outputs.tag }}"
+          git diff --staged --quiet || git commit -m "Update meterbar to ${RELEASE_TAG}"
           git push

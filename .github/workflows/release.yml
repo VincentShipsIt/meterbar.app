@@ -5,20 +5,38 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: write
     env:
-      # Keep the pushed tag out of inline shell interpolation. A malicious tag
-      # such as v1$(...) must be data, never executable script.
+      APP_PATH: ${{ github.workspace }}/build/Build/Products/Release/MeterBar.app
+      # Context values enter shell code only through environment variables.
       REF_NAME: ${{ github.ref_name }}
+
+    outputs:
+      release_tag: ${{ steps.version.outputs.tag }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Validate release tag
+        id: version
+        run: |
+          set -euo pipefail
+          RELEASE_VERSION=$(scripts/validate-release-tag.sh "$REF_NAME")
+          {
+            echo "tag=$REF_NAME"
+            echo "version=$RELEASE_VERSION"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
@@ -26,71 +44,67 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
-      - name: Build app
+      - name: Build universal app and widget
         run: |
+          set -euo pipefail
           xcodebuild -project MeterBar.xcodeproj \
             -scheme MeterBar \
             -configuration Release \
             -derivedDataPath build \
-            -destination 'platform=macOS' \
+            -destination 'generic/platform=macOS' \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             build
 
-      - name: Build CLI
-        run: |
-          cd MeterBarCLI
-          swift build -c release
-          mkdir -p ../build/Build/Products/Release/MeterBar.app/Contents/Helpers
-          cp .build/release/meterbar ../build/Build/Products/Release/MeterBar.app/Contents/Helpers/
-
-      - name: Verify bundled CLI version
+      - name: Build and inject universal CLI
         run: |
           set -euo pipefail
-          APP_PATH=$(find build -name "MeterBar.app" -type d | head -1)
-          [[ -n "$APP_PATH" ]] || { echo "::error::MeterBar.app not found under build/"; exit 1; }
-          APP_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Contents/Info.plist")
-          CLI_VERSION=$("$APP_PATH/Contents/Helpers/meterbar" --version)
+          scripts/build-universal-cli.sh \
+            "$APP_PATH/Contents/Helpers/meterbar" \
+            "$RUNNER_TEMP/meterbar-cli-build"
 
-          echo "App version: $APP_VERSION"
-          echo "CLI version: $CLI_VERSION"
-
-          test "$CLI_VERSION" = "$APP_VERSION"
+      # Ad-hoc signing restores nested bundle integrity and embeds the source
+      # entitlements. It is not Developer ID signing or notarization, and without
+      # an authorized profile it cannot guarantee app-group container access.
+      - name: Sign and verify universal artifact
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/sign-and-verify-release.sh "$APP_PATH" "$RELEASE_VERSION"
 
       - name: Create release package
+        id: package
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          VERSION="$REF_NAME"
+          ZIP_NAME="MeterBar-${RELEASE_TAG}.zip"
+          ZIP_PATH="$GITHUB_WORKSPACE/$ZIP_NAME"
+          SHA_NAME="${ZIP_NAME}.sha256"
+          SHA_PATH="$GITHUB_WORKSPACE/$SHA_NAME"
 
-          # Find the built app
-          APP_PATH=$(find build -name "MeterBar.app" -type d | head -1)
-          [[ -n "$APP_PATH" ]] || { echo "::error::MeterBar.app not found under build/"; exit 1; }
-          echo "Found app at: $APP_PATH"
+          ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
 
-          # Create zip using ditto (preserves attributes better than zip)
-          cd "$(dirname "$APP_PATH")"
-          ditto -c -k --keepParent "MeterBar.app" "MeterBar-${VERSION}.zip"
-
-          # Compute SHA256
-          SHA256=$(shasum -a 256 "MeterBar-${VERSION}.zip" | cut -d ' ' -f 1)
+          SHA256=$(shasum -a 256 "$ZIP_PATH" | cut -d ' ' -f 1)
           echo "SHA256: $SHA256"
-          echo "$SHA256" > "MeterBar-${VERSION}.zip.sha256"
+          echo "$SHA256" > "$SHA_PATH"
 
-          # Move to workspace root
-          mv "MeterBar-${VERSION}.zip" "${{ github.workspace }}/"
-          mv "MeterBar-${VERSION}.zip.sha256" "${{ github.workspace }}/"
-
-          # Set output for later steps
-          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
-        id: package
+          {
+            echo "sha256=$SHA256"
+            echo "zip_name=$ZIP_NAME"
+            echo "sha_name=$SHA_NAME"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: |
-            MeterBar-${{ github.ref_name }}.zip
-            MeterBar-${{ github.ref_name }}.zip.sha256
+            ${{ steps.package.outputs.zip_name }}
+            ${{ steps.package.outputs.sha_name }}
           draft: false
           prerelease: false
           generate_release_notes: true
@@ -98,11 +112,18 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Output SHA256
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_SHA256: ${{ steps.package.outputs.sha256 }}
         run: |
           {
             echo "### Release Artifacts"
             echo ""
-            echo "**SHA256:** \`$(cat "MeterBar-${REF_NAME}.zip.sha256")\`"
+            echo "**Tag:** \`$RELEASE_TAG\`"
+            echo "**SHA256:** \`$RELEASE_SHA256\`"
+            echo ""
+            echo "Universal arm64+x86_64 and nested ad-hoc signature integrity verified."
+            echo "Developer ID signing, notarization, and authorized app-group access remain pending credentials/provisioning."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # After the release is published, bump the Homebrew cask in VincentShipsIt/homebrew-tap.
@@ -112,5 +133,5 @@ jobs:
     needs: build
     uses: ./.github/workflows/update-homebrew.yml
     with:
-      version: ${{ github.ref_name }}
+      version: ${{ needs.build.outputs.release_tag }}
     secrets: inherit
