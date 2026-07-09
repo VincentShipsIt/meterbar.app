@@ -110,7 +110,6 @@ private enum SettingsPane: Hashable, Identifiable {
 // MARK: - SettingsView
 
 struct SettingsView: View {
-
     // MARK: Lifecycle
 
     init(embeddedInDashboard: Bool = false) {
@@ -181,7 +180,8 @@ struct SettingsView: View {
     /// Same key ClaudeCodeLocalService reads. Previously this flag was only
     /// settable via `defaults write`; exposing it here makes the legacy OAuth
     /// fallback discoverable instead of a hidden switch.
-    @AppStorage(StorageKeys.claudeCodeOAuthFallback) private var oauthFallbackEnabled = false
+    @AppStorage(StorageKeys.claudeCodeOAuthFallback)
+    private var oauthFallbackEnabled = false
 
     private var filteredProviderPanes: [SettingsPane] {
         let query = providerSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1399,7 +1399,6 @@ private struct SettingsInfoRow: View {
 // MARK: - SettingsPanelSection
 
 private struct SettingsPanelSection<Content: View>: View {
-
     // MARK: Lifecycle
 
     init(
@@ -1469,7 +1468,6 @@ private enum SettingsRowViewMetrics {
 // MARK: - SettingsRowView
 
 private struct SettingsRowView<Content: View>: View {
-
     // MARK: Lifecycle
 
     init(title: String, detail: String? = nil, @ViewBuilder content: () -> Content) {
@@ -1544,7 +1542,6 @@ private struct StatusPill: View {
 // MARK: - AdminKeySettingsRow
 
 private struct AdminKeySettingsRow: View {
-
     // MARK: Internal
 
     let provider: ApiProvider
@@ -1603,13 +1600,11 @@ private struct AdminKeySettingsRow: View {
     private var connectedMessage: String {
         "Connected. Usage appears on the billed API card."
     }
-
 }
 
 // MARK: - AddClaudeAccountSheet
 
 private struct AddClaudeAccountSheet: View {
-
     // MARK: Internal
 
     let onAdd: (String, String) -> Void
@@ -1676,7 +1671,8 @@ private struct AddClaudeAccountSheet: View {
 
     // MARK: Private
 
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismiss)
+    private var dismiss
 
     @State private var accountName = ""
     @State private var configDirectory = ""
@@ -1712,7 +1708,6 @@ private struct AddClaudeAccountSheet: View {
 // MARK: - AccountProfileRow
 
 private struct AccountProfileRow: View {
-
     // MARK: Lifecycle
 
     init(
