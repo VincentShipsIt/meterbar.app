@@ -1,0 +1,173 @@
+import Foundation
+
+/// The engine behind `meterbar wake`: a thin one-shot orchestration over the
+/// same discovery, quota, runner, and ledger the app uses. It never invokes a
+/// Claude process or mutates anything on `dryRun`, emits a distinguishable
+/// outcome for every terminal state, and refuses non-Claude providers (Codex is
+/// not exposed in v1).
+struct WakeCLIEngine {
+    private let discovery: SessionDiscovery
+    private let authority: WakeQuotaAuthority
+    private let makeRunner: @Sendable (ClaudeCodeAccount) -> WakeExecuting
+    private let ledgerFactory: @Sendable () -> ReplayLedger
+    private let lock: WakeLock
+    private let bounds: WakeBounds
+    private let shouldCancel: @Sendable () -> Bool
+
+    init(
+        discovery: SessionDiscovery = SessionDiscovery(),
+        authority: WakeQuotaAuthority = WakeQuotaAuthority(),
+        makeRunner: @escaping @Sendable (ClaudeCodeAccount) -> WakeExecuting,
+        ledgerFactory: @escaping @Sendable () -> ReplayLedger = { ReplayLedger() },
+        lock: WakeLock = WakeLock(),
+        bounds: WakeBounds = .default,
+        shouldCancel: @escaping @Sendable () -> Bool = { false }
+    ) {
+        self.discovery = discovery
+        self.authority = authority
+        self.makeRunner = makeRunner
+        self.ledgerFactory = ledgerFactory
+        self.lock = lock
+        self.bounds = bounds
+        self.shouldCancel = shouldCancel
+    }
+
+    func run(provider: String, account: ClaudeCodeAccount, dryRun: Bool, limit: Int?) async -> WakeCLIResponse {
+        let normalizedProvider = provider.lowercased()
+        guard normalizedProvider == "claude" else {
+            // Codex is intentionally not exposed in v1.
+            return .from(
+                candidates: [],
+                outcome: .validationFailure,
+                provider: normalizedProvider,
+                dryRun: dryRun,
+                account: account.configDirectory,
+                message: "Only the 'claude' provider is supported in this version."
+            )
+        }
+
+        let ledger = ledgerFactory()
+        let candidates = await discovery.discover(configDirectory: account.configDirectory, ledger: ledger)
+
+        // Dry-run / preview: strictly read-only. No lock, no quota fetch, no
+        // subprocess, no mutation.
+        if dryRun {
+            return .from(
+                candidates: candidates,
+                outcome: .success,
+                provider: normalizedProvider,
+                dryRun: true,
+                account: account.configDirectory
+            )
+        }
+
+        // Detect legacy watcher / another holder before doing anything live.
+        switch lock.acquire() {
+        case .acquired:
+            break
+        case .contended:
+            return .from(
+                candidates: candidates,
+                outcome: .validationFailure,
+                provider: normalizedProvider,
+                dryRun: false,
+                account: account.configDirectory,
+                message: "Another Session Wake holder (app or CLI) is already running."
+            )
+        case let .legacyHeld(guidance):
+            return .from(
+                candidates: candidates,
+                outcome: .validationFailure,
+                provider: normalizedProvider,
+                dryRun: false,
+                account: account.configDirectory,
+                message: guidance
+            )
+        }
+        defer { lock.release() }
+
+        // Fresh quota before any launch.
+        let quota = await authority.freshQuota(account: account)
+        switch quota {
+        case let .unknown(reason):
+            return .from(
+                candidates: candidates,
+                outcome: .quotaUnknown,
+                provider: normalizedProvider,
+                dryRun: false,
+                account: account.configDirectory,
+                message: reason
+            )
+        case let .blocked(until, reason):
+            let detail = until.map { "blocked (\(reason.rawValue)) until \($0)" } ?? "blocked (\(reason.rawValue))"
+            return .from(
+                candidates: candidates,
+                outcome: .blockedWithoutWait,
+                provider: normalizedProvider,
+                dryRun: false,
+                account: account.configDirectory,
+                message: detail
+            )
+        case .available:
+            return await resume(
+                candidates: candidates,
+                account: account,
+                ledger: ledger,
+                limit: limit,
+                provider: normalizedProvider
+            )
+        }
+    }
+
+    private func resume(
+        candidates: [WakeSessionCandidate],
+        account: ClaudeCodeAccount,
+        ledger: ReplayLedger,
+        limit: Int?,
+        provider: String
+    ) async -> WakeCLIResponse {
+        let runner = makeRunner(account)
+        let cap = min(limit ?? bounds.maxSessionsPerRun, bounds.maxSessionsPerRun)
+        let queue = Array(candidates.filter(\.isExecutable).prefix(cap))
+
+        var summary = WakeCLIResponse.Summary()
+        summary.skipped = candidates.count - candidates.filter(\.isExecutable).count
+        var cancelled = false
+
+        for candidate in queue {
+            if shouldCancel() || Task.isCancelled { cancelled = true; break }
+            let outcome = await runner.run(candidate, bounds: bounds)
+            switch outcome {
+            case .succeeded:
+                summary.resumed += 1
+                await ledger.record(candidate.fingerprint)
+            case .failed:
+                summary.failed += 1
+            case .skipped:
+                summary.skipped += 1
+            case .cancelled:
+                cancelled = true
+            }
+            if cancelled { break }
+        }
+        summary.remaining = max(0, queue.count - summary.resumed - summary.failed)
+
+        let outcome: WakeCLIOutcome
+        if cancelled {
+            outcome = .cancellation
+        } else if summary.failed > 0 {
+            outcome = .partialFailure
+        } else {
+            outcome = .success
+        }
+
+        return .from(
+            candidates: candidates,
+            outcome: outcome,
+            provider: provider,
+            dryRun: false,
+            account: account.configDirectory,
+            summary: summary
+        )
+    }
+}

@@ -10,14 +10,15 @@ struct SessionWakeSettingsView: View {
     @ObservedObject private var status: SessionWakeStatus
     @ObservedObject private var accounts: ClaudeCodeAccountStore
 
+    @MainActor
     init(
-        store: SessionWakeSettingsStore = .shared,
-        status: SessionWakeStatus = .shared,
-        accounts: ClaudeCodeAccountStore = .shared
+        store: SessionWakeSettingsStore? = nil,
+        status: SessionWakeStatus? = nil,
+        accounts: ClaudeCodeAccountStore? = nil
     ) {
-        self.store = store
-        self.status = status
-        self.accounts = accounts
+        self.store = store ?? .shared
+        self.status = status ?? .shared
+        self.accounts = accounts ?? .shared
     }
 
     var body: some View {

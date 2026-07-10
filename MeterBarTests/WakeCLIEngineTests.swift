@@ -1,0 +1,173 @@
+import XCTest
+@testable import MeterBar
+@testable import MeterBarShared
+
+/// Coverage for #99's CLI engine: dry-run is read-only, every terminal state is
+/// distinguishable, Codex is rejected, and the JSON contract is versioned.
+final class WakeCLIEngineTests: XCTestCase {
+    private var tempDir: URL!
+
+    override func setUpWithError() throws {
+        tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WakeCLIEngineTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        tempDir = tempDir.resolvingSymlinksInPath()
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: tempDir)
+    }
+
+    private func writeBlockedSession(_ id: String = "s0") throws {
+        let projects = tempDir.appendingPathComponent("projects").appendingPathComponent("-proj")
+        try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        let object: [String: Any] = [
+            "type": "assistant", "timestamp": "2026-07-10T02:00:00.000Z",
+            "isApiErrorMessage": true, "apiErrorStatus": 429, "cwd": tempDir.path, "sessionId": id,
+            "message": ["role": "assistant", "content": [["type": "text", "text": "session limit resets 3:00am (UTC)"]]]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object)
+        try String(decoding: data, as: UTF8.self)
+            .write(to: projects.appendingPathComponent("\(id).jsonl"), atomically: true, encoding: .utf8)
+    }
+
+    private func account() -> ClaudeCodeAccount {
+        ClaudeCodeAccount(id: UUID(), name: "acct", configDirectory: tempDir.path)
+    }
+
+    private func makeEngine(
+        provider: WakeQuotaProviding,
+        runner: WakeExecuting,
+        shouldCancel: @escaping @Sendable () -> Bool = { false }
+    ) -> WakeCLIEngine {
+        WakeCLIEngine(
+            discovery: SessionDiscovery(),
+            authority: WakeQuotaAuthority(provider: provider, maxAge: 3600, now: { Date() }),
+            makeRunner: { _ in runner },
+            ledgerFactory: { ReplayLedger(fileURL: self.tempDir.appendingPathComponent("l.json")) },
+            lock: WakeLock(lockURL: self.tempDir.appendingPathComponent("wake.lock"), legacyLockURLs: []),
+            bounds: .default,
+            shouldCancel: shouldCancel
+        )
+    }
+
+    func testCodexProviderRejected() async throws {
+        try writeBlockedSession()
+        let runner = RecordingRunner()
+        let engine = makeEngine(provider: ThrowingProvider(), runner: runner)
+        let response = await engine.run(provider: "codex", account: account(), dryRun: false, limit: nil)
+        XCTAssertEqual(response.outcome, .validationFailure)
+        let ran = await runner.ran
+        XCTAssertTrue(ran.isEmpty)
+    }
+
+    func testDryRunIsReadOnly() async throws {
+        try writeBlockedSession()
+        let runner = RecordingRunner()
+        // A throwing quota provider: if dry-run consulted quota, we'd know.
+        let engine = makeEngine(provider: ThrowingProvider(), runner: runner)
+        let response = await engine.run(provider: "claude", account: account(), dryRun: true, limit: nil)
+        XCTAssertEqual(response.outcome, .success)
+        XCTAssertTrue(response.dryRun)
+        XCTAssertEqual(response.eligibleCount, 1)
+        let ran = await runner.ran
+        XCTAssertTrue(ran.isEmpty, "Dry-run must launch nothing")
+    }
+
+    func testQuotaUnknownLaunchesNothing() async throws {
+        try writeBlockedSession()
+        let runner = RecordingRunner()
+        let engine = makeEngine(provider: ThrowingProvider(), runner: runner)
+        let response = await engine.run(provider: "claude", account: account(), dryRun: false, limit: nil)
+        XCTAssertEqual(response.outcome, .quotaUnknown)
+        let ran = await runner.ran
+        XCTAssertTrue(ran.isEmpty)
+    }
+
+    func testBlockedWithoutWait() async throws {
+        try writeBlockedSession()
+        let runner = RecordingRunner()
+        let engine = makeEngine(provider: FixedProvider(.blocked), runner: runner)
+        let response = await engine.run(provider: "claude", account: account(), dryRun: false, limit: nil)
+        XCTAssertEqual(response.outcome, .blockedWithoutWait)
+        let ran = await runner.ran
+        XCTAssertTrue(ran.isEmpty)
+    }
+
+    func testAvailableResumesAndRecordsLedger() async throws {
+        try writeBlockedSession()
+        let runner = RecordingRunner(outcome: .succeeded)
+        let engine = makeEngine(provider: FixedProvider(.open), runner: runner)
+        let response = await engine.run(provider: "claude", account: account(), dryRun: false, limit: nil)
+        XCTAssertEqual(response.outcome, .success)
+        XCTAssertEqual(response.summary.resumed, 1)
+        let ran = await runner.ran
+        XCTAssertEqual(ran, ["s0"])
+
+        // Ledger recorded ⇒ a rescan sees it as already handled.
+        let ledger = ReplayLedger(fileURL: tempDir.appendingPathComponent("l.json"))
+        let rescan = await SessionDiscovery().discover(configDirectory: tempDir.path, ledger: ledger)
+        XCTAssertEqual(rescan.first?.skipReason, .alreadyHandled)
+    }
+
+    func testPartialFailureWhenRunnerFails() async throws {
+        try writeBlockedSession()
+        let runner = RecordingRunner(outcome: .failed(reason: "boom"))
+        let engine = makeEngine(provider: FixedProvider(.open), runner: runner)
+        let response = await engine.run(provider: "claude", account: account(), dryRun: false, limit: nil)
+        XCTAssertEqual(response.outcome, .partialFailure)
+        XCTAssertEqual(response.summary.failed, 1)
+    }
+
+    // MARK: - Outcome + JSON contract
+
+    func testExitCodesAreDistinct() {
+        let codes = [
+            WakeCLIOutcome.success, .blockedWithoutWait, .quotaUnknown,
+            .validationFailure, .partialFailure, .cancellation
+        ].map(\.exitCode)
+        XCTAssertEqual(Set(codes).count, codes.count, "Every outcome needs a distinct exit code")
+        XCTAssertEqual(WakeCLIOutcome.success.exitCode, 0)
+    }
+
+    func testResponseJSONIsVersionedAndRoundTrips() throws {
+        let response = WakeCLIResponse.from(
+            candidates: [], outcome: .success, provider: "claude", dryRun: true, account: "/x/.claude"
+        )
+        let data = try response.jsonData()
+        let text = String(decoding: data, as: UTF8.self)
+        XCTAssertTrue(text.contains("\"schemaVersion\" : 1"))
+        let decoded = try JSONDecoder().decode(WakeCLIResponse.self, from: data)
+        XCTAssertEqual(decoded, response)
+        XCTAssertEqual(decoded.schemaVersion, WakeCLIResponse.currentSchemaVersion)
+    }
+}
+
+// MARK: - Doubles
+
+private actor RecordingRunner: WakeExecuting {
+    private(set) var ran: [String] = []
+    private let outcome: WakeRunOutcome
+    init(outcome: WakeRunOutcome = .succeeded) { self.outcome = outcome }
+    func run(_ candidate: WakeSessionCandidate, bounds: WakeBounds) async -> WakeRunOutcome {
+        ran.append(candidate.sessionID)
+        return outcome
+    }
+}
+
+private struct ThrowingProvider: WakeQuotaProviding {
+    struct Boom: Error {}
+    func fetchMetrics(account: ClaudeCodeAccount) async throws -> UsageMetrics { throw Boom() }
+}
+
+private struct FixedProvider: WakeQuotaProviding {
+    enum Kind { case open, blocked }
+    let kind: Kind
+    init(_ kind: Kind) { self.kind = kind }
+    func fetchMetrics(account: ClaudeCodeAccount) async throws -> UsageMetrics {
+        let limit = kind == .open
+            ? UsageLimit(used: 10, total: 100, resetTime: nil)
+            : UsageLimit(used: 100, total: 100, resetTime: Date(timeIntervalSince1970: 9_999))
+        return UsageMetrics(service: .claudeCode, sessionLimit: limit, lastUpdated: Date())
+    }
+}

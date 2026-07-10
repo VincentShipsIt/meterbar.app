@@ -178,6 +178,29 @@ for label, expected_path, actual_path in pairs:
     print(f"{label.capitalize()} signed entitlements match {expected_path}")
 PY
 
+# --- Session Wake: verify the embedded CLI wake path launches under the signed,
+# hardened runtime. Hardened runtime + entitlements can change process-spawn
+# behavior versus a debug build, so exercise the ACTUAL signed binary rather
+# than trusting the unsigned test run. `--dry-run` spawns no claude process and
+# mutates nothing, so this is safe and deterministic in CI.
+wake_config_dir="$temporary_directory/wake-empty-claude"
+mkdir -p "$wake_config_dir/projects"
+if ! wake_json=$("$cli_binary" wake --dry-run --json --config-dir "$wake_config_dir"); then
+  echo "Embedded CLI 'wake --dry-run' failed to launch from the signed bundle." >&2
+  exit 1
+fi
+if ! printf '%s' "$wake_json" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+assert data["schemaVersion"] == 1, data
+assert data["dryRun"] is True, data
+assert data["outcome"] == "success", data
+'; then
+  echo "Embedded CLI wake did not emit the expected versioned dry-run response." >&2
+  exit 1
+fi
+echo "Embedded CLI Session Wake dry-run verified from the signed bundle."
+
 if [ -n "$signing_identity" ]; then
   echo "Developer ID nested signature integrity verified (identity: $signing_identity)."
   echo "Notarization and stapling run as separate release steps."

@@ -9,9 +9,10 @@ struct SessionWakeMenuControl: View {
     @ObservedObject private var store: SessionWakeSettingsStore
     @ObservedObject private var status: SessionWakeStatus
 
-    init(store: SessionWakeSettingsStore = .shared, status: SessionWakeStatus = .shared) {
-        self.store = store
-        self.status = status
+    @MainActor
+    init(store: SessionWakeSettingsStore? = nil, status: SessionWakeStatus? = nil) {
+        self.store = store ?? .shared
+        self.status = status ?? .shared
     }
 
     var body: some View {
