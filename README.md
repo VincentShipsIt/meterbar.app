@@ -58,7 +58,7 @@ A lightweight macOS menu bar app that monitors Claude Code, Codex CLI, and Curso
 Paste this into your local coding agent to have it install MeterBar for you:
 
 ```text
-Install MeterBar on this Mac. First verify this is macOS 26 or newer and that Homebrew is available. Install with: brew tap VincentShipsIt/tap && brew install --cask VincentShipsIt/tap/meterbar. If Homebrew is missing, ask before installing Homebrew. After installing, verify /Applications/MeterBar.app exists and that the meterbar CLI is linked, then open MeterBar. If macOS blocks the first launch because the app is not Developer ID-signed or notarized, remove quarantine with xattr -cr /Applications/MeterBar.app and open it again. Do not ask me for API keys or paste secrets; for usage data, tell me to run claude login, codex login, and log into Cursor if I want those providers tracked.
+Install MeterBar on this Mac. First verify this is macOS 26 or newer and that Homebrew is available. Install with: brew tap VincentShipsIt/tap && brew install --cask VincentShipsIt/tap/meterbar. If Homebrew is missing, ask before installing Homebrew. After installing, verify /Applications/MeterBar.app exists and that the meterbar CLI is linked, then open MeterBar. Do not ask me for API keys or paste secrets; for usage data, tell me to run claude login, codex login, and log into Cursor if I want those providers tracked.
 ```
 
 ### Homebrew (Recommended)
@@ -77,10 +77,7 @@ brew upgrade --cask VincentShipsIt/tap/meterbar
 
 Download the latest release from [meterbar.dev](https://meterbar.dev).
 
-> **Note**: Since the app isn't notarized, you may need to right-click and select "Open" the first time, or run:
-> ```bash
-> xattr -cr /Applications/MeterBar.app
-> ```
+Releases after v1.6.1 are Developer ID signed and notarized, so direct downloads open without Gatekeeper warnings. For v1.6.1 and earlier (ad-hoc signed only), right-click and select "Open" the first time, or run `xattr -cr /Applications/MeterBar.app`.
 
 ### Build from Source
 
