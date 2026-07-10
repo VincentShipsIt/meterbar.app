@@ -77,7 +77,7 @@ brew upgrade --cask VincentShipsIt/tap/meterbar
 
 Download the latest release from [meterbar.dev](https://meterbar.dev).
 
-Releases after v1.6.1 are Developer ID signed and notarized, so direct downloads open without Gatekeeper warnings. For v1.6.1 and earlier (unsigned), right-click and select "Open" the first time, or run `xattr -cr /Applications/MeterBar.app`.
+Releases after v1.6.1 are Developer ID signed and notarized, so direct downloads open without Gatekeeper warnings. For v1.6.1 and earlier (ad-hoc signed only), right-click and select "Open" the first time, or run `xattr -cr /Applications/MeterBar.app`.
 
 ### Build from Source
 
