@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// The single native wake watcher state machine (#96).
 ///
