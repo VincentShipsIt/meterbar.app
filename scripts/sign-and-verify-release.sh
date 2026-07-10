@@ -3,6 +3,17 @@ set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
   echo "Usage: $0 APP_PATH EXPECTED_VERSION" >&2
+  echo "Signs ad-hoc by default; set SIGNING_IDENTITY (and optionally" >&2
+  echo "SIGNING_KEYCHAIN) to sign with a Developer ID identity instead." >&2
+  exit 64
+fi
+
+# Developer ID mode is opt-in via environment so CI PR builds keep the
+# credential-free ad-hoc path while tag releases sign for real.
+signing_identity="${SIGNING_IDENTITY:-}"
+signing_keychain="${SIGNING_KEYCHAIN:-}"
+if [ -n "$signing_keychain" ] && [ -z "$signing_identity" ]; then
+  echo "SIGNING_KEYCHAIN requires SIGNING_IDENTITY." >&2
   exit 64
 fi
 
@@ -67,17 +78,36 @@ if [ "$cli_version" != "$expected_version" ]; then
   exit 1
 fi
 
-sign_adhoc() {
+sign_code() {
   local target="$1"
   shift
-  codesign \
-    --force \
-    --sign - \
-    --timestamp=none \
-    --options runtime \
-    --generate-entitlement-der \
-    "$@" \
-    "$target"
+  if [ -n "$signing_identity" ]; then
+    # Developer ID: a secure timestamp is required for notarization, and the
+    # explicit keychain pins the identity to the CI temp keychain so codesign
+    # cannot resolve a same-named certificate from another keychain.
+    local keychain_args=()
+    if [ -n "$signing_keychain" ]; then
+      keychain_args=(--keychain "$signing_keychain")
+    fi
+    codesign \
+      --force \
+      --sign "$signing_identity" \
+      "${keychain_args[@]}" \
+      --timestamp \
+      --options runtime \
+      --generate-entitlement-der \
+      "$@" \
+      "$target"
+  else
+    codesign \
+      --force \
+      --sign - \
+      --timestamp=none \
+      --options runtime \
+      --generate-entitlement-der \
+      "$@" \
+      "$target"
+  fi
 }
 
 # Sign leaf code first so each containing bundle is sealed only after its
@@ -88,14 +118,14 @@ for frameworks_path in "$widget_path/Contents/Frameworks" "$app_path/Contents/Fr
   if [ -d "$frameworks_path" ]; then
     while IFS= read -r -d '' nested_code; do
       echo "Signing nested code: $nested_code"
-      sign_adhoc "$nested_code"
+      sign_code "$nested_code"
     done < <(find "$frameworks_path" -depth \( -name '*.framework' -o -name '*.dylib' \) -print0)
   fi
 done
 
-sign_adhoc "$cli_binary"
-sign_adhoc "$widget_path" --entitlements "$widget_entitlements"
-sign_adhoc "$app_path" --entitlements "$app_entitlements"
+sign_code "$cli_binary"
+sign_code "$widget_path" --entitlements "$widget_entitlements"
+sign_code "$app_path" --entitlements "$app_entitlements"
 
 codesign --verify --strict --verbose=2 "$cli_binary"
 codesign --verify --strict --verbose=2 "$widget_path"
@@ -148,5 +178,10 @@ for label, expected_path, actual_path in pairs:
     print(f"{label.capitalize()} signed entitlements match {expected_path}")
 PY
 
-echo "Ad-hoc nested signature integrity verified."
-echo "Developer ID, notarization, and authorized app-group access remain separate release prerequisites."
+if [ -n "$signing_identity" ]; then
+  echo "Developer ID nested signature integrity verified (identity: $signing_identity)."
+  echo "Notarization and stapling run as separate release steps."
+else
+  echo "Ad-hoc nested signature integrity verified."
+  echo "Developer ID, notarization, and authorized app-group access remain separate release prerequisites."
+fi

@@ -29,7 +29,7 @@ Download the latest release from:
 https://meterbar.dev
 ```
 
-The release build is ad-hoc signed for bundle integrity but is not Developer ID-signed or notarized. If macOS blocks the first launch, right-click `MeterBar.app` and choose Open, or run:
+Releases after v1.6.1 are Developer ID signed, notarized, and stapled — direct downloads open without Gatekeeper warnings. For v1.6.1 and earlier (ad-hoc signed only), right-click `MeterBar.app` and choose Open on first launch, or run:
 
 ```bash
 xattr -cr /Applications/MeterBar.app
