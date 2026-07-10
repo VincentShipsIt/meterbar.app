@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Structured, privacy-preserving log of wake runs.
 ///
