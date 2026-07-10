@@ -1,3 +1,4 @@
+import MeterBarShared
 import SwiftUI
 
 // MARK: - SessionWakeTone color mapping
