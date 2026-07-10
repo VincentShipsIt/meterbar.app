@@ -69,7 +69,7 @@ meterbar/
 - **CursorLocalService** — SQLite token extraction + usage-summary endpoint; assumed 500-request default quota when API omits totals.
 - **ClaudeService / OpenAIService** — admin-key usage reports (paginated, 50-page cap) via `ServiceSupport.fetchDecoded`.
 - **CostTracker** (1,029 lines) — JSONL/SQLite log scanning, per-model pricing table, per-day/model/origin breakdowns, cache at `~/Library/Application Support/MeterBar/cost-summary-v1.json`.
-- **AuthenticationManager + KeychainManager** — the two admin keys, stored in keychain service `dev.shipshit.meterbar`.
+- **AuthenticationManager + KeychainManager** — the two admin keys, stored in keychain service `dev.shipshit.meterbar`. Reads migrate the shipped v1.0-v1.6 service `com.agenticindiedev.quotaguard` into the current service, and removals delete both so a legacy key cannot reappear.
 - **SharedDataStore** — app-group JSON file (`cached_usage_metrics.json`), atomic writes on a serial queue, `WidgetCenter.reloadTimelines` after save.
 - **ProviderVisibilityStore / DockVisibilityStore / ClaudeCodeAccountStore** — UserDefaults-backed preference stores.
 - **OAuthTokenExpiry** — JWT/unix-timestamp expiry checks (60 s grace; unparseable ⇒ not-expired by design).
@@ -90,7 +90,7 @@ Dates in the shared JSON use `JSONEncoder`/`JSONDecoder` **default** strategies 
 
 ## CI / release
 
-- `ci.yml` (push/PR to master, macos-26 + Xcode 26.2): the branch-protection-required `build` job compiles and verifies universal app, widget, and CLI artifacts; SwiftPM tests, coverage, and SwiftLint remain independent gates.
+- `ci.yml` (push/PR to master, macos-26 + Xcode 26.2): the branch-protection-required `build` job waits for tests/coverage and SwiftLint, fails explicitly unless both pass, then compiles and verifies universal app, widget, and CLI artifacts. Branch protection also requires the test, lint, and secret-scan contexts directly.
 - `release.yml` (canonical `vMAJOR.MINOR.PATCH` tag): builds universal arm64+x86_64 app/widget/CLI artifacts, checks tag/app/CLI version agreement, signs nested code inside-out with an ad-hoc hardened-runtime signature, verifies source entitlements and bundle integrity, zips via `ditto`, publishes GitHub Release, then calls `update-homebrew.yml`. Developer ID signing, authorized provisioning, and notarization remain pending credentials.
 - `secret-scan.yml`: gitleaks (pinned + checksum-verified) over full history.
 

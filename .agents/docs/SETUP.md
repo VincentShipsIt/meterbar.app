@@ -4,7 +4,7 @@ This guide will help you set up MeterBar on your Mac.
 
 ## Install Prerequisites
 
-- macOS 13.0 (Ventura) or later
+- macOS 26 or later
 
 ## Installing MeterBar
 
@@ -37,8 +37,8 @@ xattr -cr /Applications/MeterBar.app
 
 ## Development Prerequisites
 
-- Xcode 15.0 or later
-- Swift 5.9 or later
+- Xcode 26 or later
+- Swift 6.2 toolchain (the project compiles in Swift 5 language mode)
 
 ### Development Tools (Recommended)
 
@@ -70,7 +70,7 @@ open MeterBar.xcodeproj
 1. Select the `MeterBar` target
 2. Go to Signing & Capabilities
 3. Add your development team
-4. Enable App Sandbox if needed
+4. Keep the main app unsandboxed so it can read local provider state and run the Claude CLI; the widget remains sandboxed
 
 ### 4. Build and Run
 

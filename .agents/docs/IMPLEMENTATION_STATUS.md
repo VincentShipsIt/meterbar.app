@@ -13,6 +13,7 @@ under those names; see `docs/audits/00-repo-map.md` for the audited current stat
 - ✅ Cursor via local SQLite token + usage-summary endpoint
 - ✅ Anthropic Admin API org usage (optional, user-provided key)
 - ✅ OpenAI Admin API org usage (optional, user-provided key)
+- ✅ Admin-key migration from the v1.0-v1.6 Keychain service into the current migration-stable service
 
 ### App
 - ✅ Menu bar status item showing most-constrained-quota percentage
@@ -25,7 +26,7 @@ under those names; see `docs/audits/00-repo-map.md` for the audited current stat
 - ✅ `meterbar` CLI (usage/cost subcommands) bundled in `Contents/Helpers/`
 
 ### Infra
-- ✅ CI: required universal app/widget/CLI build + `swift test` gate + coverage check + SwiftLint (`.github/workflows/ci.yml`)
+- ✅ CI: required test/coverage, SwiftLint, secret scan, and universal app/widget/CLI gates (`.github/workflows/ci.yml`)
 - ✅ Release: universal ad-hoc-signed zip with architecture/version/entitlement verification + GitHub Release + Homebrew tap bump
 - ✅ Secret scanning (gitleaks, pinned + checksum-verified)
 
