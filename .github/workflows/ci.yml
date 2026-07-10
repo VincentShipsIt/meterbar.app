@@ -6,34 +6,78 @@ on:
   pull_request:
     branches: [master]
 
-# Pull requests run only the FAST gates below (SwiftPM build + tests + lint,
-# ~1 min total). The heavy `xcodebuild` app+widget build is expensive and only
-# ever breaks on project-file / widget-target changes, so it runs on pushes to
-# master (post-merge) rather than on every PR.
+permissions:
+  contents: read
+
+# The branch-protection-required `build` context includes the full Xcode app and
+# widget build. This keeps entry-point, project wiring, entitlements, and widget
+# regressions from merging behind a SwiftPM-only green check.
 
 jobs:
-  # Required PR gate. Named "build" to satisfy branch protection. Fast: compiles
-  # the SwiftPM library (Models/Services/Views against MeterBarShared) and the
-  # CLI, without building the full .app / widget bundle.
+  # Required PR gate. Keep this job name stable for branch protection.
   build:
     name: build
+    needs: [test, lint]
+    if: ${{ always() }}
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 40
 
     steps:
+      - name: Require tests and lint
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          LINT_RESULT: ${{ needs.lint.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$TEST_RESULT" != "success" || "$LINT_RESULT" != "success" ]]; then
+            echo "::error::Required prerequisites failed (tests=$TEST_RESULT, lint=$LINT_RESULT)"
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
 
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Test release tag validation
+        run: scripts/test-release-tag.sh
+
       - name: Build library (SwiftPM)
         run: swift build
 
-      - name: Build CLI
+      - name: Build universal app and widget (Xcode)
         run: |
-          cd MeterBarCLI
-          swift build
+          set -euo pipefail
+          xcodebuild -project MeterBar.xcodeproj \
+            -scheme MeterBar \
+            -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/MeterBarDerivedData" \
+            -destination 'generic/platform=macOS' \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Build and inject universal CLI
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/MeterBarDerivedData/Build/Products/Release/MeterBar.app"
+          scripts/build-universal-cli.sh \
+            "$APP_PATH/Contents/Helpers/meterbar" \
+            "$RUNNER_TEMP/MeterBarCLIBuild"
+
+      - name: Verify universal nested bundle
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/MeterBarDerivedData/Build/Products/Release/MeterBar.app"
+          APP_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Contents/Info.plist")
+          scripts/sign-and-verify-release.sh "$APP_PATH" "$APP_VERSION"
 
   test:
     name: Tests + coverage gate
@@ -89,34 +133,3 @@ jobs:
       - name: Lint
         # --strict: the tree is currently violation-free, so any new warning fails.
         run: /tmp/swiftlint/swiftlint lint --strict
-
-  # Full app + widget build via xcodebuild. Slow (~3 min) and only sensitive to
-  # project-file / widget-target changes, so it runs on pushes to master rather
-  # than on every PR. This is where the .xcodeproj SwiftPM package wiring
-  # (MeterBarShared linked into both the app and the widget target) is exercised.
-  xcode-build:
-    name: Build (app + widget)
-    if: github.event_name == 'push'
-    runs-on: macos-26
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
-
-      - name: Show Xcode version
-        run: xcodebuild -version
-
-      - name: Build
-        run: |
-          xcodebuild -project MeterBar.xcodeproj \
-            -scheme MeterBar \
-            -configuration Debug \
-            -destination 'platform=macOS' \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            build

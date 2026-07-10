@@ -9,7 +9,7 @@ import Foundation
 /// instead of each re-deriving the checks.
 ///
 /// The evaluators are pure functions of fixture-able inputs: the impure
-/// gathering (PATH scan, keychain, `~/.codex/auth.json`, Cursor SQLite) is done
+/// gathering (PATH scan, keychain, `CODEX_HOME/auth.json`, Cursor SQLite) is done
 /// by `ProviderReadinessInspector` in the app target. Every string produced here
 /// is safe to paste into a public GitHub issue — no token, account id, or raw
 /// file/response body is ever emitted.
@@ -156,11 +156,11 @@ public struct ClaudeReadinessInput: Sendable {
 public struct CodexReadinessInput: Sendable {
     /// `codex` resolvable on PATH.
     public var isCLIInstalled: Bool
-    /// `~/.codex/auth.json` exists on disk.
+    /// `CODEX_HOME/auth.json` exists on disk (`CODEX_HOME` defaults to `~/.codex`).
     public var authFileExists: Bool
     /// The auth file could be read (exists and permissions allow it).
     public var authFileReadable: Bool
-    /// Raw `~/.codex/auth.json` bytes when readable, else nil.
+    /// Raw `CODEX_HOME/auth.json` bytes when readable, else nil.
     public var authJSON: Data?
     /// Pre-sanitized last-refresh error (safe to display), nil on success.
     public var refreshError: String?
@@ -315,7 +315,7 @@ public enum ProviderReadinessEvaluator {
     // MARK: Codex CLI
 
     public static func codexCli(_ input: CodexReadinessInput) -> ProviderReadiness {
-        // The app reads ~/.codex/auth.json directly and never execs `codex`, so a
+        // The app reads CODEX_HOME/auth.json directly and never execs `codex`, so a
         // missing binary is a soft warning rather than a hard failure.
         let installed = ReadinessCheck(
             id: ReadinessCheckID.installed,
@@ -323,19 +323,20 @@ public enum ProviderReadinessEvaluator {
             level: input.isCLIInstalled ? .pass : .warn,
             detail: input.isCLIInstalled
                 ? "Codex CLI found on PATH."
-                : "Codex CLI not found on PATH (usage is still read from ~/.codex/auth.json).",
+                : "Codex CLI not found on PATH (usage is still read from CODEX_HOME/auth.json).",
             recovery: input.isCLIInstalled ? nil : "Install the Codex CLI (`npm i -g @openai/codex`) to use `codex login`."
         )
 
         let auth = codexAuthCheck(input)
 
+        let dataReady = input.authFileReadable && auth.level == .pass
         let data = ReadinessCheck(
             id: ReadinessCheckID.data,
             title: "Usage readable",
-            level: input.authFileReadable ? .pass : .warn,
-            detail: input.authFileReadable
-                ? "Usage is readable from ~/.codex/auth.json."
-                : "Usage cannot be read until the auth file is available."
+            level: dataReady ? .pass : .warn,
+            detail: dataReady
+                ? "Subscription usage is readable from CODEX_HOME/auth.json."
+                : "Subscription usage requires a readable Codex OAuth login."
         )
 
         return ProviderReadiness(
@@ -353,7 +354,7 @@ public enum ProviderReadinessEvaluator {
                 id: ReadinessCheckID.auth,
                 title: title,
                 level: .fail,
-                detail: "Not signed in — no ~/.codex/auth.json found.",
+                detail: "Not signed in — no CODEX_HOME/auth.json found.",
                 recovery: loginRecovery
             )
         }
@@ -363,8 +364,8 @@ public enum ProviderReadinessEvaluator {
                 id: ReadinessCheckID.auth,
                 title: title,
                 level: .fail,
-                detail: "~/.codex/auth.json exists but could not be read.",
-                recovery: "Check the permissions on ~/.codex/auth.json, then run `codex login`."
+                detail: "CODEX_HOME/auth.json exists but could not be read.",
+                recovery: "Check the permissions on CODEX_HOME/auth.json, then run `codex login`."
             )
         }
 
@@ -373,26 +374,26 @@ public enum ProviderReadinessEvaluator {
                 id: ReadinessCheckID.auth,
                 title: title,
                 level: .fail,
-                detail: "~/.codex/auth.json could not be parsed.",
+                detail: "CODEX_HOME/auth.json could not be parsed.",
                 recovery: loginRecovery
             )
         }
 
-        if let apiKey = auth.openaiApiKey, !apiKey.isEmpty {
-            return ReadinessCheck(
-                id: ReadinessCheckID.auth,
-                title: title,
-                level: .pass,
-                detail: "Signed in with an OpenAI API key."
-            )
-        }
-
         guard let token = auth.tokens?.accessToken, !token.isEmpty else {
+            if let apiKey = auth.openaiApiKey, !apiKey.isEmpty {
+                return ReadinessCheck(
+                    id: ReadinessCheckID.auth,
+                    title: title,
+                    level: .fail,
+                    detail: "An OpenAI API key is present, but subscription quota requires a Codex OAuth login.",
+                    recovery: loginRecovery
+                )
+            }
             return ReadinessCheck(
                 id: ReadinessCheckID.auth,
                 title: title,
                 level: .fail,
-                detail: "Not signed in — no token in ~/.codex/auth.json.",
+                detail: "Not signed in — no OAuth token in CODEX_HOME/auth.json.",
                 recovery: loginRecovery
             )
         }

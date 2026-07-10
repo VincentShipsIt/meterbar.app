@@ -43,16 +43,16 @@ Thank you for your interest in contributing to MeterBar! This document provides 
 
 ### Prerequisites
 
-- macOS 13.0 or later
-- Xcode 15.0 or later
-- Swift 5.9 or later
+- macOS 26 or later
+- Xcode 26 or later
+- Swift 6.2 toolchain (the project compiles in Swift 5 language mode)
 
 ### Building
 
 1. Clone the repository:
    ```bash
    git clone <repo-url>
-   cd apps/ai-usage-tracker
+   cd meterbar.app
    ```
 
 2. Open in Xcode:
@@ -100,4 +100,3 @@ Use clear, descriptive commit messages:
 ## Questions?
 
 Feel free to open an issue for questions or discussions!
-

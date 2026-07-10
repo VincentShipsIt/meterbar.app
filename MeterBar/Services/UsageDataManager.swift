@@ -102,7 +102,8 @@ class UsageDataManager: ObservableObject {
                 newMetrics[service] = try await fetchSimpleProviderMetrics(service)
             } catch {
                 lastError = error
-                let detail = "Failed to fetch \(service.rawValue) metrics: \(error.localizedDescription)"
+                let safeMessage = ServiceSupport.safeErrorMessage(for: error)
+                let detail = "Failed to fetch \(service.rawValue) metrics: \(safeMessage)"
                 AppLog.usage.error("\(detail, privacy: .public)")
             }
         }

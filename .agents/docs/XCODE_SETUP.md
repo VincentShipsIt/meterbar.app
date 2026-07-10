@@ -1,5 +1,10 @@
 # Xcode Project Setup
 
+> **Historical scaffold reference:** The checked-in `MeterBar.xcodeproj` is the
+> source of truth. Do not recreate it from these legacy steps. Current builds
+> require macOS 26, Xcode 26, the Swift 6.2 toolchain in Swift 5 language mode,
+> and the identifiers documented in `.agents/SYSTEM/ARCHITECTURE.md`.
+
 This guide explains how to set up the Xcode project for MeterBar.
 
 ## Creating the Xcode Project

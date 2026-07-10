@@ -4,7 +4,7 @@ import XCTest
 @testable import MeterBar
 
 /// Direct coverage for `CodexCliLocalService` without touching the network or a
-/// real `~/.codex/auth.json`:
+/// real `CODEX_HOME/auth.json`:
 ///   - `mapUsageResponse` (the response → `UsageMetrics` mapping extracted from
 ///     `fetchUsageMetrics`) is exercised with decoded fixtures.
 ///   - the auth-file read + token-expiry gating is exercised through the

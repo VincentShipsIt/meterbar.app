@@ -1,16 +1,18 @@
 name: E2E (daily)
 
-# The repo's first scheduled workflow. The per-PR `ci.yml` runs the fast SwiftPM
-# gates on every pull request (including the MenuBarSmokeTests / WidgetRenderingTests
-# smoke suite); this runs the FULL suite + coverage AND the slow app+widget
-# xcodebuild once a day, so the e2e/widget path is exercised without paying the
-# macOS-runner cost on every push. Fixtures only — no Claude/OpenAI credentials.
+# The repo's scheduled defense-in-depth workflow. Per-PR `ci.yml` now includes
+# the full universal app/widget build in its required `build` context; this job
+# repeats the full fixture suite, coverage gate, and Xcode build on a daily cadence.
+# Fixtures only — no Claude/OpenAI credentials.
 #
 # 09:17 UTC daily (off the :00 mark on purpose). Also runnable on demand.
 on:
   schedule:
     - cron: "17 9 * * *"
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   e2e:
@@ -34,9 +36,7 @@ jobs:
         run: bash scripts/check-coverage.sh
 
       - name: Build app + widget
-        # Daily safety net for the app-extension target, which the per-PR CI skips
-        # (it only builds on pushes to master). Catches widget-target regressions
-        # within a day rather than only post-merge.
+        # Scheduled safety net in addition to the required per-PR Xcode build.
         run: |
           xcodebuild -project MeterBar.xcodeproj \
             -scheme MeterBar \

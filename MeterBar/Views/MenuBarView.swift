@@ -276,8 +276,9 @@ struct PopoverOverviewPanel: View {
   /// Runs the readiness inspector off the main actor (keychain / file / SQLite
   /// I/O) and publishes the reports back for the checklist.
   private func loadSetupReports() async {
+    let requestedProviders = enabledProviders
     let reports = await Task.detached(priority: .utility) {
-      ProviderReadinessInspector.reports()
+      ProviderReadinessInspector.reports(providers: requestedProviders)
     }.value
     setupReports = reports
   }
@@ -322,42 +323,49 @@ private struct PopoverProviderStatusCard: View {
 
   private var compactExhaustedCard: some View {
     DashboardTile(padding: 11, minHeight: 58, alignment: .center) {
-      TimelineView(.periodic(from: ResetCountdownSchedule.anchor, by: ResetCountdownSchedule.interval)) { timeline in
-        let blockingWindow = BlockingLimitResetCounter.selectBlockingWindow(
-          snapshot.resetWindows,
-          now: timeline.date
-        )
-        let title = BlockingLimitResetCounter.titleText(for: blockingWindow, in: snapshot.resetWindows)
-        let counter = BlockingLimitResetCounter.counterText(for: blockingWindow, now: timeline.date)
+      VStack(alignment: .leading, spacing: 8) {
+        TimelineView(.periodic(from: ResetCountdownSchedule.anchor, by: ResetCountdownSchedule.interval)) { timeline in
+          let blockingWindow = BlockingLimitResetCounter.selectBlockingWindow(
+            snapshot.resetWindows,
+            now: timeline.date
+          )
+          let title = BlockingLimitResetCounter.titleText(for: blockingWindow, in: snapshot.resetWindows)
+          let counter = BlockingLimitResetCounter.counterText(for: blockingWindow, now: timeline.date)
 
-        HStack(alignment: .center, spacing: 9) {
-          ProviderLogoView(kind: snapshot.logoKind, size: 17, foregroundColor: snapshot.accentColor)
+          HStack(alignment: .center, spacing: 9) {
+            ProviderLogoView(kind: snapshot.logoKind, size: 17, foregroundColor: snapshot.accentColor)
 
-          VStack(alignment: .leading, spacing: 1) {
-            Text(snapshot.title)
-              .font(.subheadline)
-              .fontWeight(.semibold)
-              .lineLimit(1)
-            Text(updatedText)
-              .font(.caption2)
-              .foregroundColor(.secondary)
-              .lineLimit(1)
+            VStack(alignment: .leading, spacing: 1) {
+              Text(snapshot.title)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .lineLimit(1)
+              Text(updatedText)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 5) {
+              Image(systemName: "hourglass")
+                .font(.system(size: 10, weight: .semibold))
+              Text("\(title) \(counter)")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+            }
+            .foregroundColor(snapshot.accentColor)
+            .help("\(title) \(counter)")
           }
+        }
 
-          Spacer(minLength: 8)
-
-          HStack(spacing: 5) {
-            Image(systemName: "hourglass")
-              .font(.system(size: 10, weight: .semibold))
-            Text("\(title) \(counter)")
-              .font(.caption)
-              .fontWeight(.semibold)
-              .monospacedDigit()
-              .lineLimit(1)
-              .minimumScaleFactor(0.72)
-          }
-          .foregroundColor(snapshot.accentColor)
-          .help("\(title) \(counter)")
+        let badges = ProviderStatusBadges(snapshot: snapshot, style: .compact)
+        if badges.hasContent {
+          badges
         }
       }
     }

@@ -4,7 +4,7 @@ This guide will help you set up MeterBar on your Mac.
 
 ## Install Prerequisites
 
-- macOS 13.0 (Ventura) or later
+- macOS 26 or later
 
 ## Installing MeterBar
 
@@ -29,7 +29,7 @@ Download the latest release from:
 https://meterbar.dev
 ```
 
-The release build is currently unsigned/not notarized. If macOS blocks the first launch, right-click `MeterBar.app` and choose Open, or run:
+The release build is ad-hoc signed for bundle integrity but is not Developer ID-signed or notarized. If macOS blocks the first launch, right-click `MeterBar.app` and choose Open, or run:
 
 ```bash
 xattr -cr /Applications/MeterBar.app
@@ -37,8 +37,8 @@ xattr -cr /Applications/MeterBar.app
 
 ## Development Prerequisites
 
-- Xcode 15.0 or later
-- Swift 5.9 or later
+- Xcode 26 or later
+- Swift 6.2 toolchain (the project compiles in Swift 5 language mode)
 
 ### Development Tools (Recommended)
 
@@ -70,7 +70,7 @@ open MeterBar.xcodeproj
 1. Select the `MeterBar` target
 2. Go to Signing & Capabilities
 3. Add your development team
-4. Enable App Sandbox if needed
+4. Keep the main app unsandboxed so it can read local provider state and run the Claude CLI; the widget remains sandboxed
 
 ### 4. Build and Run
 
@@ -91,7 +91,7 @@ open MeterBar.xcodeproj
 1. Install Codex CLI: `npm install -g @openai/codex`
 2. Log in: `codex login`
 3. Select your team/workspace when prompted.
-4. MeterBar reads Codex CLI credentials from `~/.codex/auth.json`.
+4. MeterBar reads Codex CLI credentials from `$CODEX_HOME/auth.json` (`~/.codex/auth.json` by default).
 
 ### Cursor
 

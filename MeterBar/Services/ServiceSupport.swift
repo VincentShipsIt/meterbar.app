@@ -31,7 +31,7 @@ enum ServiceSupport {
     /// other non-2xx status to `.apiError` with a consistent message format.
     /// Returns the typed response for callers that need headers/status.
     @discardableResult
-    static func validate(_ response: URLResponse, data: Data) throws -> HTTPURLResponse {
+    static func validate(_ response: URLResponse, data _: Data) throws -> HTTPURLResponse {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ServiceError.apiError("Invalid response type")
         }
@@ -41,8 +41,9 @@ enum ServiceSupport {
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
-            let body = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw ServiceError.apiError("HTTP \(httpResponse.statusCode): \(body.prefix(200))")
+            // Provider bodies can contain account data or echoed request
+            // details. Keep only the status code in errors and logs.
+            throw ServiceError.apiError("HTTP \(httpResponse.statusCode)")
         }
 
         return httpResponse
@@ -70,14 +71,21 @@ enum ServiceSupport {
     static func serviceError(from error: Error) -> ServiceError {
         switch error {
         case let serviceError as ServiceError:
-            return serviceError
+            return sanitize(serviceError)
         case let urlError as URLError:
-            return .apiError(message(for: urlError))
+            return sanitize(.apiError(message(for: urlError)))
         case is DecodingError:
             return .parsingError
         default:
-            return .apiError(error.localizedDescription)
+            return .apiError("Request failed")
         }
+    }
+
+    /// A stable message safe for user-visible state and `.public` unified logs.
+    /// Unknown error descriptions are deliberately discarded because arbitrary
+    /// provider and transport errors may embed response bodies or credentials.
+    static func safeErrorMessage(for error: Error) -> String {
+        serviceError(from: error).localizedDescription
     }
 
     /// Human-readable message for a `URLError`, shared so error copy stays consistent.
@@ -89,9 +97,44 @@ enum ServiceSupport {
             return "DNS lookup failed"
         case .timedOut:
             return "Request timed out"
+        case .cancelled:
+            return "Request cancelled"
+        case .networkConnectionLost:
+            return "Network connection lost"
+        case .cannotConnectToHost:
+            return "Could not connect to provider"
+        case .secureConnectionFailed, .serverCertificateHasBadDate,
+             .serverCertificateUntrusted, .serverCertificateHasUnknownRoot,
+             .serverCertificateNotYetValid:
+            return "Secure connection failed"
         default:
-            return urlError.localizedDescription
+            return "Network request failed"
         }
+    }
+
+    private static func sanitize(_ error: ServiceError) -> ServiceError {
+        guard case let .apiError(message) = error else { return error }
+
+        let knownSafeMessages: Set<String> = [
+            "No internet connection",
+            "DNS lookup failed",
+            "Request timed out",
+            "Request cancelled",
+            "Network connection lost",
+            "Could not connect to provider",
+            "Secure connection failed",
+            "Network request failed",
+            "Invalid response type",
+            "Request failed"
+        ]
+        if knownSafeMessages.contains(message) {
+            return error
+        }
+
+        if let range = message.range(of: #"HTTP \d{3}"#, options: .regularExpression) {
+            return .apiError(String(message[range]))
+        }
+        return .apiError("Request failed")
     }
 
     /// Runs `block` on the main thread — synchronously when already there, so

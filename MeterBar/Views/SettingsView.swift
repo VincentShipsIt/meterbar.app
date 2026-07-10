@@ -233,6 +233,10 @@ struct SettingsView: View {
         providerVisibility.isEnabled(.claudeCode) || providerVisibility.isEnabled(.codexCli)
     }
 
+    private var codexAuthFileDisplayPath: String {
+        CodexHomeDirectory.authFileDisplayPath()
+    }
+
     private var settingsWindow: some View {
         HStack(spacing: 0) {
             settingsSidebar
@@ -396,7 +400,7 @@ struct SettingsView: View {
         SettingsPanelSection(title: "OpenAI Codex", logoKind: .codex, color: MeterBarTheme.codexAccent) {
             SettingsRowView(
                 title: "Connection",
-                detail: "Reads the OAuth session from ~/.codex/auth.json."
+                detail: "Reads the OAuth session from \(codexAuthFileDisplayPath)."
             ) {
                 HStack(spacing: 8) {
                     StatusPill(
@@ -553,8 +557,9 @@ struct SettingsView: View {
             color: MeterBarTheme.appAccent
         ) {
             SettingsNotice(
-                text: "Paste an organization admin key to show your pay-as-you-go API spend "
-                    + "(Anthropic / OpenAI) as its own card, separate from subscription quotas. "
+                text: "Paste an organization admin key to estimate pay-as-you-go API cost "
+                    + "(Anthropic / OpenAI) from available usage and approximate list rates. "
+                    + "Provider usage data may be incomplete and is not a billing statement. "
                     + "Keys are stored in the macOS Keychain and only used against the provider's usage API.",
                 color: .secondary
             )
@@ -1094,7 +1099,7 @@ struct SettingsView: View {
         case .claudeCode:
             "Claude CLI /usage"
         case .codexCli:
-            "~/.codex/auth.json + ChatGPT usage API"
+            "\(codexAuthFileDisplayPath) + ChatGPT usage API"
         case .cursor:
             "Cursor local state + usage API"
         }
@@ -1598,7 +1603,7 @@ private struct AdminKeySettingsRow: View {
     }
 
     private var connectedMessage: String {
-        "Connected. Usage appears on the billed API card."
+        "Connected. Estimated usage appears on the API cost card."
     }
 }
 

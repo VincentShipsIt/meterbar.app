@@ -3,7 +3,7 @@ import Foundation
 /// Fetches organization API usage (per-model token counts) from the Anthropic
 /// and OpenAI admin usage endpoints, aggregates it over a window, and prices it
 /// into an `ApiUsage`. Unlike the subscription providers there is no quota — the
-/// card shows real spend and tokens, not a percentage.
+/// card shows tokens and an approximate cost, not a percentage or billing total.
 enum ApiUsageService {
     /// Safety cap on pagination so a misbehaving API can never loop forever.
     private static let maxUsagePages = 50
@@ -66,15 +66,7 @@ enum ApiUsageService {
             pagesFetched += 1
         } while nextPage != nil && pagesFetched < maxUsagePages
 
-        var perModelInput: [String: Int] = [:]
-        var perModelOutput: [String: Int] = [:]
-        for bucket in buckets {
-            let model = bucket.model ?? "unknown"
-            perModelInput[model, default: 0] += (bucket.inputTokens ?? 0) + (bucket.cacheCreationInputTokens ?? 0)
-            perModelOutput[model, default: 0] += bucket.outputTokens ?? 0
-        }
-
-        return aggregate(provider: .anthropic, input: perModelInput, output: perModelOutput, start: start, end: end)
+        return aggregateAnthropic(buckets: buckets, start: start, end: end)
     }
 
     // MARK: - OpenAI
@@ -131,6 +123,24 @@ enum ApiUsageService {
 
     // MARK: - Aggregation
 
+    static func aggregateAnthropic(
+        buckets: [AnthropicUsageBucket],
+        start: Date,
+        end: Date
+    ) -> ApiUsage {
+        var perModelInput: [String: Int] = [:]
+        var perModelOutput: [String: Int] = [:]
+        for bucket in buckets {
+            for result in bucket.results {
+                let model = result.model ?? "unknown"
+                perModelInput[model, default: 0] += result.totalInputTokens
+                perModelOutput[model, default: 0] += result.outputTokens ?? 0
+            }
+        }
+
+        return aggregate(provider: .anthropic, input: perModelInput, output: perModelOutput, start: start, end: end)
+    }
+
     private static func aggregate(
         provider: ApiProvider,
         input: [String: Int],
@@ -184,16 +194,39 @@ struct AnthropicUsageResponse: Codable {
 }
 
 struct AnthropicUsageBucket: Codable {
-    let inputTokens: Int?
+    let results: [AnthropicUsageResult]
+}
+
+struct AnthropicUsageResult: Codable {
+    let uncachedInputTokens: Int?
+    let cacheReadInputTokens: Int?
+    let cacheCreation: AnthropicCacheCreation?
     let outputTokens: Int?
-    let cacheCreationInputTokens: Int?
     let model: String?
 
+    var totalInputTokens: Int {
+        (uncachedInputTokens ?? 0)
+            + (cacheReadInputTokens ?? 0)
+            + (cacheCreation?.ephemeral1HourInputTokens ?? 0)
+            + (cacheCreation?.ephemeral5MinuteInputTokens ?? 0)
+    }
+
     enum CodingKeys: String, CodingKey {
-        case inputTokens = "input_tokens"
+        case uncachedInputTokens = "uncached_input_tokens"
+        case cacheReadInputTokens = "cache_read_input_tokens"
+        case cacheCreation = "cache_creation"
         case outputTokens = "output_tokens"
-        case cacheCreationInputTokens = "cache_creation_input_tokens"
         case model
+    }
+}
+
+struct AnthropicCacheCreation: Codable {
+    let ephemeral1HourInputTokens: Int?
+    let ephemeral5MinuteInputTokens: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case ephemeral1HourInputTokens = "ephemeral_1h_input_tokens"
+        case ephemeral5MinuteInputTokens = "ephemeral_5m_input_tokens"
     }
 }
 

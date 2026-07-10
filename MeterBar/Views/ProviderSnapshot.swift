@@ -44,8 +44,21 @@ struct ProviderSnapshot: Identifiable {
         primaryLimit.map { QuotaBand.forPercentLeft($0.percentLeft) }
     }
 
+    /// Session/weekly windows that can block normal provider usage. Secondary
+    /// model/code-review quotas remain visible but must not collapse the entire
+    /// provider card or claim the provider is unavailable.
+    var blockingLimits: [SnapshotLimit] {
+        guard extraUsage?.state != .on else { return [] }
+        return limits.filter {
+            ($0.kind == .session || $0.kind == .weekly) && $0.usageLimit.isAtLimit
+        }
+    }
+
+    /// Reset windows used by blocking-state UI. Filtering here prevents a
+    /// simultaneous secondary-quota reset from being presented as the time at
+    /// which normal provider usage resumes.
     var resetWindows: [ResetCountdownWindow] {
-        limits.map {
+        blockingLimits.map {
             ResetCountdownWindow(
                 id: "\(id)-\($0.title)",
                 title: $0.title,
@@ -54,15 +67,13 @@ struct ProviderSnapshot: Identifiable {
         }
     }
 
-    var hasExhaustedLimit: Bool {
-        limits.contains { $0.usageLimit.isAtLimit }
-    }
+    var hasExhaustedLimit: Bool { !blockingLimits.isEmpty }
 
     /// Weekly exhaustion blocks the whole subscription even when the shorter
     /// session window still has room. Compact overview cards should prioritize
     /// that reset instead of spending space on the session gauge.
     var hasExhaustedWeeklyLimit: Bool {
-        limits.contains { $0.kind == .weekly && $0.usageLimit.isAtLimit }
+        blockingLimits.contains { $0.kind == .weekly }
     }
 
     /// Detail panels should focus on the limit that is actually blocking use.

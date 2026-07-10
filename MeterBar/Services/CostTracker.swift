@@ -520,8 +520,7 @@ class CostTracker: ObservableObject {
     }
 
     private static func scanCodexSessions(since cutoffDate: Date) -> (TokenCost, [DailyTokenUsage])? {
-        let codexDir = URL(fileURLWithPath: ServiceSupport.realHomeDirectory(), isDirectory: true)
-            .appendingPathComponent(".codex")
+        let codexDir = URL(fileURLWithPath: CodexHomeDirectory.path(), isDirectory: true)
         let archivedDir = codexDir.appendingPathComponent("archived_sessions")
         let logsDatabase = codexDir.appendingPathComponent("logs_2.sqlite")
         var context = CodexScanContext(earliestDate: Date(), latestDate: cutoffDate)

@@ -104,11 +104,11 @@
 - Cursor doesn't provide usage API (returns error)
 
 **Development:**
-- **Language:** Swift 5.9+
+- **Language:** Swift 5 language mode with the Swift 6.2 toolchain
 - **UI:** SwiftUI
 - **Widget:** WidgetKit
 - **Storage:** Keychain, UserDefaults, App Groups
-- **Build:** Xcode 15.0+
+- **Build:** Xcode 26+
 
 **Next Priorities:**
 1. Research API endpoints

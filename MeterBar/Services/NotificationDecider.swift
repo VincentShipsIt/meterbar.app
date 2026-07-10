@@ -19,8 +19,37 @@ struct FiredNotification: Equatable, Sendable {
     let key: String
     let level: NotificationLevel
     let serviceDisplayName: String
+    /// User-facing quota identity (Session, Weekly, Sonnet, or Code Review).
+    /// Including it keeps simultaneous quota banners distinguishable.
+    let quotaDisplayName: String
+    /// Whether exhausting this quota prevents normal provider usage. Secondary
+    /// quotas and subscription quotas covered by enabled extra usage do not.
+    let blocksProvider: Bool
     /// Clamped `0...100` percentage used, for the warning body copy.
     let percentUsed: Int
+    /// True only when the quota is actually fully spent. A user can configure
+    /// the critical alert at 10% remaining, which must not claim exhaustion.
+    let isExhausted: Bool
+
+    var title: String {
+        if level == .critical, isExhausted {
+            let state = blocksProvider ? "Limit Reached" : "Quota Exhausted"
+            return "\(serviceDisplayName) \(quotaDisplayName) \(state)"
+        }
+        let state = level == .warning ? "Usage Warning" : "Usage Alert"
+        return "\(serviceDisplayName) \(quotaDisplayName) \(state)"
+    }
+
+    var body: String {
+        if level == .critical, isExhausted {
+            if blocksProvider {
+                return "You've reached your \(quotaDisplayName.lowercased()) usage limit"
+            }
+            return "The \(quotaDisplayName.lowercased()) quota is exhausted; "
+                + "this quota alone does not block all \(serviceDisplayName) usage"
+        }
+        return "Your \(quotaDisplayName.lowercased()) quota is at \(percentUsed)%"
+    }
 }
 
 /// The result of evaluating one service's metrics: the notifications to post and
@@ -64,26 +93,19 @@ struct NotificationDecider {
         alreadyNotified: Set<String>,
         now: Date = Date()
     ) -> NotificationEvaluation {
-        // Gate 1: notifications turned off globally.
-        guard preferences.isEnabled else {
-            return NotificationEvaluation(notifications: [], notifiedKeys: alreadyNotified)
-        }
+        // Delivery gates suppress banners, not state transitions. Continuing to
+        // evolve band keys while notifications are disabled (or data is stale)
+        // lets a recovery clear old keys so the next genuine upward crossing is
+        // not silently suppressed.
+        let mayDeliver = preferences.isEnabled
+            && providerEnabled
+            && now.timeIntervalSince(metrics.lastUpdated) <= stalenessThreshold
 
-        // Gate 2: never notify for a provider the user has disabled.
-        guard providerEnabled else {
-            return NotificationEvaluation(notifications: [], notifiedKeys: alreadyNotified)
-        }
-
-        // Gate 3: never notify off stale cached data.
-        guard now.timeIntervalSince(metrics.lastUpdated) <= stalenessThreshold else {
-            return NotificationEvaluation(notifications: [], notifiedKeys: alreadyNotified)
-        }
-
-        let limits: [(limit: UsageLimit, type: String)] = [
-            (metrics.sessionLimit, "session"),
-            (metrics.weeklyLimit, "weekly"),
-            (metrics.codeReviewLimit, "codeReview")
-        ].compactMap { pair in pair.0.map { ($0, pair.1) } }
+        let limits: [(limit: UsageLimit?, kind: QuotaKind)] = [
+            (metrics.sessionLimit, .session),
+            (metrics.weeklyLimit, .weekly),
+            (metrics.codeReviewLimit, .codeReview)
+        ]
 
         var keys = alreadyNotified
         var fired: [FiredNotification] = []
@@ -91,33 +113,52 @@ struct NotificationDecider {
         let warningRank = Self.severityRank(preferences.warningThreshold.band)
         let criticalRank = Self.severityRank(preferences.criticalThreshold.band)
 
-        for (limit, limitType) in limits {
-            let baseKey = "\(metrics.service.rawValue)-\(limitType)"
+        for (limit, quotaKind) in limits {
+            let baseKey = "\(metrics.service.rawValue)-\(quotaKind.rawValue)"
             let warnKey = "\(baseKey)-warn"
             let criticalKey = "\(baseKey)-critical"
 
-            let bandRank = Self.severityRank(QuotaBand.forLimit(limit))
+            guard let limit else {
+                keys.remove(warnKey)
+                keys.remove(criticalKey)
+                continue
+            }
+
+            let band = QuotaBand.forLimit(limit)
+            let bandRank = Self.severityRank(band)
+            let quotaDisplayName = quotaKind.displayName(for: metrics.service)
+            let blocksProvider = quotaKind != .codeReview && metrics.extraUsage?.state != .on
 
             if bandRank >= criticalRank {
-                // In (or past) the critical band. Supersede any pending warn
-                // alert, then fire once per crossing.
-                keys.remove(warnKey)
-                if keys.insert(criticalKey).inserted {
+                // Preserve the warning key while critical. Otherwise falling
+                // from exhausted to warning would look like a fresh rise and
+                // fire a recovery notification.
+                keys.insert(warnKey)
+                if keys.insert(criticalKey).inserted, mayDeliver {
                     fired.append(FiredNotification(
                         key: criticalKey,
                         level: .critical,
                         serviceDisplayName: metrics.service.displayName,
-                        percentUsed: Int(limit.percentage)
+                        quotaDisplayName: quotaDisplayName,
+                        blocksProvider: blocksProvider,
+                        percentUsed: Int(limit.percentage),
+                        isExhausted: band == .exhausted
                     ))
                 }
             } else if bandRank >= warningRank {
                 // In the warning band but not yet critical.
-                if keys.insert(warnKey).inserted {
+                // Dropping below critical re-arms only the critical crossing;
+                // keeping the warning key prevents a banner on recovery.
+                keys.remove(criticalKey)
+                if keys.insert(warnKey).inserted, mayDeliver {
                     fired.append(FiredNotification(
                         key: warnKey,
                         level: .warning,
                         serviceDisplayName: metrics.service.displayName,
-                        percentUsed: Int(limit.percentage)
+                        quotaDisplayName: quotaDisplayName,
+                        blocksProvider: blocksProvider,
+                        percentUsed: Int(limit.percentage),
+                        isExhausted: false
                     ))
                 }
             } else {
@@ -140,6 +181,25 @@ struct NotificationDecider {
         case .tight: return 1
         case .critical: return 2
         case .exhausted: return 3
+        }
+    }
+
+    /// Stable quota key plus provider-specific display copy. `codeReviewLimit`
+    /// represents Sonnet-only usage for Claude and Code Review usage for Codex.
+    private enum QuotaKind: String, Equatable, Sendable {
+        case session
+        case weekly
+        case codeReview
+
+        func displayName(for service: ServiceType) -> String {
+            switch self {
+            case .session:
+                return "Session"
+            case .weekly:
+                return "Weekly"
+            case .codeReview:
+                return service == .claudeCode ? "Sonnet" : "Code Review"
+            }
         }
     }
 }

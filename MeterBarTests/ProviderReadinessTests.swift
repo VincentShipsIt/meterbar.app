@@ -205,8 +205,9 @@ final class ProviderReadinessTests: XCTestCase {
         XCTAssertTrue((report.check("auth")?.recovery ?? "").contains("codex login"))
     }
 
-    func testCodexApiKeyModeIsAuthenticated() {
-        // auth.json with an OPENAI_API_KEY and no OAuth tokens is a valid signed-in state.
+    func testCodexApiKeyModeDoesNotAuthorizeSubscriptionQuota() {
+        // The quota endpoint uses the ChatGPT/Codex OAuth access token. An API
+        // key may authorize platform APIs, but it cannot make this check healthy.
         let json = #"{"OPENAI_API_KEY":"sk-\#(secret)","tokens":null}"#.data(using: .utf8)
         let input = CodexReadinessInput(
             isCLIInstalled: true,
@@ -217,12 +218,15 @@ final class ProviderReadinessTests: XCTestCase {
         )
         let report = ProviderReadinessEvaluator.codexCli(input)
 
-        XCTAssertEqual(report.check("auth")?.level, .pass)
+        XCTAssertEqual(report.check("auth")?.level, .fail)
+        XCTAssertEqual(report.check("data")?.level, .warn)
+        XCTAssertTrue((report.check("auth")?.detail ?? "").contains("subscription quota"))
+        XCTAssertTrue((report.check("auth")?.recovery ?? "").contains("codex login"))
         assertNoSecretLeak(report)
     }
 
     func testCodexBinaryMissingIsWarnNotFail() {
-        // The app reads ~/.codex/auth.json directly, so a missing `codex` binary
+        // The app reads CODEX_HOME/auth.json directly, so a missing `codex` binary
         // is a soft warning, not a hard failure, when auth is otherwise present.
         let input = CodexReadinessInput(
             isCLIInstalled: false,
