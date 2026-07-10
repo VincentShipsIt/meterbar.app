@@ -17,7 +17,6 @@ struct WakeProcessRunner: WakeExecuting {
     private let baseEnvironment: [String: String]
     private let lockFactory: @Sendable () -> WakeLock
     private let logger: WakeRunLogger
-    private let fileManager: FileManager
     private let now: @Sendable () -> Date
 
     init(
@@ -29,7 +28,6 @@ struct WakeProcessRunner: WakeExecuting {
         baseEnvironment: [String: String] = ProcessInfo.processInfo.environment,
         lockFactory: @escaping @Sendable () -> WakeLock = { WakeLock() },
         logger: WakeRunLogger = WakeRunLogger(),
-        fileManager: FileManager = .default,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.account = account
@@ -40,7 +38,6 @@ struct WakeProcessRunner: WakeExecuting {
         self.baseEnvironment = baseEnvironment
         self.lockFactory = lockFactory
         self.logger = logger
-        self.fileManager = fileManager
         self.now = now
     }
 
@@ -129,7 +126,7 @@ struct WakeProcessRunner: WakeExecuting {
 
     private func isDirectory(_ path: String) -> Bool {
         var isDirectory: ObjCBool = false
-        return fileManager.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
     static func mapOutcome(_ termination: ManagedProcess.Result.Termination) -> WakeRunOutcome {

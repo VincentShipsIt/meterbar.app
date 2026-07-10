@@ -96,7 +96,7 @@ enum ManagedProcess {
         posix_spawn_file_actions_adddup2(&fileActions, errPipe[1], 2)
         posix_spawn_file_actions_addclose(&fileActions, outPipe[0])
         posix_spawn_file_actions_addclose(&fileActions, errPipe[0])
-        posix_spawn_file_actions_addchdir_np(&fileActions, workingDirectory)
+        posix_spawn_file_actions_addchdir(&fileActions, workingDirectory)
 
         var attributes: posix_spawnattr_t?
         posix_spawnattr_init(&attributes)
