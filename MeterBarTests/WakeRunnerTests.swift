@@ -275,35 +275,20 @@ final class WakeRunnerTests: XCTestCase {
         second.release()
     }
 
-    func testExternallyLockedRunnerDoesNotSelfContend() async throws {
-        // The CLI engine holds the shared lock for its whole pass; a runner it
-        // creates must not open a second descriptor on the same file — flock
-        // treats same-process descriptors as distinct holders, so re-acquiring
-        // would fail every real `meterbar wake` resume.
+    func testRunnerReleasesLockSoSequentialRunsSucceed() async throws {
+        // The runner is the sole owner of the shared lock: it acquires when
+        // ready and releases after. A second runner on the same file (the next
+        // queued session) must then acquire cleanly — proving the lock is not
+        // leaked across runs.
+        // makeRunner pins one shared lock file, so two runners here contend on
+        // the same lock exactly as sequential queued sessions do in production.
         let fake = try makeFake()
-        let out = tempDir.appendingPathComponent("out.txt")
-        let lockURL = tempDir.appendingPathComponent("wake.lock")
-        let engineLock = WakeLock(lockURL: lockURL, legacyLockURLs: [], holderKind: .cli)
-        guard case .acquired = engineLock.acquire() else {
-            return XCTFail("engine lock must acquire")
-        }
-        defer { engineLock.release() }
-
-        var env = ["WAKE_TEST_OUT": out.path]
-        env["PATH"] = "/usr/bin:/bin"
-        let runner = WakeProcessRunner(
-            account: account(),
-            executable: fake,
-            baseEnvironment: env,
-            lockFactory: {
-                XCTFail("externally locked runner must not consult the lock factory")
-                return WakeLock(lockURL: lockURL, legacyLockURLs: [])
-            },
-            assumesExternalLock: true,
-            logger: WakeRunLogger(directory: self.tempDir.appendingPathComponent("logs"))
-        )
-        let outcome = await runner.run(candidate(cwd: tempDir.path), bounds: .default)
-        XCTAssertEqual(outcome, .succeeded, "runner must not self-contend with the engine's held lock")
+        let first = await makeRunner(fake: fake, env: [:])
+            .run(candidate(sessionID: "a", cwd: tempDir.path), bounds: .default)
+        XCTAssertEqual(first, .succeeded)
+        let second = await makeRunner(fake: fake, env: [:])
+            .run(candidate(sessionID: "b", cwd: tempDir.path), bounds: .default)
+        XCTAssertEqual(second, .succeeded, "runner must release its lock so the next queued run acquires")
     }
 
     func testLockHolderCarriesCLIKind() {
