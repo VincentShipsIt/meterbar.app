@@ -16,11 +16,6 @@ nonisolated struct WakeProcessRunner: WakeExecuting {
     let account: ClaudeCodeAccount
     private let baseEnvironment: [String: String]
     private let lockFactory: @Sendable () -> WakeLock
-    /// True when the caller (the CLI engine) already holds the shared wake
-    /// lock for the whole pass. flock treats a second descriptor in the SAME
-    /// process as a distinct holder, so re-acquiring here would self-contend
-    /// and fail every real CLI resume — skip locking entirely instead.
-    private let assumesExternalLock: Bool
     private let logger: WakeRunLogger
     private let now: @Sendable () -> Date
 
@@ -32,7 +27,6 @@ nonisolated struct WakeProcessRunner: WakeExecuting {
         prompt: String = WakeCommandBuilder.defaultPrompt,
         baseEnvironment: [String: String] = ProcessInfo.processInfo.environment,
         lockFactory: @escaping @Sendable () -> WakeLock = { WakeLock() },
-        assumesExternalLock: Bool = false,
         logger: WakeRunLogger = WakeRunLogger(),
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
@@ -43,7 +37,6 @@ nonisolated struct WakeProcessRunner: WakeExecuting {
         self.prompt = prompt
         self.baseEnvironment = baseEnvironment
         self.lockFactory = lockFactory
-        self.assumesExternalLock = assumesExternalLock
         self.logger = logger
         self.now = now
     }
@@ -62,10 +55,11 @@ nonisolated struct WakeProcessRunner: WakeExecuting {
             return .failed(reason: "claude binary not found")
         }
 
-        // Take the shared lock only now, when we are actually ready to launch
-        // — unless the caller already holds it for the whole pass.
-        let lock = assumesExternalLock ? nil : lockFactory()
-        switch lock?.acquire() ?? .acquired {
+        // Take the shared lock only now, when we are actually ready to launch.
+        // The runner is the sole owner of the lock across app and CLI paths, so
+        // the caller must not hold it (the CLI engine only probe-releases).
+        let lock = lockFactory()
+        switch lock.acquire() {
         case .acquired:
             break
         case let .contended(holder):
@@ -82,7 +76,7 @@ nonisolated struct WakeProcessRunner: WakeExecuting {
             record(candidate: candidate, outcome: outcome, result: nil, start: now())
             return outcome
         }
-        defer { lock?.release() }
+        defer { lock.release() }
 
         let command = WakeCommandBuilder.build(
             executable: resolved,

@@ -35,6 +35,49 @@ final class WakeCLIEngineTests: XCTestCase {
         ClaudeCodeAccount(id: UUID(), name: "acct", configDirectory: tempDir.path)
     }
 
+    private func makeFakeClaude(exitCode: Int32) throws -> String {
+        let script = """
+        #!/bin/bash
+        exit \(exitCode)
+        """
+        let url = tempDir.appendingPathComponent("fake-claude.sh")
+        try script.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        return url.path
+    }
+
+    /// The real production wiring: the engine holds a `.cli` lock instance and
+    /// the runner it makes holds a *separate* lock instance on the SAME file.
+    /// If the engine held its lock across `resume()`, the runner's acquire would
+    /// self-contend (same-process flock) and every real resume would fail. The
+    /// engine must probe-and-release so the runner is the sole lock owner.
+    func testRealRunnerResumesWithoutSelfContendingOnSharedLock() async throws {
+        try writeBlockedSession()
+        let fake = try makeFakeClaude(exitCode: 0)
+        let sharedLockURL = tempDir.appendingPathComponent("wake.lock")
+        let engine = WakeCLIEngine(
+            discovery: SessionDiscovery(),
+            authority: WakeQuotaAuthority(provider: FixedProvider(.open), maxAge: 3600, now: { Date() }),
+            makeRunner: { runnerAccount in
+                WakeProcessRunner(
+                    account: runnerAccount,
+                    executable: fake,
+                    baseEnvironment: ["PATH": "/usr/bin:/bin"],
+                    lockFactory: { WakeLock(lockURL: sharedLockURL, legacyLockURLs: [], holderKind: .app) },
+                    logger: WakeRunLogger(directory: self.tempDir.appendingPathComponent("logs"))
+                )
+            },
+            ledgerFactory: { ReplayLedger(fileURL: self.tempDir.appendingPathComponent("l.json")) },
+            lock: WakeLock(lockURL: sharedLockURL, legacyLockURLs: [], holderKind: .cli),
+            bounds: .default
+        )
+
+        let response = await engine.run(provider: "claude", account: account(), dryRun: false, limit: nil)
+        XCTAssertEqual(response.outcome, .success, "Real resume must not self-contend on the shared wake lock")
+        XCTAssertEqual(response.summary.resumed, 1)
+        XCTAssertEqual(response.summary.failed, 0)
+    }
+
     private func makeEngine(
         provider: WakeQuotaProviding,
         runner: WakeExecuting,
