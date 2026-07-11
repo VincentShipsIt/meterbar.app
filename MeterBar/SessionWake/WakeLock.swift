@@ -53,14 +53,23 @@ nonisolated final class WakeLock: @unchecked Sendable {
             return .contended
         }
 
-        let descriptor = open(lockURL.path, O_CREAT | O_RDWR, 0o600)
-        guard descriptor >= 0 else { return .contended }
-        if flock(descriptor, LOCK_EX | LOCK_NB) != 0 {
-            close(descriptor)
-            return .contended
+        // The whole open/flock/store sequence runs under `stateLock` so a
+        // concurrent `release()` can't slip between a successful `flock` and
+        // the descriptor store (which would leak the held lock), and a second
+        // `acquire()` can't overwrite an already-held descriptor. `LOCK_NB`
+        // keeps the critical section non-blocking.
+        let acquired: Bool = stateLock.withLock {
+            guard fileDescriptor < 0 else { return true }
+            let descriptor = open(lockURL.path, O_CREAT | O_RDWR, 0o600)
+            guard descriptor >= 0 else { return false }
+            if flock(descriptor, LOCK_EX | LOCK_NB) != 0 {
+                close(descriptor)
+                return false
+            }
+            fileDescriptor = descriptor
+            return true
         }
-        stateLock.withLock { fileDescriptor = descriptor }
-        return .acquired
+        return acquired ? .acquired : .contended
     }
 
     /// Release the lock and remove the descriptor. Safe to call repeatedly.

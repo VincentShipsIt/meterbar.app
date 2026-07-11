@@ -161,6 +161,19 @@ final class WakeRunnerTests: XCTestCase {
         second.release()
     }
 
+    func testReacquireWhileHeldIsIdempotent() {
+        let url = tempDir.appendingPathComponent("reacquire.lock")
+        let lock = WakeLock(lockURL: url, legacyLockURLs: [])
+        XCTAssertEqual(lock.acquire(), .acquired)
+        // A second acquire must not open a new descriptor over the held one.
+        XCTAssertEqual(lock.acquire(), .acquired)
+        lock.release()
+        // One release fully releases: another holder can take the lock.
+        let other = WakeLock(lockURL: url, legacyLockURLs: [])
+        XCTAssertEqual(other.acquire(), .acquired)
+        other.release()
+    }
+
     func testLegacyWatcherContentionIsReported() {
         let legacy = tempDir.appendingPathComponent("legacy.lock")
         FileManager.default.createFile(atPath: legacy.path, contents: nil)
