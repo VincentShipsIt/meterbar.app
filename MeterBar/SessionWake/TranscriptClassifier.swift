@@ -156,9 +156,16 @@ nonisolated enum TranscriptClassifier {
         }
     }
 
-    /// A 429/limit assistant error is the only kind of blocking event.
+    /// A 429/limit assistant error, or a legacy pipe-epoch assistant marker.
     private static func isBlockingEvent(_ record: Record) -> Bool {
-        guard record.isApiError else { return false }
+        guard record.isApiError else {
+            // Legacy transcripts ("… usage limit reached|<epoch>") predate the
+            // structured isApiErrorMessage/apiErrorStatus fields entirely.
+            // Only a synthetic *assistant* line is a limit event; a user line
+            // quoting the marker proves nothing about quota.
+            return record.type == "assistant"
+                && TranscriptResetParser.legacyEpochReset(in: record.text) != nil
+        }
         if record.apiErrorStatus == 429 { return true }
         // Some builds omit the status code; fall back to the message body.
         let text = record.text.lowercased()

@@ -13,10 +13,23 @@ actor SessionDiscovery {
         /// session is always near the end, so a bounded window is sufficient
         /// and keeps scanning incremental.
         var maxTailBytes: Int = 64 * 1024
+        /// Transcripts whose file was not modified within this window are
+        /// skipped outright — a weeks-old block is history, not a wake target.
+        var maxTranscriptAge: TimeInterval = 14 * 24 * 3600
+        /// Newest-first cap on transcripts classified per scan, so a huge
+        /// projects directory can never make discovery unbounded.
+        var maxTranscripts: Int = 400
         var fileManager: FileManager = .default
 
-        init(maxTailBytes: Int = 64 * 1024, fileManager: FileManager = .default) {
+        init(
+            maxTailBytes: Int = 64 * 1024,
+            maxTranscriptAge: TimeInterval = 14 * 24 * 3600,
+            maxTranscripts: Int = 400,
+            fileManager: FileManager = .default
+        ) {
             self.maxTailBytes = maxTailBytes
+            self.maxTranscriptAge = maxTranscriptAge
+            self.maxTranscripts = maxTranscripts
             self.fileManager = fileManager
         }
     }
@@ -44,11 +57,17 @@ actor SessionDiscovery {
     /// Discover blocked sessions for `configDirectory`, consulting `ledger` to
     /// flag already-handled blocks. Subagent transcripts are excluded outright.
     ///
+    /// - Parameter now: reference instant for the transcript-age bound;
+    ///   injectable so tests can pin it.
     /// - Returns: one executable-or-skip candidate per unique session, newest
     ///   block first.
-    func discover(configDirectory: String?, ledger: ReplayLedger) async -> [WakeSessionCandidate] {
+    func discover(
+        configDirectory: String?,
+        ledger: ReplayLedger,
+        now: Date = Date()
+    ) async -> [WakeSessionCandidate] {
         let projects = SessionDiscovery.projectsDirectory(configDirectory: configDirectory)
-        let transcripts = transcriptURLs(under: projects)
+        let transcripts = transcriptURLs(under: projects, now: now)
 
         // Keep the newest block per sessionID (a resumed session can re-block).
         var bySession: [String: WakeSessionCandidate] = [:]
@@ -108,19 +127,44 @@ actor SessionDiscovery {
 
     // MARK: - Filesystem
 
-    private func transcriptURLs(under projects: URL) -> [URL] {
+    /// Bounded enumeration: recent regular `.jsonl` files outside any
+    /// `subagents/` directory, newest-first, capped at `maxTranscripts`.
+    private func transcriptURLs(under projects: URL, now: Date) -> [URL] {
         guard let enumerator = configuration.fileManager.enumerator(
             at: projects,
-            includingPropertiesForKeys: [.isRegularFileKey],
+            includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ) else {
             return []
         }
-        var urls: [URL] = []
-        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
-            urls.append(url)
+        let oldestAllowed = now.addingTimeInterval(-configuration.maxTranscriptAge)
+        var found: [(url: URL, modified: Date)] = []
+        for case let url as URL in enumerator {
+            guard url.pathExtension == "jsonl",
+                  // Subagent transcripts live under a `subagents/` directory
+                  // and are never resume targets — skip before reading a byte.
+                  !url.pathComponents.contains("subagents"),
+                  let values = try? url.resourceValues(
+                      forKeys: [.isRegularFileKey, .contentModificationDateKey]
+                  ),
+                  values.isRegularFile == true,
+                  let modified = values.contentModificationDate,
+                  modified >= oldestAllowed else {
+                continue
+            }
+            found.append((url, modified))
         }
-        return urls
+        // Newest-first with a lexicographic path tie-break, so the winners
+        // under the cap never depend on filesystem enumeration order.
+        return found
+            .sorted {
+                if $0.modified != $1.modified {
+                    return $0.modified > $1.modified
+                }
+                return $0.url.path < $1.url.path
+            }
+            .prefix(configuration.maxTranscripts)
+            .map(\.url)
     }
 
     /// Read up to `maxTailBytes` from the end of `url`, returned as lines.

@@ -509,6 +509,250 @@ final class SessionWakeDiscoveryTests: XCTestCase {
         )
     }
 
+    // MARK: - Legacy pipe-epoch reset marker (Shape B transcripts)
+
+    func testLegacyPipeEpochYieldsExactResetInstant() throws {
+        // "usage limit reached|1752130800" states the reset as a unix epoch —
+        // an exact instant, not a wall-clock hint needing nearest-occurrence
+        // resolution.
+        let event = ISO8601DateFormatter().date(from: "2026-07-10T04:14:15Z")!
+        let result = try XCTUnwrap(TranscriptResetParser.parse(
+            messageText: "Claude AI usage limit reached|1752130800",
+            eventTimestamp: event
+        ))
+        XCTAssertEqual(result.resetAt, Date(timeIntervalSince1970: 1_752_130_800))
+        XCTAssertNil(result.timeZoneIdentifier)
+    }
+
+    func testLegacyEpochWinsOverResetsClauseInSameMessage() throws {
+        // If both forms ever co-occur, the exact epoch is authoritative.
+        let event = ISO8601DateFormatter().date(from: "2026-07-10T04:14:15Z")!
+        let result = try XCTUnwrap(TranscriptResetParser.parse(
+            messageText: "Claude AI usage limit reached|1752130800 · resets 7:30am (Europe/Malta)",
+            eventTimestamp: event
+        ))
+        XCTAssertEqual(result.resetAt, Date(timeIntervalSince1970: 1_752_130_800))
+    }
+
+    func testLegacyEpochWithImplausibleDigitCountIsNotParsed() {
+        let event = ISO8601DateFormatter().date(from: "2026-07-10T04:14:15Z")!
+        // 8 digits (1970s) and 13 digits (milliseconds) are not epoch seconds.
+        XCTAssertNil(TranscriptResetParser.parse(
+            messageText: "usage limit reached|17521308",
+            eventTimestamp: event
+        ))
+        XCTAssertNil(TranscriptResetParser.parse(
+            messageText: "usage limit reached|1752130800123",
+            eventTimestamp: event
+        ))
+    }
+
+    func testLegacyMarkerLineWithoutApiErrorFlagClassifiesBlocked() {
+        // Shape B (legacy) transcripts carry no isApiErrorMessage/apiErrorStatus
+        // fields at all — the pipe-epoch marker alone must classify as blocked.
+        let object: [String: Any] = [
+            "type": "assistant",
+            "timestamp": "2026-07-10T04:14:15.000Z",
+            "cwd": tempDir.path,
+            "sessionId": "s",
+            "message": [
+                "role": "assistant",
+                "content": [["type": "text", "text": "Claude AI usage limit reached|1752130800"]]
+            ]
+        ]
+        let summary = TranscriptClassifier.classify(sessionID: "s", lines: [jsonLine(object)])
+        guard case let .blocked(_, _, resetHint) = summary.state else {
+            return XCTFail("Expected blocked from legacy marker, got \(summary.state)")
+        }
+        XCTAssertEqual(resetHint?.resetAt, Date(timeIntervalSince1970: 1_752_130_800))
+    }
+
+    func testLegacyMarkerQuotedInUserLineDoesNotBlock() {
+        // Only an assistant line is a synthetic limit message; a user merely
+        // quoting the marker text proves nothing about quota.
+        let object: [String: Any] = [
+            "type": "user",
+            "timestamp": "2026-07-10T04:14:15.000Z",
+            "cwd": tempDir.path,
+            "sessionId": "s",
+            "message": [
+                "role": "user",
+                "content": "why did it say usage limit reached|1752130800 earlier?"
+            ]
+        ]
+        let summary = TranscriptClassifier.classify(sessionID: "s", lines: [jsonLine(object)])
+        if case .blocked = summary.state {
+            XCTFail("A user line quoting the legacy marker must not classify as blocked")
+        }
+    }
+
+    func testLegacyBlockedTranscriptIsDiscovered() async throws {
+        let object: [String: Any] = [
+            "type": "assistant",
+            "timestamp": "2026-07-10T04:14:15.000Z",
+            "cwd": tempDir.path,
+            "sessionId": "s",
+            "message": [
+                "role": "assistant",
+                "content": [["type": "text", "text": "Claude AI usage limit reached|1752130800"]]
+            ]
+        ]
+        try writeTranscript(lines: [jsonLine(object)])
+        let discovery = SessionDiscovery()
+        let ledger = ReplayLedger(fileURL: tempDir.appendingPathComponent("ledger.json"))
+        let candidates = await discovery.discover(configDirectory: accountConfigDir(), ledger: ledger)
+        XCTAssertEqual(candidates.count, 1)
+        XCTAssertEqual(candidates.first?.resetHint?.resetAt, Date(timeIntervalSince1970: 1_752_130_800))
+    }
+
+    // MARK: - Enumeration bounds
+
+    private func setModificationDate(_ date: Date, at url: URL) throws {
+        try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
+    }
+
+    func testTranscriptsOlderThanMaxAgeAreSkipped() async throws {
+        let cwd = tempDir.path
+        let now = Date()
+        let fresh = try writeTranscript(session: "fresh", lines: [
+            rateLimit("session limit resets 2:10am (UTC)", timestamp: "2026-07-10T02:00:00.000Z", cwd: cwd)
+        ])
+        let stale = try writeTranscript(session: "stale", lines: [
+            rateLimit("session limit resets 2:10am (UTC)", timestamp: "2026-07-09T02:00:00.000Z", cwd: cwd)
+        ])
+        try setModificationDate(now.addingTimeInterval(-3_600), at: fresh)
+        try setModificationDate(now.addingTimeInterval(-15 * 24 * 3_600), at: stale)
+
+        let discovery = SessionDiscovery(configuration: .init(maxTranscriptAge: 14 * 24 * 3_600))
+        let ledger = ReplayLedger(fileURL: tempDir.appendingPathComponent("ledger.json"))
+        let candidates = await discovery.discover(configDirectory: accountConfigDir(), ledger: ledger, now: now)
+
+        XCTAssertEqual(candidates.count, 1)
+        // /var vs /private/var: compare with symlinks resolved.
+        XCTAssertEqual(
+            candidates.first.map { URL(fileURLWithPath: $0.transcriptPath).resolvingSymlinksInPath().path },
+            fresh.resolvingSymlinksInPath().path
+        )
+    }
+
+    func testTranscriptCapScansNewestFirst() async throws {
+        let cwd = tempDir.path
+        let now = Date()
+        // Three distinct sessions; the oldest transcript must fall off the cap.
+        // Each transcript resolves its own sessionId from the JSONL line.
+        var urls: [String: URL] = [:]
+        for (index, name) in ["old", "mid", "new"].enumerated() {
+            let object: [String: Any] = [
+                "type": "assistant",
+                "timestamp": "2026-07-10T02:00:00.000Z",
+                "isApiErrorMessage": true,
+                "apiErrorStatus": 429,
+                "cwd": cwd,
+                "sessionId": name,
+                "message": ["role": "assistant", "content": [["type": "text", "text": "session limit resets 2:10am (UTC)"]]]
+            ]
+            let url = try writeTranscript(session: name, lines: [jsonLine(object)])
+            try setModificationDate(now.addingTimeInterval(TimeInterval(-3_600 * (3 - index))), at: url)
+            urls[name] = url
+        }
+
+        let discovery = SessionDiscovery(configuration: .init(maxTranscripts: 2))
+        let ledger = ReplayLedger(fileURL: tempDir.appendingPathComponent("ledger.json"))
+        let candidates = await discovery.discover(configDirectory: accountConfigDir(), ledger: ledger, now: now)
+
+        let sessionIDs = Set(candidates.map(\.sessionID))
+        XCTAssertEqual(sessionIDs, ["mid", "new"], "the cap must keep the newest transcripts, dropping the oldest")
+    }
+
+    func testSubagentsDirectoryComponentIsSkipped() async throws {
+        let cwd = tempDir.path
+        let dir = tempDir
+            .appendingPathComponent("acct")
+            .appendingPathComponent("projects")
+            .appendingPathComponent("-Users-me-proj")
+            .appendingPathComponent("subagents")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let line = rateLimit("session limit resets 2:10am (UTC)", timestamp: "2026-07-10T02:00:00.000Z", cwd: cwd)
+        try line.write(to: dir.appendingPathComponent("child.jsonl"), atomically: true, encoding: .utf8)
+
+        let discovery = SessionDiscovery()
+        let ledger = ReplayLedger(fileURL: tempDir.appendingPathComponent("ledger.json"))
+        let candidates = await discovery.discover(configDirectory: accountConfigDir(), ledger: ledger)
+        XCTAssertTrue(candidates.isEmpty, "transcripts under a subagents/ directory are never resume targets")
+    }
+
+    func testOnlyTailBytesAreReadFromLargeTranscripts() async throws {
+        let cwd = tempDir.path
+        // A huge prefix of non-decisive noise; the decisive block sits at the tail.
+        var lines = (0..<50).map { index in
+            jsonLine([
+                "type": "user",
+                "timestamp": "2026-07-10T01:00:00.000Z",
+                "cwd": cwd,
+                "sessionId": "s",
+                "message": ["role": "user", "content": "noise line \(index) padding padding padding padding"]
+            ])
+        }
+        lines.append(rateLimit("session limit resets 2:10am (UTC)", timestamp: "2026-07-10T02:00:00.000Z", cwd: cwd))
+        try writeTranscript(lines: lines)
+
+        let discovery = SessionDiscovery(configuration: .init(maxTailBytes: 4_096))
+        let ledger = ReplayLedger(fileURL: tempDir.appendingPathComponent("ledger.json"))
+        let candidates = await discovery.discover(configDirectory: accountConfigDir(), ledger: ledger)
+        XCTAssertEqual(candidates.count, 1, "a bounded tail read must still find the decisive tail event")
+    }
+
+    // MARK: - Replay ledger capacity
+
+    private func fingerprint(_ index: Int) -> BlockFingerprint {
+        BlockFingerprint(
+            sessionID: "session-\(index)",
+            blockedAt: Date(timeIntervalSince1970: TimeInterval(1_752_000_000 + index)),
+            reason: .sessionLimit
+        )
+    }
+
+    func testLedgerPrunesOldestBeyondCapacity() async throws {
+        let ledgerURL = tempDir.appendingPathComponent("ledger.json")
+        let ledger = ReplayLedger(fileURL: ledgerURL, maxEntries: 3)
+        for index in 0..<5 {
+            await ledger.record(fingerprint(index))
+        }
+
+        let count = await ledger.count()
+        XCTAssertEqual(count, 3, "the ledger must never exceed its capacity")
+        let contains0 = await ledger.contains(fingerprint(0))
+        let contains1 = await ledger.contains(fingerprint(1))
+        XCTAssertFalse(contains0, "the oldest entries are pruned first")
+        XCTAssertFalse(contains1, "the oldest entries are pruned first")
+        for index in 2..<5 {
+            let contained = await ledger.contains(fingerprint(index))
+            XCTAssertTrue(contained, "recent entry \(index) must survive pruning")
+        }
+    }
+
+    func testLedgerPruningOrderSurvivesRelaunch() async throws {
+        let ledgerURL = tempDir.appendingPathComponent("ledger.json")
+        let first = ReplayLedger(fileURL: ledgerURL, maxEntries: 3)
+        for index in 0..<3 {
+            await first.record(fingerprint(index))
+        }
+
+        // A fresh instance (relaunch) must keep pruning oldest-first, not
+        // restart its notion of age.
+        let relaunched = ReplayLedger(fileURL: ledgerURL, maxEntries: 3)
+        await relaunched.record(fingerprint(3))
+
+        let dropped = await relaunched.contains(fingerprint(0))
+        XCTAssertFalse(dropped, "after relaunch the persisted oldest entry is still pruned first")
+        for index in 1..<4 {
+            let contained = await relaunched.contains(fingerprint(index))
+            XCTAssertTrue(contained)
+        }
+        let count = await relaunched.count()
+        XCTAssertEqual(count, 3)
+    }
+
     /// Recursive path → "size|modification-date" map used to prove read-only behavior.
     private func snapshot(of root: URL) throws -> [String: String] {
         var result: [String: String] = [:]
