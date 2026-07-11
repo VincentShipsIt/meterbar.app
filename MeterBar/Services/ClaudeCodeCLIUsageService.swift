@@ -1,7 +1,10 @@
 import Foundation
 import MeterBarShared
 
-final class ClaudeCodeCLIUsageService: Sendable {
+/// `nonisolated`: opts the whole class out of the app target's default
+/// MainActor isolation — it owns no UI state and does blocking process I/O
+/// that must stay off the main actor (bridged via `processQueue`).
+nonisolated final class ClaudeCodeCLIUsageService: Sendable {
     static let shared = ClaudeCodeCLIUsageService()
 
     private let commandTimeout: TimeInterval = 12
@@ -103,7 +106,7 @@ final class ClaudeCodeCLIUsageService: Sendable {
     }
 }
 
-enum ClaudeCodeCLIUsageParser {
+nonisolated enum ClaudeCodeCLIUsageParser {
     static func parseMetrics(from text: String, now: Date = Date()) throws -> UsageMetrics {
         let sanitized = stripANSICodes(from: text)
         let lines = sanitized
@@ -261,7 +264,7 @@ enum ClaudeCodeCLIUsageError: LocalizedError {
     }
 }
 
-private extension Array where Element == String {
+nonisolated private extension Array where Element == String {
     subscript(safe index: Int) -> String? {
         indices.contains(index) ? self[index] : nil
     }

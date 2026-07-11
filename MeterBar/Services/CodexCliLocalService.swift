@@ -24,8 +24,9 @@ class CodexCliLocalService: ObservableObject {
 
     /// Raw bytes of `CODEX_HOME/auth.json`, behind a closure so tests can supply a
     /// fixture without a real credential file on disk (the auth file never
-    /// exists on CI). Defaults to reading the real path.
-    private let authFileDataProvider: () -> Data?
+    /// exists on CI). Defaults to reading the real path. `@Sendable` because the
+    /// read is disk I/O and must be callable off the main actor.
+    private nonisolated let authFileDataProvider: @Sendable () -> Data?
 
     @Published private(set) var hasAccess: Bool = false
     @Published private(set) var lastError: ServiceError?
@@ -33,14 +34,14 @@ class CodexCliLocalService: ObservableObject {
 
     /// Defaults reproduce the production singleton; tests inject a fixture
     /// auth-file provider.
-    init(authFileDataProvider: (() -> Data?)? = nil) {
-        self.authFileDataProvider = authFileDataProvider ?? CodexCliLocalService.defaultAuthFileDataProvider
+    init(authFileDataProvider: (@Sendable () -> Data?)? = nil) {
+        self.authFileDataProvider = authFileDataProvider ?? { CodexCliLocalService.defaultAuthFileDataProvider() }
         Task.detached(priority: .utility) { [weak self] in self?.checkAccess() }
     }
 
     /// Reads `CODEX_HOME/auth.json` using the same resolver as readiness,
     /// activity, and cost scans.
-    private static func defaultAuthFileDataProvider() -> Data? {
+    private nonisolated static func defaultAuthFileDataProvider() -> Data? {
         let path = CodexHomeDirectory.authFilePath()
         guard FileManager.default.fileExists(atPath: path) else { return nil }
         return FileManager.default.contents(atPath: path)
@@ -49,8 +50,9 @@ class CodexCliLocalService: ObservableObject {
     // MARK: - Auth File Access
 
     /// Read OAuth access token from `CODEX_HOME/auth.json`.
-    /// This file is created and maintained by the Codex CLI when user logs in
-    func getAuthToken() -> String? {
+    /// This file is created and maintained by the Codex CLI when user logs in.
+    /// `nonisolated`: disk I/O — never call this synchronously from the main actor.
+    nonisolated func getAuthToken() -> String? {
         guard let token = readAuthFile()?.tokens?.accessToken else {
             return nil
         }
@@ -64,17 +66,17 @@ class CodexCliLocalService: ObservableObject {
 
     /// Read account ID from `CODEX_HOME/auth.json`.
     /// Required for the ChatGPT-Account-Id header to get team/workspace data
-    func getAccountId() -> String? {
+    nonisolated func getAccountId() -> String? {
         readAuthFile()?.tokens?.accountId
     }
 
-    private func readAuthFile() -> CodexAuthFile? {
+    private nonisolated func readAuthFile() -> CodexAuthFile? {
         guard let data = authFileDataProvider() else { return nil }
         return try? JSONDecoder().decode(CodexAuthFile.self, from: data)
     }
 
     /// Check and update access status
-    func checkAccess() {
+    nonisolated func checkAccess() {
         let hasToken = getAuthToken() != nil
         ServiceSupport.applyOnMain { [weak self] in
             guard let self else { return }
@@ -86,7 +88,13 @@ class CodexCliLocalService: ObservableObject {
     // MARK: - Usage Fetching
 
     func fetchUsageMetrics() async throws -> UsageMetrics {
-        guard let token = getAuthToken() else {
+        // Auth-file read is disk I/O; the app target runs async bodies on the
+        // main actor (default MainActor isolation), so hop off explicitly.
+        let auth = await Task.detached(priority: .userInitiated) { [self] in
+            (token: getAuthToken(), accountId: getAccountId())
+        }.value
+
+        guard let token = auth.token else {
             let error = ServiceError.notAuthenticated
             await MainActor.run {
                 self.lastError = error
@@ -107,7 +115,7 @@ class CodexCliLocalService: ObservableObject {
 
         // CRITICAL: Include ChatGPT-Account-Id header to get team/workspace data
         // Without this header, API returns free plan data even for team accounts
-        if let accountId = getAccountId() {
+        if let accountId = auth.accountId {
             request.setValue(accountId, forHTTPHeaderField: "ChatGPT-Account-Id")
         }
 
@@ -165,7 +173,7 @@ class CodexCliLocalService: ObservableObject {
 // MARK: - Response Models
 
 /// Response structure for Codex CLI usage API from https://chatgpt.com/backend-api/wham/usage
-struct CodexCliUsageResponse: Codable {
+nonisolated struct CodexCliUsageResponse: Codable {
     let planType: String
     let rateLimit: RateLimit?  // Can be null for free accounts
     let codeReviewRateLimit: CodeReviewRateLimit?
@@ -308,7 +316,7 @@ extension CodexCliUsageResponse {
 }
 
 /// Optional per-account spending cap returned by the Codex usage API.
-struct SpendControl: Codable {
+nonisolated struct SpendControl: Codable {
     let reached: Bool
     let individualLimit: Double?
 
@@ -338,7 +346,7 @@ struct SpendControl: Codable {
 }
 
 /// Banked rate-limit resets the account can trigger on demand, from the Codex usage API.
-struct RateLimitResetCredits: Codable {
+nonisolated struct RateLimitResetCredits: Codable {
     /// How many resets are currently available to use. `nil` if absent/null.
     let availableCount: Int?
 
@@ -347,7 +355,7 @@ struct RateLimitResetCredits: Codable {
     }
 }
 
-struct RateLimit: Codable {
+nonisolated struct RateLimit: Codable {
     let allowed: Bool
     let limitReached: Bool
     let primaryWindow: LimitWindow
@@ -363,7 +371,7 @@ struct RateLimit: Codable {
 
 typealias CodeReviewRateLimit = RateLimit
 
-struct LimitWindow: Codable {
+nonisolated struct LimitWindow: Codable {
     let usedPercent: Double
     let limitWindowSeconds: Int
     let resetAfterSeconds: Int
@@ -377,7 +385,7 @@ struct LimitWindow: Codable {
     }
 }
 
-struct Credits: Codable {
+nonisolated struct Credits: Codable {
     let hasCredits: Bool
     let unlimited: Bool
     let overageLimitReached: Bool
@@ -439,7 +447,7 @@ struct Credits: Codable {
 // MARK: - Auth File Models
 
 /// Structure of `CODEX_HOME/auth.json`.
-struct CodexAuthFile: Codable {
+nonisolated struct CodexAuthFile: Codable {
     let openaiApiKey: String?
     let tokens: CodexTokens?
     let lastRefresh: String?
@@ -451,7 +459,7 @@ struct CodexAuthFile: Codable {
     }
 }
 
-struct CodexTokens: Codable {
+nonisolated struct CodexTokens: Codable {
     let idToken: String?
     let accessToken: String?
     let refreshToken: String?

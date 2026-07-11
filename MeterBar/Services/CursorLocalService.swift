@@ -10,7 +10,9 @@ import SQLite3
 /// Reads authentication token from Cursor's local SQLite database and calls dashboard APIs.
 /// Based on: https://github.com/darzhang/cursor-stats-lite
 class CursorLocalService: ObservableObject {
-    static let shared = CursorLocalService()
+    // nonisolated: lets the nonisolated readiness inspector reference the
+    // singleton (methods keep their own isolation).
+    nonisolated static let shared = CursorLocalService()
 
     // API endpoint (from Vibeviewer: https://github.com/MarveleE/Vibeviewer)
     private let usageSummaryEndpoint = "https://cursor.com/api/usage-summary"
@@ -37,8 +39,10 @@ class CursorLocalService: ObservableObject {
     // MARK: - Database Access (cursor-stats approach)
 
     /// Get the path to Cursor's state database
-    /// Scans multiple possible locations and optionally searches recursively
-    private func getCursorDatabasePath(forceRescan: Bool = false) -> String? {
+    /// Scans multiple possible locations and optionally searches recursively.
+    /// `nonisolated`: filesystem I/O (recursive when rescanning) — never call
+    /// synchronously from the main actor.
+    private nonisolated func getCursorDatabasePath(forceRescan: Bool = false) -> String? {
         let homeDir = ServiceSupport.realHomeDirectory()
         let fileManager = FileManager.default
 
@@ -75,7 +79,7 @@ class CursorLocalService: ObservableObject {
     }
 
     /// Recursively search for a database file in a directory
-    private func findDatabaseRecursively(in directory: String, filename: String) -> String? {
+    private nonisolated func findDatabaseRecursively(in directory: String, filename: String) -> String? {
         let fileManager = FileManager.default
 
         guard fileManager.fileExists(atPath: directory),
@@ -93,9 +97,11 @@ class CursorLocalService: ObservableObject {
         return nil
     }
 
-    /// Read access token from Cursor's SQLite database
+    /// Read access token from Cursor's SQLite database.
+    /// `nonisolated`: opens and queries `state.vscdb` (often large and actively
+    /// WAL-written by Cursor) — never call synchronously from the main actor.
     /// - Parameter forceRescan: If true, will recursively search for database if not found in primary paths
-    func getAccessTokenFromDatabase(forceRescan: Bool = false) -> (userId: String, token: String)? {
+    nonisolated func getAccessTokenFromDatabase(forceRescan: Bool = false) -> (userId: String, token: String)? {
         guard let dbPath = getCursorDatabasePath(forceRescan: forceRescan) else {
             // Database not found - Cursor may not be installed, which is okay
             return nil
@@ -151,7 +157,7 @@ class CursorLocalService: ObservableObject {
     /// Uses the same path scan and read-only open as `getAccessTokenFromDatabase`,
     /// but reports *why* auth is unavailable (not found / unreadable / no token)
     /// instead of just a token, and never returns the token value itself.
-    func probeReadinessDatabase() -> CursorDatabaseProbe {
+    nonisolated func probeReadinessDatabase() -> CursorDatabaseProbe {
         guard let dbPath = getCursorDatabasePath(forceRescan: false)
             ?? getCursorDatabasePath(forceRescan: true) else {
             return .notFound
@@ -185,7 +191,7 @@ class CursorLocalService: ObservableObject {
 
     /// Extract userId from JWT token's 'sub' claim.
     /// Static + internal so it is unit-testable without a Cursor DB or network.
-    static func extractUserIdFromJWT(_ token: String) -> String? {
+    nonisolated static func extractUserIdFromJWT(_ token: String) -> String? {
         guard let sub = JWT.claimString("sub", in: token) else { return nil }
 
         // Extract userId from sub claim
@@ -203,9 +209,11 @@ class CursorLocalService: ObservableObject {
         "\(userId)%3A%3A\(token)"
     }
 
-    /// Check and update access status
+    /// Check and update access status.
+    /// `nonisolated`: reads the Cursor SQLite DB (and recursively scans the
+    /// Cursor directory when `forceRescan`) — call from a detached task.
     /// - Parameter forceRescan: If true, will recursively search for database if not found in primary paths
-    func checkAccess(forceRescan: Bool = false) {
+    nonisolated func checkAccess(forceRescan: Bool = false) {
         let hasToken = getAccessTokenFromDatabase(forceRescan: forceRescan) != nil
         ServiceSupport.applyOnMain { [weak self] in
             guard let self else { return }
@@ -217,9 +225,16 @@ class CursorLocalService: ObservableObject {
     // MARK: - Usage Fetching
 
     func fetchUsageMetrics() async throws -> UsageMetrics {
-        // Try without rescan first (faster), then with rescan if needed
-        guard let (userId, token) = getAccessTokenFromDatabase(forceRescan: false)
-            ?? getAccessTokenFromDatabase(forceRescan: true) else {
+        // SQLite read (plus a recursive directory scan on a miss) is blocking
+        // I/O; the app target runs async bodies on the main actor (default
+        // MainActor isolation), so hop off explicitly. Try without rescan first
+        // (faster), then with rescan if needed.
+        let credentials = await Task.detached(priority: .userInitiated) { [self] in
+            getAccessTokenFromDatabase(forceRescan: false)
+                ?? getAccessTokenFromDatabase(forceRescan: true)
+        }.value
+
+        guard let (userId, token) = credentials else {
             let error = ServiceError.notAuthenticated
             await MainActor.run {
                 self.lastError = error
@@ -341,7 +356,7 @@ class CursorLocalService: ObservableObject {
 
 /// Response from https://cursor.com/api/usage-summary
 /// Based on Vibeviewer implementation
-struct CursorUsageSummaryResponse: Decodable {
+nonisolated struct CursorUsageSummaryResponse: Decodable {
     let billingCycleStart: String?
     let billingCycleEnd: String?
     let membershipType: String?
@@ -350,12 +365,12 @@ struct CursorUsageSummaryResponse: Decodable {
     let teamUsage: CursorTeamUsage?
 }
 
-struct CursorIndividualUsage: Decodable {
+nonisolated struct CursorIndividualUsage: Decodable {
     let plan: CursorPlanUsage?
     let onDemand: CursorOnDemandUsage?
 }
 
-struct CursorPlanUsage: Decodable {
+nonisolated struct CursorPlanUsage: Decodable {
     let used: Int?
     let limit: Int?
     let remaining: Int?
@@ -364,14 +379,14 @@ struct CursorPlanUsage: Decodable {
     let total: Int?
 }
 
-struct CursorOnDemandUsage: Decodable {
+nonisolated struct CursorOnDemandUsage: Decodable {
     let used: Int?
     let limit: Int?
     let remaining: Int?
     let enabled: Bool?
 }
 
-struct CursorTeamUsage: Decodable {
+nonisolated struct CursorTeamUsage: Decodable {
     let plan: CursorPlanUsage?
     let onDemand: CursorOnDemandUsage?
 }
