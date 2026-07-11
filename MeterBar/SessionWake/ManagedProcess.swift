@@ -175,7 +175,11 @@ nonisolated enum ManagedProcess {
         // whole group to force the inherited fds closed, then wait for the drains.
         if drains.wait(timeout: .now() + drainGrace) == .timedOut {
             Cancellation.killGroup(pid, signal: SIGKILL)
-            drains.wait()
+            // The group kill can't reach a descendant that re-sessioned via
+            // setsid(); if it still holds a write end, bound this wait too and
+            // return with the bytes counted so far — one leaked drain block is
+            // better than run() never returning.
+            _ = drains.wait(timeout: .now() + drainGrace)
         }
 
         return Result(
@@ -270,12 +274,26 @@ nonisolated enum ManagedProcess {
         Cancellation.killGroup(pid, signal: SIGTERM)
         let graceDeadline = Date().addingTimeInterval(terminationGrace)
         var status: Int32 = 0
+        var reaped = false
         while Date() < graceDeadline {
-            if waitpid(pid, &status, WNOHANG) == pid { return }
+            if waitpid(pid, &status, WNOHANG) == pid {
+                reaped = true
+                break
+            }
             usleep(20_000)
         }
+        // SIGKILL the group even when the leader reaped within the grace: a
+        // grandchild that traps SIGTERM would otherwise outlive the timeout,
+        // losing the class's tree-cleanup guarantee. While any group member
+        // survives, POSIX forbids recycling the pid as another group's pgid,
+        // so this cannot target an unrelated tree; on an empty group it is a
+        // harmless ESRCH.
         Cancellation.killGroup(pid, signal: SIGKILL)
-        _ = waitpid(pid, &status, 0)
+        if !reaped {
+            while waitpid(pid, &status, 0) == -1 && errno == EINTR {
+                continue
+            }
+        }
     }
 
     private static func _WSTATUS(_ status: Int32) -> Int32 { status & 0x7F }

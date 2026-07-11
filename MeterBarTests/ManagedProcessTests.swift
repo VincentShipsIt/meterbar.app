@@ -178,7 +178,9 @@ final class ManagedProcessTests: XCTestCase {
         try script.write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
 
-        let result = await run(url.path, env: ["WAKE_TERM_MARKER": marker.path], timeout: 1)
+        // Generous timeout so a slow CI runner has installed the trap before
+        // SIGTERM lands; the default disposition would kill bash markerless.
+        let result = await run(url.path, env: ["WAKE_TERM_MARKER": marker.path], timeout: 2.5)
         XCTAssertEqual(result.termination, .timedOut)
         let recorded = try String(contentsOf: marker, encoding: .utf8)
         XCTAssertTrue(recorded.contains("TERMED"), "child did not receive SIGTERM before SIGKILL")
