@@ -55,6 +55,10 @@ nonisolated final class WakeLock: @unchecked Sendable {
     private let stateLock = NSLock()
     private var fileDescriptor: Int32 = -1
 
+    /// Resolved once — `hostName` can trigger reverse-DNS and stall, which we
+    /// never want inside `acquire()`'s critical section.
+    private static let cachedHostName = ProcessInfo.processInfo.hostName
+
     init(lockURL: URL? = nil, legacyLockURLs: [URL]? = nil, holderKind: WakeLockHolder.Kind = .app) {
         self.lockURL = lockURL
             ?? WakePaths.defaultBaseDirectory().appendingPathComponent("wake.lock")
@@ -90,7 +94,10 @@ nonisolated final class WakeLock: @unchecked Sendable {
         // descriptor. `LOCK_NB` keeps the critical section non-blocking.
         return stateLock.withLock {
             guard fileDescriptor < 0 else { return .acquired }
-            let descriptor = open(lockURL.path, O_CREAT | O_RDWR, 0o600)
+            // O_CLOEXEC so the spawned `claude` child does not inherit the
+            // held flock fd — otherwise a parent that dies mid-run leaves the
+            // child holding the lock with a dead pid in the descriptor.
+            let descriptor = open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
             guard descriptor >= 0 else {
                 return .unavailable(reason: "open lock: \(String(cString: strerror(errno)))")
             }
@@ -132,10 +139,12 @@ nonisolated final class WakeLock: @unchecked Sendable {
     /// Write our descriptor into the freshly-locked file for contenders to read.
     /// Best-effort: a failed write degrades a contender's message, never the lock.
     private func writeHolder(to descriptor: Int32) {
+        // hostName can stall on reverse-DNS; resolve it before we are called
+        // (inside the stateLock critical section) — see cachedHostName.
         let holder = WakeLockHolder(
             kind: holderKind,
             pid: getpid(),
-            host: ProcessInfo.processInfo.hostName,
+            host: WakeLock.cachedHostName,
             startedAtEpoch: Date().timeIntervalSince1970
         )
         guard let data = try? JSONEncoder().encode(holder) else { return }

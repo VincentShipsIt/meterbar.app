@@ -162,6 +162,31 @@ final class WakeRunnerTests: XCTestCase {
                        "A non-zero exit whose output signals the approval gate must classify as permissionDenied")
     }
 
+    func testPermissionDenialSurvivesCaptureTruncatedMidMultibyte() async throws {
+        // The bounded capture keeps the leading 64 KiB; when that boundary
+        // splits a multibyte character, a STRICT utf8 decode returns nil and
+        // would drop the whole capture — losing the denial phrase in exactly
+        // the long-output case the sink exists for. Lossy decoding must retain
+        // it. The fake emits the phrase, then enough 3-byte characters that the
+        // 65536-byte boundary lands one byte into the final character.
+        let denialFake = tempDir.appendingPathComponent("denial-fill.sh")
+        // Raw string so `\n` and `\x{597d}` reach bash/perl literally, not the
+        // Swift compiler. 18-byte phrase + 21840×3-byte chars = 65538 bytes;
+        // the retained leading 65536 ends one byte into the final character.
+        let script = #"""
+        #!/bin/bash
+        { printf 'requires approval\n'; perl -e 'print "\x{597d}" x 21840'; } >&2
+        exit 1
+        """#
+        try script.write(to: denialFake, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: denialFake.path)
+
+        let runner = makeRunner(fake: denialFake.path, env: [:])
+        let outcome = await runner.run(candidate(cwd: tempDir.path), bounds: .default)
+        XCTAssertEqual(outcome, .permissionDenied,
+                       "A denial phrase must classify even when the capture is truncated mid-character")
+    }
+
     func testDenialPhrasesOnSuccessfulExitStaySuccess() async throws {
         let fake = try makeFake()
         // A run that *mentions* permissions but exits 0 succeeded — classification
@@ -248,6 +273,37 @@ final class WakeRunnerTests: XCTestCase {
         first.release()
         XCTAssertEqual(second.acquire(), .acquired)
         second.release()
+    }
+
+    func testExternallyLockedRunnerDoesNotSelfContend() async throws {
+        // The CLI engine holds the shared lock for its whole pass; a runner it
+        // creates must not open a second descriptor on the same file — flock
+        // treats same-process descriptors as distinct holders, so re-acquiring
+        // would fail every real `meterbar wake` resume.
+        let fake = try makeFake()
+        let out = tempDir.appendingPathComponent("out.txt")
+        let lockURL = tempDir.appendingPathComponent("wake.lock")
+        let engineLock = WakeLock(lockURL: lockURL, legacyLockURLs: [], holderKind: .cli)
+        guard case .acquired = engineLock.acquire() else {
+            return XCTFail("engine lock must acquire")
+        }
+        defer { engineLock.release() }
+
+        var env = ["WAKE_TEST_OUT": out.path]
+        env["PATH"] = "/usr/bin:/bin"
+        let runner = WakeProcessRunner(
+            account: account(),
+            executable: fake,
+            baseEnvironment: env,
+            lockFactory: {
+                XCTFail("externally locked runner must not consult the lock factory")
+                return WakeLock(lockURL: lockURL, legacyLockURLs: [])
+            },
+            assumesExternalLock: true,
+            logger: WakeRunLogger(directory: self.tempDir.appendingPathComponent("logs"))
+        )
+        let outcome = await runner.run(candidate(cwd: tempDir.path), bounds: .default)
+        XCTAssertEqual(outcome, .succeeded, "runner must not self-contend with the engine's held lock")
     }
 
     func testLockHolderCarriesCLIKind() {
