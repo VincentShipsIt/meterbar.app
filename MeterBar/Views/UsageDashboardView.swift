@@ -19,6 +19,7 @@ final class UsageDashboardWindowController {
     static let shared = UsageDashboardWindowController()
 
     private var window: NSWindow?
+    private var closeObserver: NSObjectProtocol?
 
     private init() {}
 
@@ -45,10 +46,37 @@ final class UsageDashboardWindowController {
             window.isReleasedWhenClosed = false
             window.center()
             self.window = window
+
+            // Discard the window on close instead of resurrecting it forever.
+            // A long-lived cached window can accumulate stale window-server
+            // state (observed: a corner radius stuck at ~35pt instead of the
+            // standard ~26pt after display changes during a long uptime);
+            // recreating per open keeps the chrome fresh, matching the
+            // lifecycle a SwiftUI Window scene gives MacSweep.
+            closeObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: window,
+                queue: .main
+            ) { _ in
+                // Delivered on the main queue; tear down synchronously so a
+                // reopen between close and a deferred hop can't order-front
+                // the dying window and orphan it.
+                MainActor.assumeIsolated {
+                    UsageDashboardWindowController.shared.windowDidClose()
+                }
+            }
         }
 
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    private func windowDidClose() {
+        if let closeObserver {
+            NotificationCenter.default.removeObserver(closeObserver)
+        }
+        closeObserver = nil
+        window = nil
     }
 }
 
@@ -84,6 +112,22 @@ enum DashboardSection: String, CaseIterable, Identifiable, Hashable {
             return "gearshape.fill"
         }
     }
+
+    /// Sidebar layout: frequency-ordered monitoring pages first, then health
+    /// checks, then utilities. Settings is reached via the toolbar gear, not
+    /// the sidebar (app-level function, not a content destination).
+    struct SidebarGroup: Identifiable {
+        let title: String?
+        let sections: [DashboardSection]
+
+        var id: String { sections.first?.id ?? title ?? "" }
+    }
+
+    static let sidebarGroups: [SidebarGroup] = [
+        SidebarGroup(title: nil, sections: [.overview, .limits, .costs, .optimize]),
+        SidebarGroup(title: "Health", sections: [.status, .diagnostics]),
+        SidebarGroup(title: "Utilities", sections: [.share]),
+    ]
 
     var titlebarSubtitle: String {
         switch self {
@@ -188,6 +232,7 @@ struct UsageDashboardView: View {
             detailContent
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
+                        settingsToolbarButton
                         refreshToolbarButton
                     }
                 }
@@ -197,9 +242,17 @@ struct UsageDashboardView: View {
 
     private var sidebarList: some View {
         List(selection: selectedSection) {
-            ForEach(DashboardSection.allCases) { section in
-                Label(section.rawValue, systemImage: section.iconName)
-                    .tag(section)
+            ForEach(DashboardSection.sidebarGroups) { group in
+                Section {
+                    ForEach(group.sections) { section in
+                        Label(section.rawValue, systemImage: section.iconName)
+                            .tag(section)
+                    }
+                } header: {
+                    if let title = group.title {
+                        Text(title)
+                    }
+                }
             }
         }
         .listStyle(.sidebar)
@@ -215,6 +268,16 @@ struct UsageDashboardView: View {
         }
         .help(isRefreshButtonAnimating ? "Refreshing usage" : "Refresh usage")
         .disabled(isRefreshButtonDisabled)
+    }
+
+    private var settingsToolbarButton: some View {
+        Button {
+            navigation.navigate(to: .settings)
+        } label: {
+            Image(systemName: "gearshape")
+                .symbolVariant(activeSection == .settings ? .fill : .none)
+        }
+        .help("Settings")
     }
 
     private var detailContent: some View {
@@ -277,19 +340,7 @@ struct UsageDashboardView: View {
     }
 
     private var limitsContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("All Quota Windows")
-                    .font(.title3)
-                    .bold()
-                Spacer()
-                if dataManager.isLoading {
-                    Text("Refreshing...")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-
+        VStack(alignment: .leading, spacing: 14) {
             if providerSnapshots.isEmpty {
                 DashboardCard(title: "No Quota Windows") {
                     Text("Enable providers in Settings to show quota windows.")
@@ -371,14 +422,11 @@ struct UsageDashboardView: View {
                 }
             }
 
-            ForEach(ServiceType.allCases) { service in
-                ProviderStatusDashboardCard(
-                    service: service,
-                    report: providerStatusMonitor.reports[service],
-                    error: providerStatusMonitor.errors[service],
-                    openStatusPage: openStatusPage
-                )
-            }
+            ProviderStatusTable(
+                reports: providerStatusMonitor.reports,
+                errors: providerStatusMonitor.errors,
+                openStatusPage: openStatusPage
+            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .task {

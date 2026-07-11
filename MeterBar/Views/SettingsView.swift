@@ -421,9 +421,12 @@ struct SettingsView: View {
                     )
 
                     Button(codexCliService.hasAccess ? "Refresh" : "Check Again") {
-                        codexCliService.checkAccess()
-                        if codexCliService.hasAccess {
-                            Task {
+                        // checkAccess does disk I/O — run it off the main actor
+                        // (a plain Task would inherit MainActor and block the UI).
+                        Task {
+                            let service = codexCliService
+                            await Task.detached(priority: .userInitiated) { service.checkAccess() }.value
+                            if codexCliService.hasAccess {
                                 await dataManager.refresh(service: .codexCli)
                             }
                         }
@@ -621,9 +624,12 @@ struct SettingsView: View {
                     StatusPill(title: claudeCodeService.authState.statusText, isConnected: claudeCodeService.hasAccess)
 
                     Button(claudeCodeService.hasAccess ? "Refresh" : "Check Again") {
-                        claudeCodeService.checkAccess()
-                        if claudeCodeService.hasAccess {
-                            Task {
+                        // checkAccess can hit the keychain (blocking approval
+                        // dialog) — run it off the main actor.
+                        Task {
+                            let service = claudeCodeService
+                            await Task.detached(priority: .userInitiated) { service.checkAccess() }.value
+                            if claudeCodeService.hasAccess {
                                 await dataManager.refreshAll()
                             }
                         }
@@ -667,7 +673,9 @@ struct SettingsView: View {
                     get: { oauthFallbackEnabled },
                     set: { enabled in
                         oauthFallbackEnabled = enabled
-                        claudeCodeService.checkAccess()
+                        // Keychain/file I/O — keep it off the main actor.
+                        let service = claudeCodeService
+                        Task.detached(priority: .userInitiated) { service.checkAccess() }
                     }
                 ))
                 .labelsHidden()
@@ -725,9 +733,14 @@ struct SettingsView: View {
                     )
 
                     Button(cursorService.hasAccess ? "Refresh" : "Check Again") {
-                        cursorService.checkAccess(forceRescan: true)
-                        if cursorService.hasAccess {
-                            Task {
+                        // forceRescan walks the whole Cursor directory tree —
+                        // the worst main-thread stall in the app; run detached.
+                        Task {
+                            let service = cursorService
+                            await Task.detached(priority: .userInitiated) {
+                                service.checkAccess(forceRescan: true)
+                            }.value
+                            if cursorService.hasAccess {
                                 await dataManager.refreshAll()
                             }
                         }
@@ -1094,14 +1107,21 @@ struct SettingsView: View {
 
     private func refreshProvider(_ service: ServiceType) {
         Task {
-            switch service {
-            case .claudeCode:
-                claudeCodeService.checkAccess()
-            case .codexCli:
-                codexCliService.checkAccess()
-            case .cursor:
-                cursorService.checkAccess(forceRescan: true)
-            }
+            // Access checks do disk/keychain I/O; a plain Task inherits the
+            // main actor here, so hop to a detached task for the check itself.
+            let claudeCode = claudeCodeService
+            let codexCli = codexCliService
+            let cursor = cursorService
+            await Task.detached(priority: .userInitiated) {
+                switch service {
+                case .claudeCode:
+                    claudeCode.checkAccess()
+                case .codexCli:
+                    codexCli.checkAccess()
+                case .cursor:
+                    cursor.checkAccess(forceRescan: true)
+                }
+            }.value
             await dataManager.refresh(service: service)
         }
     }

@@ -9,7 +9,7 @@ import WidgetKit
 /// Public so the meterbar CLI reads the same file through the same code path
 /// instead of maintaining its own copy of the location and decode logic.
 /// `@unchecked Sendable`: all stored properties are immutable and disk writes
-/// are serialized on `ioQueue`.
+/// are serialized on `ioQueue`, so instances are safe to use from any actor.
 nonisolated public final class SharedDataStore: @unchecked Sendable {
     public static let shared = SharedDataStore()
 

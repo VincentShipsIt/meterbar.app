@@ -1,6 +1,9 @@
 import Foundation
 import MeterBarShared
 
+/// `nonisolated`: opts the whole class out of the app target's default
+/// MainActor isolation — it owns no UI state and does blocking process I/O
+/// that must stay off the main actor (bridged via `processQueue`).
 nonisolated final class ClaudeCodeCLIUsageService: Sendable {
     static let shared = ClaudeCodeCLIUsageService()
 
@@ -237,7 +240,7 @@ nonisolated enum ClaudeCodeCLIUsageParser {
     }
 }
 
-nonisolated enum ClaudeCodeCLIUsageError: LocalizedError {
+enum ClaudeCodeCLIUsageError: LocalizedError {
     case cliNotFound
     case launchFailed(String)
     case timedOut

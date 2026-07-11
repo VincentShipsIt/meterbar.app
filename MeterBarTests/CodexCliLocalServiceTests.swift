@@ -172,4 +172,59 @@ final class CodexCliLocalServiceTests: XCTestCase {
         let service = CodexCliLocalService(authFileDataProvider: { Data("not json".utf8) })
         XCTAssertNil(service.getAuthToken())
     }
+
+    // MARK: - Main-thread hygiene
+
+    /// The auth-file read is disk I/O and must never run on the main thread when
+    /// triggered through the async fetch path. The Xcode app target builds with
+    /// default MainActor isolation, where an un-hopped read would land on main
+    /// and beachball the UI (the SwiftPM test build is laxer — this pins the
+    /// contract so the explicit off-main hop is not reverted).
+    @MainActor
+    func testFetchUsageMetricsReadsAuthFileOffMainThread() async {
+        final class ThreadRecorder: @unchecked Sendable {
+            private let lock = NSLock()
+            private var sawMainThread = false
+            private var callCount = 0
+            func record() {
+                lock.lock()
+                defer { lock.unlock() }
+                if Thread.isMainThread { sawMainThread = true }
+                callCount += 1
+            }
+            var wasCalledOnMainThread: Bool {
+                lock.lock()
+                defer { lock.unlock() }
+                return sawMainThread
+            }
+            var wasCalled: Bool {
+                lock.lock()
+                defer { lock.unlock() }
+                return callCount > 0
+            }
+        }
+
+        let recorder = ThreadRecorder()
+        // No auth file → fetch throws notAuthenticated before any network call,
+        // but only after consulting the provider (the part under test).
+        let service = CodexCliLocalService(authFileDataProvider: {
+            recorder.record()
+            return nil
+        })
+
+        await Task.yield() // let the init-time detached checkAccess drain first
+
+        do {
+            _ = try await service.fetchUsageMetrics()
+            XCTFail("Expected notAuthenticated")
+        } catch {
+            // expected
+        }
+
+        XCTAssertTrue(recorder.wasCalled, "fetch must consult the auth file")
+        XCTAssertFalse(
+            recorder.wasCalledOnMainThread,
+            "auth-file read ran on the main thread — blocking I/O must hop off main"
+        )
+    }
 }

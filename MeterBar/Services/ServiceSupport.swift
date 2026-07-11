@@ -140,11 +140,15 @@ nonisolated enum ServiceSupport {
     /// Runs `block` on the main thread — synchronously when already there, so
     /// callers on the main thread observe the state change immediately
     /// (SettingsView reads `hasAccess` right after calling `checkAccess()`).
-    static func applyOnMain(_ block: @escaping @MainActor @Sendable () -> Void) {
+    /// `@MainActor` on the closure lets nonisolated service code mutate
+    /// main-actor `@Published` state through here without isolation warnings.
+    static func applyOnMain(_ block: @escaping @MainActor () -> Void) {
         if Thread.isMainThread {
             MainActor.assumeIsolated(block)
         } else {
-            DispatchQueue.main.async { block() }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated(block)
+            }
         }
     }
 
