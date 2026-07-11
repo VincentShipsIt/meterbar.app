@@ -42,7 +42,7 @@ class CursorLocalService: ObservableObject {
     /// Scans multiple possible locations and optionally searches recursively.
     /// `nonisolated`: filesystem I/O (recursive when rescanning) — never call
     /// synchronously from the main actor.
-    private nonisolated func getCursorDatabasePath(forceRescan: Bool = false) -> String? {
+    nonisolated private func getCursorDatabasePath(forceRescan: Bool = false) -> String? {
         let homeDir = ServiceSupport.realHomeDirectory()
         let fileManager = FileManager.default
 
@@ -79,7 +79,7 @@ class CursorLocalService: ObservableObject {
     }
 
     /// Recursively search for a database file in a directory
-    private nonisolated func findDatabaseRecursively(in directory: String, filename: String) -> String? {
+    nonisolated private func findDatabaseRecursively(in directory: String, filename: String) -> String? {
         let fileManager = FileManager.default
 
         guard fileManager.fileExists(atPath: directory),

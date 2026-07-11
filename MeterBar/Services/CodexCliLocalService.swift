@@ -26,7 +26,7 @@ class CodexCliLocalService: ObservableObject {
     /// fixture without a real credential file on disk (the auth file never
     /// exists on CI). Defaults to reading the real path. `@Sendable` because the
     /// read is disk I/O and must be callable off the main actor.
-    private nonisolated let authFileDataProvider: @Sendable () -> Data?
+    nonisolated private let authFileDataProvider: @Sendable () -> Data?
 
     @Published private(set) var hasAccess: Bool = false
     @Published private(set) var lastError: ServiceError?
@@ -41,7 +41,7 @@ class CodexCliLocalService: ObservableObject {
 
     /// Reads `CODEX_HOME/auth.json` using the same resolver as readiness,
     /// activity, and cost scans.
-    private nonisolated static func defaultAuthFileDataProvider() -> Data? {
+    nonisolated private static func defaultAuthFileDataProvider() -> Data? {
         let path = CodexHomeDirectory.authFilePath()
         guard FileManager.default.fileExists(atPath: path) else { return nil }
         return FileManager.default.contents(atPath: path)
@@ -70,7 +70,7 @@ class CodexCliLocalService: ObservableObject {
         readAuthFile()?.tokens?.accountId
     }
 
-    private nonisolated func readAuthFile() -> CodexAuthFile? {
+    nonisolated private func readAuthFile() -> CodexAuthFile? {
         guard let data = authFileDataProvider() else { return nil }
         return try? JSONDecoder().decode(CodexAuthFile.self, from: data)
     }

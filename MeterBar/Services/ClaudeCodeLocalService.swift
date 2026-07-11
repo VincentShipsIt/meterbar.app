@@ -57,7 +57,7 @@ class ClaudeCodeLocalService: ObservableObject {
         return credentials.claudeAiOauth.accessToken
     }
 
-    private nonisolated func getCredentials() -> ClaudeCodeCredentials? {
+    nonisolated private func getCredentials() -> ClaudeCodeCredentials? {
         guard let data = credentialsData() else { return nil }
         return try? JSONDecoder().decode(ClaudeCodeCredentials.self, from: data)
     }
@@ -284,7 +284,7 @@ class ClaudeCodeLocalService: ObservableObject {
         }
     }
 
-    private nonisolated var isOAuthFallbackEnabled: Bool {
+    nonisolated private var isOAuthFallbackEnabled: Bool {
         UserDefaults.standard.bool(forKey: oauthFallbackUserDefaultsKey)
     }
 
