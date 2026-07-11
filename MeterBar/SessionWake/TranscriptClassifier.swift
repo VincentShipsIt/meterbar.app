@@ -86,7 +86,8 @@ nonisolated enum TranscriptClassifier {
         var resolvedSessionID: String?
         var cwd: String?
         var gitBranch: String?
-        var sawSidechain = false
+        var eventCount = 0
+        var sidechainEventCount = 0
 
         var lastDecisiveState: TranscriptState = .indeterminate
 
@@ -100,10 +101,20 @@ nonisolated enum TranscriptClassifier {
                 continue
             }
 
+            let isEvent = isEventRecord(record)
+            if isEvent { eventCount += 1 }
+
+            // A subagent (sidechain) line describes a child agent, not this
+            // session: it never sets the mainline terminal state and never
+            // contributes this session's metadata.
+            if record.isSidechain {
+                if isEvent { sidechainEventCount += 1 }
+                continue
+            }
+
             resolvedSessionID = resolvedSessionID ?? record.sessionID
             if let recordCwd = record.cwd, !recordCwd.isEmpty { cwd = recordCwd }
             if let branch = record.gitBranch, !branch.isEmpty { gitBranch = branch }
-            if record.isSidechain { sawSidechain = true }
 
             guard let timestamp = record.timestamp else { continue }
 
@@ -119,13 +130,28 @@ nonisolated enum TranscriptClassifier {
             }
         }
 
+        // A transcript is a subagent transcript only when *every* event line is
+        // sidechain. A mainline session that merely spawned subagents keeps its
+        // own terminal state and stays discoverable.
+        let isSubagent = eventCount > 0 && sidechainEventCount == eventCount
         return TranscriptSummary(
             sessionID: resolvedSessionID ?? fallbackID,
             cwd: cwd,
             gitBranch: gitBranch,
-            isSidechain: sawSidechain,
-            state: lastDecisiveState
+            isSidechain: isSubagent,
+            state: isSubagent ? .indeterminate : lastDecisiveState
         )
+    }
+
+    /// Lines that carry conversational activity — the population the
+    /// all-sidechain test is measured against.
+    private static func isEventRecord(_ record: Record) -> Bool {
+        switch record.type {
+        case "assistant", "user", "tool_result":
+            return true
+        default:
+            return false
+        }
     }
 
     /// A 429/limit assistant error is the only kind of blocking event.
