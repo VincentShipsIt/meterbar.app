@@ -58,7 +58,10 @@ final class UsageDashboardWindowController {
                 object: window,
                 queue: .main
             ) { _ in
-                Task { @MainActor in
+                // Delivered on the main queue; tear down synchronously so a
+                // reopen between close and a deferred hop can't order-front
+                // the dying window and orphan it.
+                MainActor.assumeIsolated {
                     UsageDashboardWindowController.shared.windowDidClose()
                 }
             }
