@@ -7,7 +7,10 @@ import Foundation
 /// children) — Claude Code and Codex both touch top-level entries constantly
 /// while a session runs (`sessions/`, `session-env/`, sqlite WAL files), so a
 /// depth-1 scan is a reliable and cheap activity signal.
-enum AccountActivityInspector {
+/// `nonisolated`: pure filesystem probing with no shared state — opts out of
+/// the app target's default MainActor isolation so callers can (and must)
+/// run the scans off the main actor.
+nonisolated enum AccountActivityInspector {
     /// Newest modification date among a directory and its top-level entries,
     /// or nil when the directory doesn't exist.
     static func lastActivity(inDirectory path: String) -> Date? {

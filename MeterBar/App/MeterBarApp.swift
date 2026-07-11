@@ -40,6 +40,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// sticky selection so concurrent Claude + Codex use doesn't flip the title.
     private var shownStatusItemKey: String?
 
+    /// Monotonic stamp for status-item updates: activity probes run off the
+    /// main actor, so a stale in-flight result must not overwrite a newer one.
+    private var statusItemUpdateGeneration = 0
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Apply the persisted Dock visibility as early as possible so users who
         // hide MeterBar from the Dock don't see a brief Dock-icon flash.
@@ -537,12 +541,49 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateStatusItem(metrics: UsageDataManager.shared.metrics)
     }
 
+    /// One menu-bar-title candidate whose on-disk activity probe has not run
+    /// yet. The probe is a `@Sendable` closure so the filesystem scan can run
+    /// off the main actor (it previously ran inline here and stalled the UI).
+    private struct StatusLimitProbeRequest: Sendable {
+        let key: String
+        let displayName: String
+        let limit: UsageLimit
+        let probe: @Sendable () -> Date?
+    }
+
     @MainActor
     private func updateStatusItem(metrics: [ServiceType: UsageMetrics]) {
+        guard statusItem?.button != nil else { return }
+
+        // Gather the cheap main-actor inputs now; run the activity probes
+        // (directory scans) off the main actor; apply on return. A generation
+        // counter lets a newer update supersede an in-flight probe.
+        let requests = statusLimitProbeRequests(in: metrics)
+        statusItemUpdateGeneration += 1
+        let generation = statusItemUpdateGeneration
+
+        Task { [weak self] in
+            let candidates = await Task.detached(priority: .userInitiated) {
+                requests.map { request in
+                    StatusLimitCandidate(
+                        key: request.key,
+                        displayName: request.displayName,
+                        limit: request.limit,
+                        lastActivity: request.probe()
+                    )
+                }
+            }.value
+            guard let self, generation == self.statusItemUpdateGeneration else { return }
+            self.applyStatusItemSelection(candidates: candidates)
+        }
+    }
+
+    @MainActor
+    private func applyStatusItemSelection(candidates: [StatusLimitCandidate]) {
         guard let button = statusItem?.button else { return }
 
         guard let selection = StatusItemLimitSelector.select(
-            candidates: statusLimitCandidates(in: metrics),
+            candidates: candidates,
             previousKey: shownStatusItemKey
         ) else {
             shownStatusItemKey = nil
@@ -561,43 +602,42 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Every enabled account/provider quota that may own the menu bar title,
-    /// tagged with its latest on-disk activity so `StatusItemLimitSelector`
-    /// can follow the accounts actually in use.
+    /// each carrying a deferred probe for its latest on-disk activity so
+    /// `StatusItemLimitSelector` can follow the accounts actually in use.
     @MainActor
-    private func statusLimitCandidates(in metrics: [ServiceType: UsageMetrics]) -> [StatusLimitCandidate] {
-        var candidates: [StatusLimitCandidate] = []
+    private func statusLimitProbeRequests(in metrics: [ServiceType: UsageMetrics]) -> [StatusLimitProbeRequest] {
+        var requests: [StatusLimitProbeRequest] = []
 
         if providerVisibilityStore.isEnabled(.claudeCode) {
             for account in ClaudeCodeAccountStore.shared.accounts {
                 guard let limit = claudeMetrics(for: account, metrics: metrics)?.sessionLimit else { continue }
-                candidates.append(StatusLimitCandidate(
+                let configDirectory = account.configDirectory
+                requests.append(StatusLimitProbeRequest(
                     key: "claude:\(account.id.uuidString)",
                     displayName: "\(account.name) (\(ServiceType.claudeCode.displayName))",
                     limit: limit,
-                    lastActivity: AccountActivityInspector.claudeCodeActivity(
-                        configDirectory: account.configDirectory
-                    )
+                    probe: { AccountActivityInspector.claudeCodeActivity(configDirectory: configDirectory) }
                 ))
             }
         }
         if providerVisibilityStore.isEnabled(.codexCli), let codexLimit = metrics[.codexCli]?.sessionLimit {
-            candidates.append(StatusLimitCandidate(
+            requests.append(StatusLimitProbeRequest(
                 key: "codex",
                 displayName: ServiceType.codexCli.displayName,
                 limit: codexLimit,
-                lastActivity: AccountActivityInspector.codexCliActivity()
+                probe: { AccountActivityInspector.codexCliActivity() }
             ))
         }
         if providerVisibilityStore.isEnabled(.cursor), let cursorLimit = metrics[.cursor]?.weeklyLimit {
-            candidates.append(StatusLimitCandidate(
+            requests.append(StatusLimitProbeRequest(
                 key: "cursor",
                 displayName: ServiceType.cursor.displayName,
                 limit: cursorLimit,
-                lastActivity: AccountActivityInspector.cursorActivity()
+                probe: { AccountActivityInspector.cursorActivity() }
             ))
         }
 
-        return candidates
+        return requests
     }
 
     @MainActor

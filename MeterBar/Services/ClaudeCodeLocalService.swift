@@ -4,7 +4,9 @@ import AppKit
 import Combine
 
 class ClaudeCodeLocalService: ObservableObject {
-    static let shared = ClaudeCodeLocalService()
+    // nonisolated: lets nonisolated code such as the readiness inspector
+    // reference the singleton (methods keep their own isolation).
+    nonisolated static let shared = ClaudeCodeLocalService()
 
     // Working endpoint (discovered via testing)
     private let usageEndpoint = "https://api.anthropic.com/api/oauth/usage"
@@ -29,14 +31,16 @@ class ClaudeCodeLocalService: ObservableObject {
 
     // MARK: - Keychain Access
 
-    /// Get OAuth token from Claude Code's keychain storage
-    func getOAuthToken() -> String? {
+    /// Get OAuth token from Claude Code's keychain storage.
+    /// `nonisolated`: a keychain read can raise a blocking approval dialog —
+    /// never call synchronously from the main actor.
+    nonisolated func getOAuthToken() -> String? {
         guard let credentials = getCredentials() else {
             return nil
         }
 
         guard !OAuthTokenExpiry.isExpired(unixTimestamp: credentials.claudeAiOauth.expiresAt) else {
-            DispatchQueue.main.async {
+            ServiceSupport.applyOnMain {
                 self.subscriptionType = credentials.claudeAiOauth.subscriptionType
                 self.rateLimitTier = credentials.claudeAiOauth.rateLimitTier
                 self.hasAccess = false
@@ -44,7 +48,7 @@ class ClaudeCodeLocalService: ObservableObject {
             return nil
         }
 
-        DispatchQueue.main.async {
+        ServiceSupport.applyOnMain {
             self.subscriptionType = credentials.claudeAiOauth.subscriptionType
             self.rateLimitTier = credentials.claudeAiOauth.rateLimitTier
             self.hasAccess = true
@@ -53,7 +57,7 @@ class ClaudeCodeLocalService: ObservableObject {
         return credentials.claudeAiOauth.accessToken
     }
 
-    private func getCredentials() -> ClaudeCodeCredentials? {
+    nonisolated private func getCredentials() -> ClaudeCodeCredentials? {
         guard let data = credentialsData() else { return nil }
         return try? JSONDecoder().decode(ClaudeCodeCredentials.self, from: data)
     }
@@ -63,7 +67,7 @@ class ClaudeCodeLocalService: ObservableObject {
     /// Exposed for provider-readiness diagnostics, which pass the bytes to the
     /// pure readiness core (it reads only the expiry claim — never surfaces the
     /// token). Reading the raw blob here keeps the keychain query in one place.
-    func credentialsData() -> Data? {
+    nonisolated func credentialsData() -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -81,18 +85,22 @@ class ClaudeCodeLocalService: ObservableObject {
         return data
     }
 
-    /// Check and update access status
-    func checkAccess() {
+    /// Check and update access status.
+    /// `nonisolated`: file stats + (with the OAuth fallback) a keychain read —
+    /// call from a detached task.
+    nonisolated func checkAccess() {
         let newHasAccess: Bool
         let newAuthState: ClaudeCodeAuthState
-        var clearsSubscription = false
+        let clearsSubscription: Bool
 
         if cliUsageService.isAvailable() {
             newHasAccess = true
             newAuthState = .cliAvailable
+            clearsSubscription = false
         } else if isOAuthFallbackEnabled, getOAuthToken() != nil {
             newHasAccess = true
             newAuthState = .connected(.legacyOAuth)
+            clearsSubscription = false
         } else {
             newHasAccess = false
             newAuthState = .unavailable
@@ -142,7 +150,13 @@ class ClaudeCodeLocalService: ObservableObject {
             }
         }
 
-        guard let token = getOAuthToken() else {
+        // Keychain read — off the main actor (it can raise a blocking approval
+        // dialog, and the app target runs async bodies on the main actor).
+        let fallbackToken = await Task.detached(priority: .userInitiated) { [self] in
+            getOAuthToken()
+        }.value
+
+        guard let token = fallbackToken else {
             let error = ServiceError.notAuthenticated
             await MainActor.run {
                 self.lastError = error
@@ -235,7 +249,11 @@ class ClaudeCodeLocalService: ObservableObject {
     private func fetchExtraUsageStatus(account: ClaudeCodeAccount) async -> ExtraUsageStatus {
         guard isOAuthFallbackEnabled else { return .unknown }
         guard account.isDefault else { return .unknown }
-        guard let credentials = getCredentials(),
+        // Keychain read — off the main actor, same as the fallback-token path.
+        let storedCredentials = await Task.detached(priority: .utility) { [self] in
+            getCredentials()
+        }.value
+        guard let credentials = storedCredentials,
               !OAuthTokenExpiry.isExpired(unixTimestamp: credentials.claudeAiOauth.expiresAt) else {
             return .unknown
         }
@@ -266,7 +284,7 @@ class ClaudeCodeLocalService: ObservableObject {
         }
     }
 
-    private var isOAuthFallbackEnabled: Bool {
+    nonisolated private var isOAuthFallbackEnabled: Bool {
         UserDefaults.standard.bool(forKey: oauthFallbackUserDefaultsKey)
     }
 
@@ -356,11 +374,11 @@ enum ClaudeCodeAuthState: Equatable {
 
 // MARK: - Response Models
 
-struct ClaudeCodeCredentials: Codable {
+nonisolated struct ClaudeCodeCredentials: Codable {
     let claudeAiOauth: ClaudeAiOAuth
 }
 
-struct ClaudeAiOAuth: Codable {
+nonisolated struct ClaudeAiOAuth: Codable {
     let accessToken: String
     let refreshToken: String
     let expiresAt: Int64
@@ -369,7 +387,7 @@ struct ClaudeAiOAuth: Codable {
     let rateLimitTier: String?
 }
 
-struct ClaudeCodeUsageResponse: Codable {
+nonisolated struct ClaudeCodeUsageResponse: Codable {
     let fiveHour: UsageWindow
     let sevenDay: UsageWindow
     let sevenDaySonnet: UsageWindow?
@@ -420,7 +438,7 @@ struct ClaudeCodeUsageResponse: Codable {
 }
 
 /// Claude `extra_usage` object from `/api/oauth/usage`.
-struct ClaudeExtraUsage: Codable {
+nonisolated struct ClaudeExtraUsage: Codable {
     let isEnabled: Bool
     let monthlyLimit: Double?
     let usedCredits: Double?
@@ -439,7 +457,7 @@ struct ClaudeExtraUsage: Codable {
 }
 
 /// Claude `spend` object from `/api/oauth/usage`.
-struct ClaudeSpend: Codable {
+nonisolated struct ClaudeSpend: Codable {
     let used: ClaudeMoney?
     let limit: ClaudeMoney?
     let percent: Double?
@@ -456,7 +474,7 @@ struct ClaudeSpend: Codable {
 }
 
 /// Minor-unit money amount (e.g. `amount_minor: 500, exponent: 2` → $5.00).
-struct ClaudeMoney: Codable {
+nonisolated struct ClaudeMoney: Codable {
     let amountMinor: Int?
     let currency: String?
     let exponent: Int?
@@ -475,7 +493,7 @@ struct ClaudeMoney: Codable {
     }
 }
 
-struct UsageWindow: Codable {
+nonisolated struct UsageWindow: Codable {
     let utilization: Double
     let resetsAt: Date
 
