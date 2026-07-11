@@ -25,11 +25,38 @@ nonisolated enum TranscriptResetParser {
         }
     }
 
-    // Two accepted shapes, both anchored to the event:
+    // Three accepted shapes. The legacy pipe-epoch is an exact instant; the
+    // other two are wall-clock hints anchored to the event:
+    //   Legacy pipe-epoch: "Claude AI usage limit reached|1752130800"
     //   Time-of-day: "resets 7:30am (Europe/Malta)" / "resets 2:10am" /
     //                "resets **2:10am ...**" / "resets 19:00"
     //   Explicit date (weekly limits): "resets Jul 15 at 10pm (Europe/Malta)" /
     //                "resets Jan 2, 2027 at 9am"
+
+    /// Legacy Claude blocks state the reset as a unix epoch after a pipe:
+    /// "… usage limit reached|1752130800". 9–12 digits spans 1973 onward and
+    /// rejects millisecond epochs; the trailing lookahead keeps a 13+ digit
+    /// run from being silently truncated into a bogus in-range value.
+    private static let legacyEpochPattern = try? NSRegularExpression(
+        pattern: #"usage limit reached\|(\d{9,12})(?!\d)"#,
+        options: [.caseInsensitive]
+    )
+    /// A legacy synthetic limit line is EXACTLY the marker — classification
+    /// must anchor to the whole trimmed text so an assistant message that
+    /// merely quotes the marker in prose or code never reads as blocked.
+    private static let legacyMarkerLinePattern = try? NSRegularExpression(
+        pattern: #"^(?:claude(?: ai)?\s+)?usage limit reached\|\d{9,12}$"#,
+        options: [.caseInsensitive]
+    )
+
+    /// True when the entire trimmed message text is a legacy pipe-epoch limit
+    /// marker (nothing but the marker), as legacy transcripts emit it.
+    static func isLegacyLimitMarkerLine(_ messageText: String) -> Bool {
+        guard let legacyMarkerLinePattern else { return false }
+        let trimmed = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let range = NSRange(trimmed.startIndex..., in: trimmed)
+        return legacyMarkerLinePattern.firstMatch(in: trimmed, range: range) != nil
+    }
     private static let pattern = try? NSRegularExpression(
         pattern: #"resets\s*\**\s*"# +
             #"(?:(?<month>jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+"# +
@@ -39,12 +66,31 @@ nonisolated enum TranscriptResetParser {
         options: [.caseInsensitive]
     )
 
+    /// The exact reset instant embedded in a legacy pipe-epoch marker
+    /// ("usage limit reached|1752130800"), or nil when the text carries none.
+    /// Exposed so the classifier can recognize legacy blocking lines that
+    /// predate the structured `isApiErrorMessage` fields.
+    static func legacyEpochReset(in messageText: String) -> Date? {
+        guard let legacyEpochPattern else { return nil }
+        let range = NSRange(messageText.startIndex..., in: messageText)
+        guard let match = legacyEpochPattern.firstMatch(in: messageText, range: range),
+              let digitsRange = Range(match.range(at: 1), in: messageText),
+              let epoch = TimeInterval(messageText[digitsRange]) else {
+            return nil
+        }
+        return Date(timeIntervalSince1970: epoch)
+    }
+
     /// Parse `messageText`, anchoring the reset to `eventTimestamp`.
     ///
-    /// - Returns: the absolute reset instant — the nearest occurrence of a bare
-    ///   clock time, or the stated calendar date for an explicit month/day — or
-    ///   nil when no reset hint is present.
+    /// - Returns: the absolute reset instant — the legacy pipe-epoch when
+    ///   present (exact, so it takes precedence), else the nearest occurrence
+    ///   of a bare clock time, or the stated calendar date for an explicit
+    ///   month/day — or nil when no reset hint is present.
     static func parse(messageText: String, eventTimestamp: Date) -> Result? {
+        if let exact = legacyEpochReset(in: messageText) {
+            return Result(resetAt: exact, timeZoneIdentifier: nil)
+        }
         guard let pattern else { return nil }
         let range = NSRange(messageText.startIndex..., in: messageText)
         guard let match = pattern.firstMatch(in: messageText, range: range) else {
