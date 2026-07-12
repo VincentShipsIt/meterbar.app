@@ -351,7 +351,7 @@ struct SettingsView: View {
             case .costTracking:
                 costTrackingSection
             case .automation:
-                SessionWakeSettingsView()
+                SessionWakeSettingsView(embeddedInDashboard: true)
             case let .provider(service):
                 providerSettingsPane(for: service)
             }
