@@ -42,6 +42,7 @@ class UsageDataManager: ObservableObject {
     private let codexCliService: SimpleUsageProviding
     private let claudeCodeAccountStore: ClaudeCodeAccountStore
     private let providerVisibilityStore: ProviderVisibilityStore
+    private let parseHealthStore: ProviderParseHealthStore
 
     private var refreshTimer: Timer?
     private let cacheKey = StorageKeys.cachedUsageMetrics
@@ -62,6 +63,7 @@ class UsageDataManager: ObservableObject {
         providerVisibilityStore: ProviderVisibilityStore? = nil,
         sharedStore: SharedDataStore = .shared,
         cacheDefaults: UserDefaults = .standard,
+        parseHealthStore: ProviderParseHealthStore? = nil,
         schedulesAutoRefresh: Bool = true
     ) {
         self.codexCliService = codexCliService
@@ -71,6 +73,7 @@ class UsageDataManager: ObservableObject {
         self.providerVisibilityStore = providerVisibilityStore ?? .shared
         self.sharedStore = sharedStore
         self.cacheDefaults = cacheDefaults
+        self.parseHealthStore = parseHealthStore ?? .shared
         loadCachedData()
         if schedulesAutoRefresh {
             setupAutoRefresh()
@@ -232,16 +235,26 @@ class UsageDataManager: ObservableObject {
 
     private func fetchClaudeCodeAccountMetrics() async -> [UUID: UsageMetrics] {
         var refreshedMetrics: [UUID: UsageMetrics] = [:]
+        var firstFailure: Error?
+        var successCount = 0
 
         for account in claudeCodeAccountStore.accounts {
             do {
                 refreshedMetrics[account.id] = try await claudeCodeService.fetchUsageMetrics(account: account)
+                successCount += 1
             } catch {
+                if firstFailure == nil { firstFailure = error }
                 lastError = error
                 if let cachedMetrics = claudeCodeAccountMetrics[account.id] {
                     refreshedMetrics[account.id] = cachedMetrics
                 }
             }
+        }
+
+        if let firstFailure {
+            parseHealthStore.recordFailure(.claudeCode, error: firstFailure)
+        } else if successCount > 0 {
+            parseHealthStore.recordSuccess(.claudeCode)
         }
 
         return refreshedMetrics
@@ -267,13 +280,21 @@ class UsageDataManager: ObservableObject {
     /// Fetch for the providers without multi-account handling (Claude Code has
     /// its own account-aware path).
     private func fetchSimpleProviderMetrics(_ service: ServiceType) async throws -> UsageMetrics {
-        switch service {
-        case .codexCli:
-            return try await codexCliService.fetchUsageMetrics()
-        case .cursor:
-            return try await cursorService.fetchUsageMetrics()
-        case .claudeCode:
-            preconditionFailure("Claude Code uses the account-aware fetch path")
+        do {
+            let result: UsageMetrics
+            switch service {
+            case .codexCli:
+                result = try await codexCliService.fetchUsageMetrics()
+            case .cursor:
+                result = try await cursorService.fetchUsageMetrics()
+            case .claudeCode:
+                preconditionFailure("Claude Code uses the account-aware fetch path")
+            }
+            parseHealthStore.recordSuccess(service)
+            return result
+        } catch {
+            parseHealthStore.recordFailure(service, error: error)
+            throw error
         }
     }
 }
