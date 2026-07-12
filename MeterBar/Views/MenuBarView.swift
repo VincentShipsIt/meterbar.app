@@ -467,8 +467,13 @@ private struct PopoverLimitRow: View {
           .font(.caption2)
           .foregroundColor(.secondary)
           .lineLimit(1)
+        if limit.usageLimit.isEstimated {
+          Text("Estimated")
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundColor(.secondary)
+        }
         Spacer(minLength: 4)
-        Text(isOut ? "Out" : "\(limit.percentLeft)% left")
+        Text(isOut && !limit.usageLimit.isEstimated ? "Out" : limit.usageLimit.percentLeftText)
           .font(.caption)
           .fontWeight(.semibold)
           .foregroundColor(isOut ? MeterBarTheme.danger : .primary)
@@ -478,7 +483,7 @@ private struct PopoverLimitRow: View {
       UsageBar(
         usedPercentage: limit.usedPercent,
         accentColor: accentColor,
-        pace: limit.usageLimit.pace(),
+        pace: limit.usageLimit.isEstimated ? nil : limit.usageLimit.pace(),
         paceContext: limit.paceContext
       )
 

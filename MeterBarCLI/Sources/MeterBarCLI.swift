@@ -137,8 +137,9 @@ struct Usage: ParsableCommand {
         let bar = progressBar(percent: percent, width: 20)
         let status = statusEmoji(for: limit)
 
-        print("\(label): \(bar) \(String(format: "%.0f%%", percent)) \(status)")
-        print("    \(Int(limit.used))/\(Int(limit.total)) used")
+        print("\(label): \(bar) \(limit.percentageText) \(status)")
+        let estimateDetail = limit.isEstimated ? " (estimated limit)" : ""
+        print("    \(Int(limit.used))/\(Int(limit.total)) used\(estimateDetail)")
         if let reset = limit.resetTime {
             print("    Resets: \(UsageFormat.relative(reset))")
         }
