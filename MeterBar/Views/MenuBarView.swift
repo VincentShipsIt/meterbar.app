@@ -2,6 +2,10 @@ import AppKit
 import MeterBarShared
 import SwiftUI
 
+private final class CardFrameBox {
+  var frames: [String: CGRect] = [:]
+}
+
 struct MenuBarView: View {
   private let popoverWidth: CGFloat = 390
   private let minPopoverHeight: CGFloat = 180
@@ -21,7 +25,7 @@ struct MenuBarView: View {
 
   @State private var contentHeight: CGFloat = 320
   @State private var expandedDetailID: String?
-  @State private var cardFrames: [String: CGRect] = [:]
+  @State private var cardFrameBox = CardFrameBox()
   @State private var menuWindow: NSWindow?
 
   init(onContentSizeChange: @escaping (NSSize) -> Void = { _ in }) {
@@ -52,7 +56,7 @@ struct MenuBarView: View {
       notifyContentSize(height: height)
     }
     .onPreferenceChange(PopoverCardFramesPreferenceKey.self) { frames in
-      cardFrames = frames
+      cardFrameBox.frames = frames
     }
   }
 
@@ -82,6 +86,7 @@ struct MenuBarView: View {
           )
 
           if SessionWakeMenuControl.shouldShow(
+            featureEnabled: sessionWakeStore.featureEnabled,
             isOn: sessionWakeStore.isOn,
             canTurnOn: sessionWakeStore.canTurnOn
           ) {
@@ -133,22 +138,26 @@ struct MenuBarView: View {
     HStack(spacing: 8) {
       Spacer()
 
-      Button(action: openDashboard) {
-        Image(systemName: MenuBarOverlayIcons.dashboard)
-          .font(.system(size: 12, weight: .semibold))
-      }
-      .meterBarGlassIconButton()
-      .help("Open Usage Dashboard")
+      GlassEffectContainer(spacing: 8) {
+        HStack(spacing: 8) {
+          Button(action: openDashboard) {
+            Image(systemName: MenuBarOverlayIcons.dashboard)
+              .font(.system(size: 12, weight: .semibold))
+          }
+          .meterBarGlassIconButton()
+          .help("Open Usage Dashboard")
 
-      Button {
-        Task { await dataManager.refreshAll() }
-      } label: {
-        RefreshingIcon(isRefreshing: dataManager.isLoading)
-          .font(.system(size: 12, weight: .semibold))
+          Button {
+            Task { await dataManager.refreshAll() }
+          } label: {
+            RefreshingIcon(isRefreshing: dataManager.isLoading)
+              .font(.system(size: 12, weight: .semibold))
+          }
+          .meterBarGlassIconButton()
+          .help(dataManager.isLoading ? "Refreshing usage" : "Refresh usage")
+          .disabled(dataManager.isLoading)
+        }
       }
-      .meterBarGlassIconButton()
-      .help(dataManager.isLoading ? "Refreshing usage" : "Refresh usage")
-      .disabled(dataManager.isLoading)
     }
     .font(.body)
     .padding(.horizontal, 14)
@@ -196,7 +205,7 @@ struct MenuBarView: View {
   /// Converts a card's SwiftUI global frame (top-left origin, window space)
   /// into the card top's AppKit screen Y so the detail panel can align to it.
   private func screenTopY(forCardID id: String) -> CGFloat? {
-    guard let menuWindow, let frame = cardFrames[id] else { return nil }
+    guard let menuWindow, let frame = cardFrameBox.frames[id] else { return nil }
     return menuWindow.frame.maxY - frame.minY
   }
 
@@ -212,7 +221,7 @@ private extension View {
   func meterBarGlassIconButton() -> some View {
     frame(width: 30, height: 30)
       .contentShape(Circle())
-      .glassEffect(.regular, in: Circle())
+      .glassEffect(.regular.interactive(), in: .circle)
       .buttonStyle(.plain)
   }
 }
@@ -469,8 +478,13 @@ private struct PopoverLimitRow: View {
           .font(.caption2)
           .foregroundColor(.secondary)
           .lineLimit(1)
+        if limit.usageLimit.isEstimated {
+          Text("Estimated")
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundColor(.secondary)
+        }
         Spacer(minLength: 4)
-        Text(isOut ? "Out" : "\(limit.percentLeft)% left")
+        Text(isOut && !limit.usageLimit.isEstimated ? "Out" : limit.usageLimit.percentLeftText)
           .font(.caption)
           .fontWeight(.semibold)
           .foregroundColor(isOut ? MeterBarTheme.danger : .primary)
@@ -480,7 +494,7 @@ private struct PopoverLimitRow: View {
       UsageBar(
         usedPercentage: limit.usedPercent,
         accentColor: accentColor,
-        pace: limit.usageLimit.pace(),
+        pace: limit.usageLimit.isEstimated ? nil : limit.usageLimit.pace(),
         paceContext: limit.paceContext
       )
 

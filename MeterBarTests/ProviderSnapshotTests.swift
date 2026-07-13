@@ -273,6 +273,29 @@ final class ProviderSnapshotTests: XCTestCase {
         )
     }
 
+    func testEstimatedExhaustionDoesNotClaimProviderIsBlocked() {
+        let metrics = UsageMetrics(
+            service: .cursor,
+            weeklyLimit: UsageLimit(
+                used: 500,
+                total: 500,
+                resetTime: nil,
+                isEstimated: true
+            )
+        )
+        let snapshot = ProviderSnapshotBuilder.snapshot(
+            title: "Cursor",
+            service: .cursor,
+            metrics: metrics,
+            emptyDetail: ""
+        )
+
+        XCTAssertEqual(snapshot.band, .exhausted)
+        XCTAssertFalse(snapshot.hasExhaustedLimit)
+        XCTAssertFalse(snapshot.hasExhaustedWeeklyLimit)
+        XCTAssertTrue(snapshot.blockingLimits.isEmpty)
+    }
+
     func testBlockingResetWindowsExcludeSimultaneouslyExhaustedSecondaryQuota() {
         let snapshot = ProviderSnapshotBuilder.snapshot(
             title: "Claude",

@@ -145,11 +145,12 @@ struct Usage: ParsableCommand {
         let bar = progressBar(percent: percent, width: 20)
         let status = statusEmoji(for: limit)
 
-        print("\(label): \(bar) \(String(format: "%.0f%%", percent)) \(status)")
+        print("\(label): \(bar) \(currency ? String(format: "%.0f%%", percent) : limit.percentageText) \(status)")
         if currency {
             print("    \(UsageFormat.cost(limit.used)) spent / \(UsageFormat.cost(limit.total)) credits")
         } else {
-            print("    \(Int(limit.used))/\(Int(limit.total)) used")
+            let estimateDetail = limit.isEstimated ? " (estimated limit)" : ""
+            print("    \(Int(limit.used))/\(Int(limit.total)) used\(estimateDetail)")
         }
         if let reset = limit.resetTime {
             print("    Resets: \(UsageFormat.relative(reset))")
@@ -250,6 +251,7 @@ struct Cost: ParsableCommand {
         print()
         print("Period: Last \(window.requestedDays) days (from cached daily data)")
         print("Scanned: \(UsageFormat.relative(cache.lastScanDate))")
+        print("Pricing: \(ModelPricing.revisionLabel)")
 
         // The cache holds fewer days than asked for — don't imply full coverage.
         if window.isTruncated {
@@ -292,6 +294,7 @@ struct Cost: ParsableCommand {
         print()
         print("Period: Last \(summary.periodDays) days")
         print("Scanned: \(UsageFormat.relative(cache.lastScanDate))")
+        print("Pricing: \(ModelPricing.revisionLabel)")
         print()
 
         for cost in summary.costs {

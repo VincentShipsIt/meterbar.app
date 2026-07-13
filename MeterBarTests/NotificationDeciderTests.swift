@@ -272,6 +272,19 @@ final class NotificationDeciderTests: XCTestCase {
         XCTAssertTrue(result.notifiedKeys.isEmpty)
     }
 
+    func testEstimatedLimitNeverNotifiesAndClearsPreviousBandState() {
+        let estimated = UsageLimit(used: 100, total: 100, resetTime: nil, isEstimated: true)
+        let result = decider().evaluate(
+            metrics: metrics(session: estimated),
+            providerEnabled: true,
+            alreadyNotified: ["Claude Code-session-warn", "Claude Code-session-critical"],
+            now: now
+        )
+
+        XCTAssertTrue(result.notifications.isEmpty)
+        XCTAssertTrue(result.notifiedKeys.isEmpty)
+    }
+
     func testExhaustedCriticalCopyClaimsLimitReached() {
         let result = decider().evaluate(
             metrics: metrics(session: exhaustedLimit()),

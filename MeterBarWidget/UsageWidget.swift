@@ -144,7 +144,7 @@ struct ServiceMiniView: View {
         if metrics.service == .openRouter {
             return String(format: "$%.2f", max(0, limit.total - limit.used))
         }
-        return "\(Int(limit.percentage))%"
+        return limit.percentageText
     }
 }
 
@@ -233,7 +233,7 @@ struct ServiceCompactView: View {
         if metrics.service == .openRouter {
             return String(format: "$%.2f left", max(0, limit.total - limit.used))
         }
-        return "\(Int(limit.percentage))%"
+        return limit.percentageText
     }
 }
 
@@ -287,7 +287,7 @@ struct LimitDetailView: View {
                 Text(title)
                     .font(.caption)
                 Spacer()
-                Text("\(Int(limit.percentage))%")
+                Text(limit.percentageText)
                     .font(.caption)
                     .bold()
             }
@@ -295,7 +295,7 @@ struct LimitDetailView: View {
             ProgressView(value: limit.clampedUsed, total: limit.clampedTotal)
                 .tint(limit.statusColor.color)
 
-            Text(currency ? currencyText : "\(formatNumber(limit.used)) / \(formatNumber(limit.total))")
+            Text(currency ? currencyText : "\(formatNumber(limit.used)) / \(limit.isEstimated ? "~" : "")\(formatNumber(limit.total))")
                 .font(.caption2)
                 .foregroundColor(.secondary)
         }

@@ -189,6 +189,12 @@ struct DashboardLimitRow: View {
         Text(limit.title)
           .font(.subheadline)
           .bold()
+        if limit.usageLimit.isEstimated {
+          Text("Estimated")
+            .font(.caption2)
+            .fontWeight(.semibold)
+            .foregroundColor(.secondary)
+        }
         Spacer()
         Text(trailingValue)
           .font(.subheadline)
@@ -199,7 +205,7 @@ struct DashboardLimitRow: View {
       UsageBar(
         usedPercentage: limit.usedPercent,
         accentColor: accentColor,
-        pace: limit.usageLimit.pace(),
+        pace: limit.usageLimit.isEstimated ? nil : limit.usageLimit.pace(),
         paceContext: limit.paceContext
       )
 
@@ -207,7 +213,7 @@ struct DashboardLimitRow: View {
         Text(usedValue)
           .font(.caption)
           .foregroundColor(.secondary)
-        if let pace = limit.usageLimit.pace() {
+        if !limit.usageLimit.isEstimated, let pace = limit.usageLimit.pace() {
           Text(pace.leftLabel)
             .font(.caption)
             .foregroundColor(paceLabelColor(pace))
@@ -230,14 +236,14 @@ struct DashboardLimitRow: View {
     if limit.valueStyle == .currency {
       return "\(UsageFormat.cost(max(0, limit.usageLimit.total - limit.usageLimit.used))) left"
     }
-    return isOut ? "Out" : "\(limit.percentLeft)% left"
+    return (isOut && !limit.usageLimit.isEstimated) ? "Out" : limit.usageLimit.percentLeftText
   }
 
   private var usedValue: String {
     if limit.valueStyle == .currency {
       return "\(UsageFormat.cost(limit.usageLimit.used)) spent"
     }
-    return "\(Int(limit.usedPercent.rounded()))% used"
+    return limit.usageLimit.usedPercentageText
   }
 
   private func paceLabelColor(_ pace: UsagePace) -> Color {
