@@ -174,6 +174,7 @@ struct UsageDashboardView: View {
     @StateObject private var claudeCodeService = ClaudeCodeLocalService.shared
     @StateObject private var codexCliService = CodexCliLocalService.shared
     @StateObject private var cursorService = CursorLocalService.shared
+    @StateObject private var openRouterService = OpenRouterService.shared
     @StateObject private var apiUsageStore = ApiUsageStore.shared
     @StateObject private var providerStatusMonitor = ProviderStatusMonitor.shared
     @StateObject private var navigation = DashboardNavigationStore.shared
@@ -605,7 +606,8 @@ struct UsageDashboardView: View {
             enabledServices: providerVisibility.enabledServices,
             claudeCodeHasAccess: claudeCodeService.hasAccess,
             codexCliHasAccess: codexCliService.hasAccess,
-            cursorHasAccess: cursorService.hasAccess
+            cursorHasAccess: cursorService.hasAccess,
+            openRouterHasAccess: openRouterService.hasAccess
         ))
         .filter(\.hasMetrics)
     }

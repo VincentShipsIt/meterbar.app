@@ -559,6 +559,8 @@ struct DailyProviderUsageSummaryRow: View {
       return "Codex"
     case .cursor:
       return "Cursor"
+    case .openRouter:
+      return "OpenRouter"
     }
   }
 }

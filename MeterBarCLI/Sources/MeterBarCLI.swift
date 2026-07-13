@@ -64,7 +64,7 @@ struct Usage: ParsableCommand {
     @Flag(name: .shortAndLong, help: "Output as JSON")
     var json: Bool = false
 
-    @Option(name: .shortAndLong, help: "Filter by provider (claude, codex, cursor)")
+    @Option(name: .shortAndLong, help: "Filter by provider (claude, codex, cursor, openrouter)")
     var provider: String?
 
     func run() throws {
@@ -120,10 +120,18 @@ struct Usage: ParsableCommand {
             print("▸ \(service.displayName)")
 
             if let session = metric.sessionLimit {
-                printLimit("  Session", session)
+                printLimit(
+                    service == .openRouter ? "  Key limit" : "  Session",
+                    session,
+                    currency: service == .openRouter
+                )
             }
             if let weekly = metric.weeklyLimit {
-                printLimit("  Weekly", weekly)
+                printLimit(
+                    service == .openRouter ? "  Account credits" : "  Weekly",
+                    weekly,
+                    currency: service == .openRouter
+                )
             }
             if let codeReview = metric.codeReviewLimit {
                 printLimit(service == .claudeCode ? "  Sonnet" : "  Code Review", codeReview)
@@ -132,13 +140,17 @@ struct Usage: ParsableCommand {
         }
     }
 
-    private func printLimit(_ label: String, _ limit: UsageLimit) {
+    private func printLimit(_ label: String, _ limit: UsageLimit, currency: Bool = false) {
         let percent = limit.percentage
         let bar = progressBar(percent: percent, width: 20)
         let status = statusEmoji(for: limit)
 
         print("\(label): \(bar) \(String(format: "%.0f%%", percent)) \(status)")
-        print("    \(Int(limit.used))/\(Int(limit.total)) used")
+        if currency {
+            print("    \(UsageFormat.cost(limit.used)) spent / \(UsageFormat.cost(limit.total)) credits")
+        } else {
+            print("    \(Int(limit.used))/\(Int(limit.total)) used")
+        }
         if let reset = limit.resetTime {
             print("    Resets: \(UsageFormat.relative(reset))")
         }
@@ -307,7 +319,7 @@ struct Doctor: ParsableCommand {
     @Flag(name: .shortAndLong, help: "Output as JSON")
     var json: Bool = false
 
-    @Option(name: .shortAndLong, help: "Filter by provider (claude, codex, cursor)")
+    @Option(name: .shortAndLong, help: "Filter by provider (claude, codex, cursor, openrouter)")
     var provider: String?
 
     func run() throws {
