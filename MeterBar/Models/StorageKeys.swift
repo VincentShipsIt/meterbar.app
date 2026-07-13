@@ -14,6 +14,8 @@ nonisolated enum StorageKeys {
     static let refreshInterval = "refreshInterval"
     /// Raw values of ServiceTypes the user has hidden.
     static let hiddenProviderServices = "HiddenProviderServices"
+    /// OpenRouter is API-key backed and must be explicitly enabled.
+    static let openRouterProviderEnabled = "OpenRouterProviderEnabled"
     /// Whether the Dock icon is shown (menu bar item is unaffected).
     static let showInDock = "ShowMeterBarInDock"
     /// Enables the legacy Claude Code OAuth fallback when the CLI is unavailable.
@@ -33,7 +35,8 @@ nonisolated enum StorageKeys {
 
     // MARK: - Session Wake (#98)
 
-    /// Master enablement for the Session Wake feature (Bool, default off).
+    /// Master enablement for Session Wake. Missing stays on for v1.7 compatibility;
+    /// an explicit false is the emergency kill-switch shared with the CLI.
     static let sessionWakeFeatureEnabled = "SessionWakeFeatureEnabled"
     /// Runtime intent for the watcher, distinct from feature enablement (Bool).
     static let sessionWakeWatcherArmed = "SessionWakeWatcherArmed"

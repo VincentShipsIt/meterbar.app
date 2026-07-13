@@ -124,6 +124,15 @@ struct NotificationDecider {
                 continue
             }
 
+            // Heuristic totals can indicate UI severity, but they are not a
+            // reliable basis for a threshold alert. Clear crossing state so a
+            // later provider-reported value can notify normally.
+            guard !limit.isEstimated else {
+                keys.remove(warnKey)
+                keys.remove(criticalKey)
+                continue
+            }
+
             let band = QuotaBand.forLimit(limit)
             let bandRank = Self.severityRank(band)
             let quotaDisplayName = quotaKind.displayName(for: metrics.service)
@@ -194,9 +203,9 @@ struct NotificationDecider {
         func displayName(for service: ServiceType) -> String {
             switch self {
             case .session:
-                return "Session"
+                return service == .openRouter ? "Key Limit" : "Session"
             case .weekly:
-                return "Weekly"
+                return service == .openRouter ? "Account Credits" : "Weekly"
             case .codeReview:
                 return service == .claudeCode ? "Sonnet" : "Code Review"
             }

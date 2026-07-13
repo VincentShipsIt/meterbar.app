@@ -189,8 +189,14 @@ struct DashboardLimitRow: View {
         Text(limit.title)
           .font(.subheadline)
           .bold()
+        if limit.usageLimit.isEstimated {
+          Text("Estimated")
+            .font(.caption2)
+            .fontWeight(.semibold)
+            .foregroundColor(.secondary)
+        }
         Spacer()
-        Text(isOut ? "Out" : "\(limit.percentLeft)% left")
+        Text(trailingValue)
           .font(.subheadline)
           .bold()
           .foregroundColor(isOut ? MeterBarTheme.danger : .primary)
@@ -199,15 +205,15 @@ struct DashboardLimitRow: View {
       UsageBar(
         usedPercentage: limit.usedPercent,
         accentColor: accentColor,
-        pace: limit.usageLimit.pace(),
+        pace: limit.usageLimit.isEstimated ? nil : limit.usageLimit.pace(),
         paceContext: limit.paceContext
       )
 
       HStack {
-        Text("\(Int(limit.usedPercent.rounded()))% used")
+        Text(usedValue)
           .font(.caption)
           .foregroundColor(.secondary)
-        if let pace = limit.usageLimit.pace() {
+        if !limit.usageLimit.isEstimated, let pace = limit.usageLimit.pace() {
           Text(pace.leftLabel)
             .font(.caption)
             .foregroundColor(paceLabelColor(pace))
@@ -224,6 +230,20 @@ struct DashboardLimitRow: View {
         }
       }
     }
+  }
+
+  private var trailingValue: String {
+    if limit.valueStyle == .currency {
+      return "\(UsageFormat.cost(max(0, limit.usageLimit.total - limit.usageLimit.used))) left"
+    }
+    return (isOut && !limit.usageLimit.isEstimated) ? "Out" : limit.usageLimit.percentLeftText
+  }
+
+  private var usedValue: String {
+    if limit.valueStyle == .currency {
+      return "\(UsageFormat.cost(limit.usageLimit.used)) spent"
+    }
+    return limit.usageLimit.usedPercentageText
   }
 
   private func paceLabelColor(_ pace: UsagePace) -> Color {

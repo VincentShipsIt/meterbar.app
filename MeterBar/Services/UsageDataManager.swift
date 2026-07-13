@@ -1,8 +1,7 @@
+import Combine
 import Foundation
 import MeterBarShared
 import os
-import Combine
-import SwiftUI
 
 /// The single-account provider surface `UsageDataManager` orchestrates (Codex,
 /// Cursor). Behind a protocol so the manager's merge / graceful-degradation
@@ -16,6 +15,7 @@ protocol SimpleUsageProviding: AnyObject {
 
 extension CodexCliLocalService: SimpleUsageProviding {}
 extension CursorLocalService: SimpleUsageProviding {}
+extension OpenRouterService: SimpleUsageProviding {}
 
 @MainActor
 class UsageDataManager: ObservableObject {
@@ -26,8 +26,13 @@ class UsageDataManager: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var lastError: Error?
 
-    @AppStorage(StorageKeys.refreshInterval)
-    private var refreshIntervalRaw: Int = RefreshInterval.fifteenMinutes.rawValue
+    @Published private var refreshIntervalRaw: Int =
+        UserDefaults.standard.object(forKey: StorageKeys.refreshInterval) as? Int
+        ?? RefreshInterval.fifteenMinutes.rawValue {
+        didSet {
+            UserDefaults.standard.set(refreshIntervalRaw, forKey: StorageKeys.refreshInterval)
+        }
+    }
 
     var refreshInterval: RefreshInterval {
         get { RefreshInterval(rawValue: refreshIntervalRaw) ?? .fifteenMinutes }
@@ -40,6 +45,7 @@ class UsageDataManager: ObservableObject {
     private let claudeCodeService: ClaudeCodeLocalService
     private let cursorService: SimpleUsageProviding
     private let codexCliService: SimpleUsageProviding
+    private let openRouterService: SimpleUsageProviding
     private let claudeCodeAccountStore: ClaudeCodeAccountStore
     private let providerVisibilityStore: ProviderVisibilityStore
     private let parseHealthStore: ProviderParseHealthStore
@@ -58,6 +64,7 @@ class UsageDataManager: ObservableObject {
     init(
         codexCliService: SimpleUsageProviding = CodexCliLocalService.shared,
         cursorService: SimpleUsageProviding = CursorLocalService.shared,
+        openRouterService: SimpleUsageProviding = OpenRouterService.shared,
         claudeCodeService: ClaudeCodeLocalService = .shared,
         claudeCodeAccountStore: ClaudeCodeAccountStore? = nil,
         providerVisibilityStore: ProviderVisibilityStore? = nil,
@@ -68,6 +75,7 @@ class UsageDataManager: ObservableObject {
     ) {
         self.codexCliService = codexCliService
         self.cursorService = cursorService
+        self.openRouterService = openRouterService
         self.claudeCodeService = claudeCodeService
         self.claudeCodeAccountStore = claudeCodeAccountStore ?? .shared
         self.providerVisibilityStore = providerVisibilityStore ?? .shared
@@ -102,7 +110,7 @@ class UsageDataManager: ObservableObject {
 
         // Fetch the simple (single-account) providers. On failure the final
         // merge loop below preserves any cached metrics (graceful degradation).
-        for service in [ServiceType.codexCli, .cursor]
+        for service in [ServiceType.codexCli, .cursor, .openRouter]
         where providerVisibilityStore.isEnabled(service) && hasProviderAccess(service) {
             do {
                 newMetrics[service] = try await fetchSimpleProviderMetrics(service)
@@ -162,7 +170,7 @@ class UsageDataManager: ObservableObject {
                     // hold a stale error from an unrelated provider/account.
                     throw ServiceError.notAuthenticated
                 }
-            case .codexCli, .cursor:
+            case .codexCli, .cursor, .openRouter:
                 guard hasProviderAccess(service) else {
                     throw ServiceError.notAuthenticated
                 }
@@ -277,6 +285,8 @@ class UsageDataManager: ObservableObject {
             return codexCliService.hasAccess
         case .cursor:
             return cursorService.hasAccess
+        case .openRouter:
+            return openRouterService.hasAccess
         }
     }
 
@@ -290,6 +300,8 @@ class UsageDataManager: ObservableObject {
                 result = try await codexCliService.fetchUsageMetrics()
             case .cursor:
                 result = try await cursorService.fetchUsageMetrics()
+            case .openRouter:
+                result = try await openRouterService.fetchUsageMetrics()
             case .claudeCode:
                 preconditionFailure("Claude Code uses the account-aware fetch path")
             }
