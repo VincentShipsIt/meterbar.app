@@ -964,7 +964,10 @@ private struct OverviewSummaryStrip: View {
     private func tightestValue(now: Date) -> String {
         guard let tightestLimit else { return "No data" }
         guard tightestLimit.usageLimit.isAtLimit else {
-            return "\(tightestLimit.percentLeft)% left"
+            return tightestLimit.usageLimit.percentLeftText
+        }
+        if tightestLimit.usageLimit.isEstimated {
+            return tightestLimit.usageLimit.percentLeftText
         }
         guard let countdown = tightestLimit.usageLimit.resetCountdownText(now: now) else {
             return "Reset unknown"

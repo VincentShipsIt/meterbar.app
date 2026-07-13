@@ -134,7 +134,7 @@ struct ServiceMiniView: View {
             if let weeklyLimit = metrics.weeklyLimit {
                 ProgressView(value: weeklyLimit.clampedUsed, total: weeklyLimit.clampedTotal)
                     .tint(weeklyLimit.statusColor.color)
-                Text("\(Int(weeklyLimit.percentage))%")
+                Text(weeklyLimit.percentageText)
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
@@ -221,7 +221,7 @@ struct ServiceCompactView: View {
                 HStack {
                     ProgressView(value: weeklyLimit.clampedUsed, total: weeklyLimit.clampedTotal)
                         .tint(weeklyLimit.statusColor.color)
-                    Text("\(Int(weeklyLimit.percentage))%")
+                    Text(weeklyLimit.percentageText)
                         .font(.caption)
                 }
             }
@@ -273,7 +273,7 @@ struct LimitDetailView: View {
                 Text(title)
                     .font(.caption)
                 Spacer()
-                Text("\(Int(limit.percentage))%")
+                Text(limit.percentageText)
                     .font(.caption)
                     .bold()
             }
@@ -281,7 +281,10 @@ struct LimitDetailView: View {
             ProgressView(value: limit.clampedUsed, total: limit.clampedTotal)
                 .tint(limit.statusColor.color)
 
-            Text("\(formatNumber(limit.used)) / \(formatNumber(limit.total))")
+            Text(
+                "\(formatNumber(limit.used)) / "
+                    + "\(limit.isEstimated ? "~" : "")\(formatNumber(limit.total))"
+            )
                 .font(.caption2)
                 .foregroundColor(.secondary)
         }
