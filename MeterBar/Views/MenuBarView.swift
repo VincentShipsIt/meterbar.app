@@ -84,6 +84,7 @@ struct MenuBarView: View {
           )
 
           if SessionWakeMenuControl.shouldShow(
+            featureEnabled: sessionWakeStore.featureEnabled,
             isOn: sessionWakeStore.isOn,
             canTurnOn: sessionWakeStore.canTurnOn
           ) {
