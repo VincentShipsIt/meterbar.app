@@ -120,27 +120,13 @@ private enum SettingsPane: Hashable, Identifiable {
 // MARK: - SettingsView
 
 struct SettingsView: View {
-    // MARK: Lifecycle
-
-    init(embeddedInDashboard: Bool = false) {
-        self.embeddedInDashboard = embeddedInDashboard
-    }
-
     // MARK: Internal
 
-    let embeddedInDashboard: Bool
-
     var body: some View {
-        Group {
-            if embeddedInDashboard {
-                settingsStack
-            } else {
-                settingsWindow
-            }
-        }
+        settingsWindow
         .frame(
-            minWidth: embeddedInDashboard ? nil : SettingsPane.windowMinWidth,
-            minHeight: embeddedInDashboard ? nil : SettingsPane.windowMinHeight
+            minWidth: SettingsPane.windowMinWidth,
+            minHeight: SettingsPane.windowMinHeight
         )
         .alert(
             "Claude Reconnect Failed",
@@ -179,6 +165,7 @@ struct SettingsView: View {
     @StateObject private var launchAtLogin = LaunchAtLoginStore.shared
     @StateObject private var authManager = AuthenticationManager.shared
     @StateObject private var apiUsageStore = ApiUsageStore.shared
+    @StateObject private var sessionWakeStore = SessionWakeSettingsStore.shared
 
     @State private var isAddingClaudeAccount = false
     @State private var claudeReconnectError: String?
@@ -207,6 +194,10 @@ struct SettingsView: View {
 
     private var enabledProviderCount: Int {
         ServiceType.allCases.filter { providerVisibility.isEnabled($0) }.count
+    }
+
+    private var visibleAppPanes: [SettingsPane] {
+        SettingsPane.appPanes.filter { $0 != .automation || sessionWakeStore.featureEnabled }
     }
 
     private var providerSnapshots: [ProviderSnapshot] {
@@ -286,7 +277,7 @@ struct SettingsView: View {
                     SettingsSidebarSectionHeader(title: "Settings")
 
                     VStack(spacing: 3) {
-                        ForEach(SettingsPane.appPanes) { pane in
+                        ForEach(visibleAppPanes) { pane in
                             SettingsSidebarRow(
                                 pane: pane,
                                 isSelected: selectedPane == pane,
@@ -363,6 +354,9 @@ struct SettingsView: View {
         .onChange(of: providerVisibility.enabledServices) {
             keepSelectedPaneValid()
         }
+        .onChange(of: sessionWakeStore.featureEnabled) {
+            keepSelectedPaneValid()
+        }
     }
 
     private var settingsDetailHeader: some View {
@@ -385,36 +379,6 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.bottom, 2)
-    }
-
-    private var settingsStack: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            trackedProvidersSection
-            if providerVisibility.isEnabled(.claudeCode) {
-                claudeCodeSection
-            }
-            if providerVisibility.isEnabled(.cursor) {
-                cursorSection
-            }
-            if showExtraUsageSection {
-                extraUsageSection
-            }
-            apiUsageSection
-            costTrackingSection
-            refreshSection
-            notificationsSection
-            automationSection
-            generalSection
-        }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-    }
-
-    /// Session Wake automation. Mirrors the standalone `.automation` pane (always
-    /// available) so the dashboard settings surface can reach it too.
-    private var automationSection: some View {
-        SettingsPanelSection(title: "Automation", systemImage: "moon.zzz", color: MeterBarTheme.appAccent) {
-            SessionWakeSettingsView(embeddedInDashboard: true)
-        }
     }
 
     private var codexCliSection: some View {
@@ -1094,6 +1058,10 @@ struct SettingsView: View {
     }
 
     private func keepSelectedPaneValid() {
+        if selectedPane == .automation, !sessionWakeStore.featureEnabled {
+            selectedPane = .general
+            return
+        }
         guard case let .provider(service) = selectedPane else {
             return
         }
