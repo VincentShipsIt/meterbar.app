@@ -50,7 +50,9 @@ struct ProviderSnapshot: Identifiable {
     var blockingLimits: [SnapshotLimit] {
         guard extraUsage?.state != .on else { return [] }
         return limits.filter {
-            ($0.kind == .session || $0.kind == .weekly) && $0.usageLimit.isAtLimit
+            ($0.kind == .session || $0.kind == .weekly)
+                && !$0.usageLimit.isEstimated
+                && $0.usageLimit.isAtLimit
         }
     }
 

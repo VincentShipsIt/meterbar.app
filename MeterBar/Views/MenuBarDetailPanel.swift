@@ -224,8 +224,13 @@ private struct MenuBarProviderLimitDetailRow: View {
         Text(limit.title)
           .font(.caption)
           .fontWeight(.semibold)
+        if limit.usageLimit.isEstimated {
+          Text("Estimated")
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundColor(.secondary)
+        }
         Spacer(minLength: 4)
-        Text(isOut ? "Out" : "\(limit.percentLeft)% left")
+        Text(isOut && !limit.usageLimit.isEstimated ? "Out" : limit.usageLimit.percentLeftText)
           .font(.caption)
           .fontWeight(.semibold)
           .foregroundColor(isOut ? MeterBarTheme.danger : .primary)
@@ -234,16 +239,16 @@ private struct MenuBarProviderLimitDetailRow: View {
       UsageBar(
         usedPercentage: limit.usedPercent,
         accentColor: accentColor,
-        pace: limit.usageLimit.pace(),
+        pace: limit.usageLimit.isEstimated ? nil : limit.usageLimit.pace(),
         paceContext: limit.paceContext
       )
 
       HStack(spacing: 6) {
-        Text("\(Int(limit.usedPercent.rounded()))% used")
+        Text(limit.usageLimit.usedPercentageText)
           .font(.caption2)
           .foregroundColor(.secondary)
 
-        if let pace = limit.usageLimit.pace() {
+        if !limit.usageLimit.isEstimated, let pace = limit.usageLimit.pace() {
           Text(pace.leftLabel)
             .font(.caption2)
             .foregroundColor(paceLabelColor(pace))
