@@ -165,6 +165,7 @@ struct SettingsView: View {
     @StateObject private var launchAtLogin = LaunchAtLoginStore.shared
     @StateObject private var authManager = AuthenticationManager.shared
     @StateObject private var apiUsageStore = ApiUsageStore.shared
+    @StateObject private var sessionWakeStore = SessionWakeSettingsStore.shared
 
     @State private var isAddingClaudeAccount = false
     @State private var claudeReconnectError: String?
@@ -193,6 +194,10 @@ struct SettingsView: View {
 
     private var enabledProviderCount: Int {
         ServiceType.allCases.filter { providerVisibility.isEnabled($0) }.count
+    }
+
+    private var visibleAppPanes: [SettingsPane] {
+        SettingsPane.appPanes.filter { $0 != .automation || sessionWakeStore.featureEnabled }
     }
 
     private var providerSnapshots: [ProviderSnapshot] {
@@ -272,7 +277,7 @@ struct SettingsView: View {
                     SettingsSidebarSectionHeader(title: "Settings")
 
                     VStack(spacing: 3) {
-                        ForEach(SettingsPane.appPanes) { pane in
+                        ForEach(visibleAppPanes) { pane in
                             SettingsSidebarRow(
                                 pane: pane,
                                 isSelected: selectedPane == pane,
@@ -347,6 +352,9 @@ struct SettingsView: View {
             keepSelectedPaneValid()
         }
         .onChange(of: providerVisibility.enabledServices) {
+            keepSelectedPaneValid()
+        }
+        .onChange(of: sessionWakeStore.featureEnabled) {
             keepSelectedPaneValid()
         }
     }
@@ -1050,6 +1058,10 @@ struct SettingsView: View {
     }
 
     private func keepSelectedPaneValid() {
+        if selectedPane == .automation, !sessionWakeStore.featureEnabled {
+            selectedPane = .general
+            return
+        }
         guard case let .provider(service) = selectedPane else {
             return
         }
