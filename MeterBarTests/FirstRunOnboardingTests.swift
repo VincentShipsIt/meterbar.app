@@ -26,6 +26,31 @@ final class FirstRunOnboardingTests: XCTestCase {
         defaults.removePersistentDomain(forName: suiteName)
     }
 
+    func testUpgradingExistingInstallDoesNotPresentOnboarding() {
+        // An install that predates the onboarding flag has other MeterBar
+        // state in defaults; it must be treated as already onboarded.
+        defaults.set(true, forKey: StorageKeys.notificationsEnabled)
+
+        let store = FirstRunOnboardingStore(
+            userDefaults: defaults,
+            launchAtLogin: LaunchAtLoginStore(controller: FakeLaunchController())
+        )
+
+        XCTAssertFalse(store.shouldPresent)
+        XCTAssertTrue(defaults.bool(forKey: StorageKeys.hasCompletedFirstRun))
+    }
+
+    func testUpgradeMigrationRecognizesCachedMetricsSentinel() {
+        defaults.set(Data("{}".utf8), forKey: StorageKeys.cachedUsageMetrics)
+
+        let store = FirstRunOnboardingStore(
+            userDefaults: defaults,
+            launchAtLogin: LaunchAtLoginStore(controller: FakeLaunchController())
+        )
+
+        XCTAssertFalse(store.shouldPresent)
+    }
+
     func testFreshInstallPresentsAndDismissPersistsOnce() {
         let store = FirstRunOnboardingStore(
             userDefaults: defaults,

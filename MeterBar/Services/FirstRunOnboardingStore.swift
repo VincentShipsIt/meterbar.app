@@ -17,7 +17,33 @@ final class FirstRunOnboardingStore: ObservableObject {
     ) {
         self.userDefaults = userDefaults
         self.launchAtLogin = launchAtLogin
-        hasCompletedFirstRun = userDefaults.bool(forKey: StorageKeys.hasCompletedFirstRun)
+        if userDefaults.bool(forKey: StorageKeys.hasCompletedFirstRun) {
+            hasCompletedFirstRun = true
+        } else if Self.hasEvidenceOfPriorUse(in: userDefaults) {
+            // Upgrades: installs that predate this flag already have other
+            // MeterBar state persisted. Adopt the flag silently so long-time
+            // users are never greeted with first-run onboarding.
+            hasCompletedFirstRun = true
+            userDefaults.set(true, forKey: StorageKeys.hasCompletedFirstRun)
+        } else {
+            hasCompletedFirstRun = false
+        }
+    }
+
+    /// Keys a pre-onboarding install would have written during normal use.
+    /// `cachedUsageMetrics` is persisted on every successful refresh, so any
+    /// real install carries at least that one.
+    private static let priorUseSentinelKeys: [String] = [
+        StorageKeys.cachedUsageMetrics,
+        StorageKeys.refreshInterval,
+        StorageKeys.hiddenProviderServices,
+        StorageKeys.notificationsEnabled,
+        StorageKeys.claudeCodeCustomAccounts,
+        StorageKeys.showInDock
+    ]
+
+    private static func hasEvidenceOfPriorUse(in userDefaults: UserDefaults) -> Bool {
+        priorUseSentinelKeys.contains { userDefaults.object(forKey: $0) != nil }
     }
 
     var shouldPresent: Bool { !hasCompletedFirstRun }
