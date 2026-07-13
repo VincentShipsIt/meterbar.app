@@ -52,11 +52,11 @@ verify_target() {
   fi
 }
 
-verify_target MeterBar Debug dev.meterbar.app.debug "MeterBar Dev" "MeterBar Dev.app" "MeterBar Dev"
+verify_target MeterBar Debug dev.meterbar.app.debug "MeterBar Dev" "MeterBar Dev.app"
 verify_target MeterBarWidgetExtension Debug \
-  dev.meterbar.app.debug.Widget MeterBarWidgetExtension MeterBarWidgetExtension.appex "MeterBarWidget Dev"
+  dev.meterbar.app.debug.Widget MeterBarWidgetExtension MeterBarWidgetExtension.appex
 verify_target MeterBar Release dev.meterbar.app MeterBar MeterBar.app
 verify_target MeterBarWidgetExtension Release \
-  dev.meterbar.app.Widget MeterBarWidgetExtension MeterBarWidgetExtension.appex MeterBarWidget
+  dev.meterbar.app.Widget MeterBarWidgetExtension MeterBarWidgetExtension.appex
 
 echo "Debug and Release app/widget identities verified."
