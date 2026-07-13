@@ -35,7 +35,9 @@ Three build systems coexist (see `docs/audits/00-repo-map.md` §2):
 Key settings (from `MeterBar.xcodeproj/project.pbxproj`):
 - `MACOSX_DEPLOYMENT_TARGET = 26.0` (Liquid Glass APIs), `SWIFT_VERSION = 5.0` (Swift 5 language mode)
 - App: `ENABLE_APP_SANDBOX = NO` (the app must read other tools' credential/log files and spawn the `claude` binary). Widget: sandboxed. Hardened runtime on for both.
-- Bundle ids `dev.meterbar.app` / `dev.meterbar.app.Widget`; app group `group.dev.meterbar.app`.
+- Release bundle ids `dev.meterbar.app` / `dev.meterbar.app.Widget`; Debug uses
+  `dev.meterbar.app.debug` / `dev.meterbar.app.debug.Widget` and the app product name `MeterBar Dev` so
+  local builds cannot shadow the installed release. Both configurations use app group `group.dev.meterbar.app`.
 
 ---
 
