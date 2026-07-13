@@ -43,14 +43,10 @@ struct SessionWakeSettingsView: View {
 
     // MARK: - Layout
 
-    private var layout: some View {
-        Form {
-            sections
-        }
-        .formStyle(.grouped)
-    }
-
-    @ViewBuilder private var sections: some View {
+    /// Matches the card style used by every other Settings tab
+    /// (`SettingsPanelSection` + `SettingsRowView`) instead of a grouped `Form`,
+    /// so the Automation tab is visually consistent with the rest.
+    @ViewBuilder private var layout: some View {
         accountSection
         switchSection
         previewSection
@@ -62,89 +58,144 @@ struct SessionWakeSettingsView: View {
     // MARK: - Sections
 
     private var switchSection: some View {
-        Section("Session Wake") {
-            Toggle("Session Wake", isOn: onBinding)
-                .disabled(!store.canTurnOn && !store.isOn)
-                .toggleStyle(.switch)
-            if store.wakeAccountID == nil {
-                Text("Choose a wake account above to enable Session Wake.")
-                    .font(.footnote)
+        SettingsPanelSection(title: "Session Wake", systemImage: "moon.zzz", color: MeterBarTheme.appAccent) {
+            SettingsRowView(
+                title: "Session Wake",
+                detail: store.wakeAccountID == nil
+                    ? "Choose a wake account above to enable Session Wake."
+                    : "Automatically resume blocked Claude Code sessions after a limit resets."
+            ) {
+                Toggle("", isOn: onBinding)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(!store.canTurnOn && !store.isOn)
+            }
+
+            SettingsRowView(title: "Status") {
+                Text(status.label(isOn: store.isOn).title)
                     .foregroundStyle(.secondary)
             }
-            LabeledContent("Status", value: status.label(isOn: store.isOn).title)
         }
     }
 
     private var accountSection: some View {
-        Section("Wake account") {
-            Picker("Account", selection: accountBinding) {
-                Text("None selected").tag(UUID?.none)
-                ForEach(accounts.enabledAccounts) { account in
-                    Text(account.name).tag(UUID?.some(account.id))
+        SettingsPanelSection(title: "Wake account", systemImage: "person.crop.circle", color: MeterBarTheme.appAccent) {
+            SettingsRowView(title: "Account") {
+                Picker("", selection: accountBinding) {
+                    Text("None selected").tag(UUID?.none)
+                    ForEach(accounts.enabledAccounts) { account in
+                        Text(account.name).tag(UUID?.some(account.id))
+                    }
                 }
+                .labelsHidden()
+                .frame(maxWidth: 220)
             }
+
             if store.isOn {
-                Text("Changing the wake account turns Session Wake off.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                SettingsNotice(text: "Changing the wake account turns Session Wake off.", color: .secondary)
             }
         }
     }
 
     private var previewSection: some View {
-        Section("Preview") {
-            Button("Preview resumable sessions") {
-                Task { await status.preview(configDirectory: selectedConfigDirectory) }
+        SettingsPanelSection(title: "Preview", systemImage: "eye", color: MeterBarTheme.appAccent) {
+            SettingsRowView(
+                title: "Resumable sessions",
+                detail: "Check how many blocked sessions would resume on the next wake."
+            ) {
+                Button("Preview") {
+                    Task { await status.preview(configDirectory: selectedConfigDirectory) }
+                }
+                .buttonStyle(.bordered)
+                .disabled(status.isPreviewing)
             }
-            .disabled(status.isPreviewing)
-            LabeledContent("Eligible", value: "\(status.eligibleCount)")
+
+            SettingsRowView(title: "Eligible") {
+                Text("\(status.eligibleCount)")
+                    .foregroundStyle(.secondary)
+            }
+
             ForEach(Array(status.skipSummary.keys), id: \.self) { reason in
-                LabeledContent(reason.rawValue, value: "\(status.skipSummary[reason] ?? 0)")
-                    .font(.footnote)
+                SettingsRowView(title: reason.rawValue) {
+                    Text("\(status.skipSummary[reason] ?? 0)")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
             }
+
             if let summary = status.lastSummary {
-                let detail = "\(summary.resumed) resumed · \(summary.failed) failed · \(summary.skipped) skipped"
-                LabeledContent("Last run", value: detail)
-                    .font(.footnote)
+                SettingsRowView(title: "Last run") {
+                    Text("\(summary.resumed) resumed · \(summary.failed) failed · \(summary.skipped) skipped")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
 
     private var limitsSection: some View {
-        Section("Limits") {
-            Stepper(
-                "Max sessions per run: \(store.maxSessionsPerRun)",
-                value: binding(store.maxSessionsPerRun, store.setMaxSessionsPerRun),
-                in: WakeBounds.sessionsRange
-            )
-            Stepper(
-                "Max turns per session: \(store.maxTurns)",
-                value: binding(store.maxTurns, store.setMaxTurns),
-                in: WakeBounds.maxTurnsRange
-            )
-            TextField("Resume prompt", text: $store.prompt)
+        SettingsPanelSection(title: "Limits", systemImage: "slider.horizontal.3", color: MeterBarTheme.appAccent) {
+            SettingsRowView(title: "Max sessions per run", detail: "\(store.maxSessionsPerRun)") {
+                Stepper(
+                    "",
+                    value: binding(store.maxSessionsPerRun, store.setMaxSessionsPerRun),
+                    in: WakeBounds.sessionsRange
+                )
+                .labelsHidden()
+            }
+
+            SettingsRowView(title: "Max turns per session", detail: "\(store.maxTurns)") {
+                Stepper(
+                    "",
+                    value: binding(store.maxTurns, store.setMaxTurns),
+                    in: WakeBounds.maxTurnsRange
+                )
+                .labelsHidden()
+            }
+
+            SettingsRowView(title: "Resume prompt") {
+                TextField("continue", text: $store.prompt)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 220)
+            }
         }
     }
 
     private var permissionSection: some View {
-        Section("Permissions") {
-            Picker("Permission mode", selection: binding(store.permissionMode, store.setPermissionMode)) {
-                Text("Safe").tag(WakePermissionMode.safe)
-                Text("Bypass").tag(WakePermissionMode.bypass)
+        SettingsPanelSection(title: "Permissions", systemImage: "lock.shield", color: MeterBarTheme.appAccent) {
+            SettingsRowView(title: "Permission mode") {
+                Picker("", selection: binding(store.permissionMode, store.setPermissionMode)) {
+                    Text("Safe").tag(WakePermissionMode.safe)
+                    Text("Bypass").tag(WakePermissionMode.bypass)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 180)
             }
+
             if store.permissionMode == .bypass {
-                Toggle(
-                    "I acknowledge bypassing permission prompts is risky",
-                    isOn: binding(store.bypassAcknowledged, store.setBypassAcknowledged)
-                )
-                .font(.callout)
+                SettingsRowView(
+                    title: "Acknowledge risk",
+                    detail: "Bypassing permission prompts lets resumed sessions run without confirmation."
+                ) {
+                    Toggle("", isOn: binding(store.bypassAcknowledged, store.setBypassAcknowledged))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
             }
         }
     }
 
     private var notificationSection: some View {
-        Section("Notifications") {
-            Toggle("Notify when a run completes", isOn: $store.notifyOnCompletion)
+        SettingsPanelSection(title: "Notifications", systemImage: "bell", color: MeterBarTheme.appAccent) {
+            SettingsRowView(
+                title: "Notify when a run completes",
+                detail: "Post a notification after Session Wake finishes resuming sessions."
+            ) {
+                Toggle("", isOn: $store.notifyOnCompletion)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+            }
         }
     }
 

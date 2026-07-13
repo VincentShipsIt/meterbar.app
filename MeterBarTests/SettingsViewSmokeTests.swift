@@ -5,12 +5,14 @@ import XCTest
 
 @MainActor
 final class SettingsViewSmokeTests: XCTestCase {
-    func testStandaloneSettingsBuildsAVisibleSidebarLayout() {
+    func testStandaloneSettingsBuildsACompactTabbedLayout() {
         let hostingView = NSHostingView(rootView: SettingsView())
-        hostingView.frame = NSRect(x: 0, y: 0, width: 920, height: 620)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 760, height: 660)
         hostingView.layoutSubtreeIfNeeded()
 
-        XCTAssertGreaterThanOrEqual(hostingView.fittingSize.width, 840)
+        // Compact, MacSweep-style: a fixed ~600x640 tabbed window, not a wide sidebar.
+        XCTAssertGreaterThanOrEqual(hostingView.fittingSize.width, 720)
+        XCTAssertLessThanOrEqual(hostingView.fittingSize.width, 820)
         XCTAssertGreaterThanOrEqual(hostingView.fittingSize.height, 560)
     }
 }

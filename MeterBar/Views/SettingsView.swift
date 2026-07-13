@@ -125,11 +125,7 @@ struct SettingsView: View {
     // MARK: Internal
 
     var body: some View {
-        settingsWindow
-        .frame(
-            minWidth: SettingsPane.windowMinWidth,
-            minHeight: SettingsPane.windowMinHeight
-        )
+        settingsTabView
         .alert(
             "Claude Reconnect Failed",
             isPresented: Binding(
@@ -187,6 +183,7 @@ struct SettingsView: View {
     @State private var openRouterKeyDraft = ""
     @State private var selectedPane: SettingsPane = .general
     @State private var providerSearchText = ""
+    @State private var selectedProviderTab: ServiceType = .claudeCode
 
     /// Same key ClaudeCodeLocalService reads. Previously this flag was only
     /// settable via `defaults write`; exposing it here makes the legacy OAuth
@@ -253,6 +250,127 @@ struct SettingsView: View {
 
     private var codexAuthFileDisplayPath: String {
         CodexHomeDirectory.authFileDisplayPath()
+    }
+
+    // MARK: - Compact tabbed layout
+
+    /// Compact, MacSweep-style settings: a top tab bar over a fixed-size window
+    /// instead of a sidebar. Each tab reuses the existing section builders.
+    private var settingsTabView: some View {
+        TabView {
+            settingsTab {
+                trackedProvidersSection
+                refreshSection
+                notificationsSection
+                generalSection
+            }
+            .tabItem { Label("General", systemImage: "gearshape") }
+
+            settingsTab {
+                Picker("Provider", selection: $selectedProviderTab) {
+                    ForEach(ServiceType.allCases) { service in
+                        Text(service.displayName).tag(service)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.bottom, 4)
+
+                providerSettingsPane(for: selectedProviderTab)
+            }
+            .tabItem { Label("Providers", systemImage: "square.grid.2x2") }
+
+            settingsTab {
+                if showExtraUsageSection {
+                    extraUsageSection
+                }
+                apiUsageSection
+            }
+            .tabItem { Label("API Usage", systemImage: "key") }
+
+            settingsTab {
+                costTrackingSection
+            }
+            .tabItem { Label("Cost", systemImage: "chart.bar") }
+
+            if sessionWakeStore.featureEnabled {
+                settingsTab {
+                    SessionWakeSettingsView()
+                }
+                .tabItem { Label("Automation", systemImage: "moon.zzz") }
+            }
+
+            settingsTab {
+                aboutTabContent
+            }
+            .tabItem { Label("About", systemImage: "info.circle") }
+        }
+        .frame(width: Self.windowWidth, height: Self.windowHeight)
+        .background {
+            MeterBarDetailBackground()
+                .ignoresSafeArea()
+        }
+    }
+
+    // Compact, fixed window. Wide enough for the provider pane's account rows
+    // and usage bars; content is pinned to a leading-aligned column so nothing
+    // centers or clips at the window edges.
+    private static let windowWidth: CGFloat = 760
+    private static let windowHeight: CGFloat = 660
+
+    /// Wraps a tab's content in a padded, scrollable, top-aligned column so
+    /// long sections stay reachable in the compact fixed-height window.
+    private func settingsTab<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                content()
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
+            .frame(width: Self.windowWidth, alignment: .topLeading)
+        }
+        .scrollContentBackground(.hidden)
+    }
+
+    @ViewBuilder private var aboutTabContent: some View {
+        SettingsPanelSection(title: "About MeterBar", systemImage: "info.circle", color: MeterBarTheme.appAccent) {
+            SettingsRowView(
+                title: "Version",
+                detail: "Track your AI coding assistant usage limits from the macOS menu bar."
+            ) {
+                Text(Self.appVersionString)
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            SettingsDivider()
+
+            SettingsRowView(
+                title: "Software Update",
+                detail: softwareUpdates.configurationError ?? "Check for a new signed MeterBar release now."
+            ) {
+                Button("Check Now") {
+                    softwareUpdates.checkForUpdates()
+                }
+                .buttonStyle(.bordered)
+                .disabled(!softwareUpdates.canCheckForUpdates)
+            }
+
+            SettingsRowView(
+                title: "Website",
+                detail: "meterbar.dev"
+            ) {
+                Link("Open", destination: URL(string: "https://meterbar.dev")!)
+                    .buttonStyle(.bordered)
+            }
+        }
+        .onAppear { softwareUpdates.refreshState() }
+    }
+
+    private static var appVersionString: String {
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        return short == build ? short : "\(short) (\(build))"
     }
 
     private var settingsWindow: some View {
@@ -1510,13 +1628,13 @@ private struct SettingsSidebarRow: View {
             .padding(.horizontal, 9)
             .padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
         }
         .buttonStyle(.plain)
         .opacity(isEnabled ? 1 : 0.62)
         .background {
             if isSelected {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
                     .fill(Color.accentColor.opacity(0.95))
             }
         }
@@ -1577,7 +1695,7 @@ private struct SettingsInfoRow: View {
 
 // MARK: - SettingsPanelSection
 
-private struct SettingsPanelSection<Content: View>: View {
+struct SettingsPanelSection<Content: View>: View {
     // MARK: Lifecycle
 
     init(
@@ -1640,13 +1758,13 @@ private struct SettingsPanelSection<Content: View>: View {
 
 // MARK: - SettingsRowViewMetrics
 
-private enum SettingsRowViewMetrics {
+enum SettingsRowViewMetrics {
     static let labelWidth: CGFloat = 190
 }
 
 // MARK: - SettingsRowView
 
-private struct SettingsRowView<Content: View>: View {
+struct SettingsRowView<Content: View>: View {
     // MARK: Lifecycle
 
     init(title: String, detail: String? = nil, @ViewBuilder content: () -> Content) {
@@ -1685,7 +1803,7 @@ private struct SettingsRowView<Content: View>: View {
 
 // MARK: - SettingsNotice
 
-private struct SettingsNotice: View {
+struct SettingsNotice: View {
     let text: String
     let color: Color
 
@@ -1699,7 +1817,7 @@ private struct SettingsNotice: View {
 
 // MARK: - SettingsDivider
 
-private struct SettingsDivider: View {
+struct SettingsDivider: View {
     var body: some View {
         Divider()
     }
