@@ -1697,7 +1697,7 @@ private struct AdminKeySettingsRow: View {
     }
 }
 
-// MARK: - AddClaudeAccountSheet
+// MARK: - AddCodexAccountSheet
 
 private struct AddCodexAccountSheet: View {
     let onAdd: (String, String) -> Void
