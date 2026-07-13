@@ -84,7 +84,8 @@ class UsageDataManager: ObservableObject {
         var newMetrics: [ServiceType: UsageMetrics] = [:]
 
         // Fetch Claude Code metrics (local files)
-        if providerVisibilityStore.isEnabled(.claudeCode), claudeCodeService.hasAccess {
+        let hasEnabledClaudeAccount = !claudeCodeAccountStore.enabledAccounts.isEmpty
+        if providerVisibilityStore.isEnabled(.claudeCode), hasEnabledClaudeAccount, claudeCodeService.hasAccess {
             let accountMetrics = await fetchClaudeCodeAccountMetrics()
             claudeCodeAccountMetrics = accountMetrics
 
@@ -93,7 +94,7 @@ class UsageDataManager: ObservableObject {
             } else if let cachedMetrics = self.metrics[.claudeCode] {
                 newMetrics[.claudeCode] = cachedMetrics
             }
-        } else if !providerVisibilityStore.isEnabled(.claudeCode) {
+        } else if !providerVisibilityStore.isEnabled(.claudeCode) || !hasEnabledClaudeAccount {
             claudeCodeAccountMetrics = [:]
         }
 
@@ -113,6 +114,7 @@ class UsageDataManager: ObservableObject {
 
         // Merge new metrics with existing cached metrics for services that failed to fetch
         for service in ServiceType.allCases where providerVisibilityStore.isEnabled(service) {
+            if service == .claudeCode, !hasEnabledClaudeAccount { continue }
             if newMetrics[service] == nil, let cachedMetric = self.metrics[service] {
                 newMetrics[service] = cachedMetric
             }
@@ -144,6 +146,14 @@ class UsageDataManager: ObservableObject {
 
             switch service {
             case .claudeCode:
+                guard !claudeCodeAccountStore.enabledAccounts.isEmpty else {
+                    claudeCodeAccountMetrics = [:]
+                    metrics.removeValue(forKey: service)
+                    saveCachedData()
+                    sharedStore.saveMetrics(metrics)
+                    isLoading = false
+                    return
+                }
                 guard claudeCodeService.hasAccess else {
                     throw ServiceError.notAuthenticated
                 }
@@ -233,7 +243,7 @@ class UsageDataManager: ObservableObject {
     private func fetchClaudeCodeAccountMetrics() async -> [UUID: UsageMetrics] {
         var refreshedMetrics: [UUID: UsageMetrics] = [:]
 
-        for account in claudeCodeAccountStore.accounts {
+        for account in claudeCodeAccountStore.enabledAccounts {
             do {
                 refreshedMetrics[account.id] = try await claudeCodeService.fetchUsageMetrics(account: account)
             } catch {
@@ -248,7 +258,11 @@ class UsageDataManager: ObservableObject {
     }
 
     private func representativeClaudeCodeMetrics(from accountMetrics: [UUID: UsageMetrics]) -> UsageMetrics? {
-        accountMetrics[ClaudeCodeAccount.defaultID] ?? accountMetrics.values.first
+        if claudeCodeAccountStore.defaultAccountIsEnabled,
+           let defaultMetrics = accountMetrics[ClaudeCodeAccount.defaultID] {
+            return defaultMetrics
+        }
+        return claudeCodeAccountStore.enabledAccounts.lazy.compactMap { accountMetrics[$0.id] }.first
     }
 
     // MARK: - Provider strategy
