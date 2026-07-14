@@ -87,7 +87,7 @@ struct ProviderStatusTable: View {
     }
 
     private func toggleExpansion(for service: ServiceType) {
-        withAnimation(.snappy(duration: 0.18)) {
+        withAnimation(MeterBarTheme.Motion.quick) {
             if expandedServices.contains(service) {
                 expandedServices.remove(service)
             } else {

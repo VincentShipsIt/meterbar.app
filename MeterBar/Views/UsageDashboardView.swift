@@ -882,7 +882,7 @@ struct UsageDashboardView: View {
     }
 
     private func setSocialShareStatus(_ status: String) {
-        withAnimation(.easeInOut(duration: 0.15)) {
+        withAnimation(MeterBarTheme.Motion.standard) {
             socialShareStatus = status
         }
     }

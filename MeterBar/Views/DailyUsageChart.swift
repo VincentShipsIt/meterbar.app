@@ -334,7 +334,7 @@ struct DailyUsageBreakdownList: View {
   }
 
   private func toggleExpansion(for dayID: Date) {
-    withAnimation(.snappy(duration: 0.18)) {
+    withAnimation(MeterBarTheme.Motion.quick) {
       if expandedDayIDs.contains(dayID) {
         expandedDayIDs.remove(dayID)
       } else {
