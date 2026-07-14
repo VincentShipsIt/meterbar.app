@@ -92,6 +92,35 @@ enum MeterBarTheme {
   static func quotaStatusColor(percentLeft: Int) -> Color {
     QuotaBand.forPercentLeft(percentLeft).color
   }
+
+  // MARK: - Motion (shared animation vocabulary)
+
+  /// The one place MeterBar's animation curves are defined. Views should reach
+  /// for these tokens instead of hand-rolling `.snappy`/`.easeInOut` so the
+  /// app's motion stays consistent and Reduce Motion is honored in one spot.
+  enum Motion {
+    /// Row expand/collapse and other quick toggles. Preserves the snappy feel
+    /// the daily-usage and provider-status rows already used.
+    static let quick: Animation = .snappy(duration: 0.18)
+
+    /// Content swaps and status-text changes — a touch calmer than `quick`.
+    static let standard: Animation = .smooth(duration: 0.25)
+
+    /// Window resize / panel fade.
+    static let panel: Animation = .smooth(duration: 0.22)
+
+    /// Returns `base` unless Reduce Motion is on, in which case animation is
+    /// suppressed. Plugs directly into `withAnimation(_:)` (its `nil` overload
+    /// applies the change instantly) and `.animation(_:value:)`. Mirrors how
+    /// `CostScanLoadingChart` freezes its sweep when Reduce Motion is set.
+    ///
+    /// Read `accessibilityReduceMotion` from the environment at the call site
+    /// and pass it here, e.g.
+    /// `withAnimation(MeterBarTheme.Motion.resolve(.quick, reduceMotion: reduceMotion))`.
+    static func resolve(_ base: Animation, reduceMotion: Bool) -> Animation? {
+      reduceMotion ? nil : base
+    }
+  }
 }
 
 extension MeterBarTheme {
