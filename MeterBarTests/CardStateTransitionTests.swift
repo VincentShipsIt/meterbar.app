@@ -24,18 +24,18 @@ final class CardStateTransitionTests: XCTestCase {
 
     func testResolvedMotionIsNilUnderReduceMotion() {
         XCTAssertNil(
-            MeterBarTheme.Motion.resolved(reduceMotion: true),
+            MeterBarTheme.Motion.resolve(MeterBarTheme.Motion.standard, reduceMotion: true),
             "Reduce Motion must drop the animation so state changes apply instantly"
         )
         XCTAssertNotNil(
-            MeterBarTheme.Motion.resolved(reduceMotion: false),
+            MeterBarTheme.Motion.resolve(MeterBarTheme.Motion.standard, reduceMotion: false),
             "With motion allowed, the standard curve drives the swap"
         )
     }
 
     func testResolvedMotionUsesTheStandardCurve() {
         XCTAssertEqual(
-            MeterBarTheme.Motion.resolved(reduceMotion: false),
+            MeterBarTheme.Motion.resolve(MeterBarTheme.Motion.standard, reduceMotion: false),
             MeterBarTheme.Motion.standard,
             "There is one curve for structural swaps — resolved() returns it verbatim"
         )
