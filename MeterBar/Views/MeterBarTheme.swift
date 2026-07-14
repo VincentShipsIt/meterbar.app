@@ -44,6 +44,10 @@ enum MeterBarTheme {
   /// Matches MacSweep's companion popover and detail-panel shell radius.
   static let companionShellRadius: CGFloat = Radius.shell
 
+  /// The native Tahoe sidebar shape is intentionally overridden: its floating
+  /// pill radius is too large beside MeterBar's compact 8pt controls.
+  static let sidebarRadius: CGFloat = Radius.medium
+
   // MARK: - Spacing scale
 
   /// 4pt spacing grid for padding. Raw padding values snap to the nearest step;
@@ -70,7 +74,7 @@ enum MeterBarTheme {
     static let hairline: Double = 0.18
   }
 
-  // MARK: - Surface vocabulary (the two-layer material system)
+  // MARK: - Surface vocabulary
 
   /// MeterBar's surface tokens, codifying Apple's intended two-layer model.
   ///
@@ -82,10 +86,11 @@ enum MeterBarTheme {
   /// glass is not the goal; consistency is). Under Reduce Transparency both
   /// collapse to ``chromeOpaqueFallback`` — good citizenship, preserved.
   ///
-  /// **Layer 2 — CONTENT (flat, opaque).** The calm semantic fills that content
-  /// sits on. ``content`` is the *single* fill for every dashboard, settings,
-  /// and popover card. ``inset`` is a row nested one step inside a content
-  /// card. Both are already opaque, so Reduce Transparency leaves them intact.
+  /// **Layer 2 — CONTENT.** ``content`` is the single subtle, translucent fill
+  /// for every dashboard, settings, and popover card. It lets the window's
+  /// material/tint remain visible instead of turning each section into an
+  /// opaque dark-gray slab. ``inset`` is the quieter nested-row fill. Reduce
+  /// Transparency switches cards to ``contentOpaqueFallback``.
   ///
   /// The existing "glass shell containing flat-fill cards" structure is the
   /// correct Apple pattern; these tokens make it deliberate rather than
@@ -109,14 +114,27 @@ enum MeterBarTheme {
     static let chromeOpaqueFallback = Color(nsColor: .windowBackgroundColor)
 
     /// **Layer 2 — content.** The single content-card fill. Every card sits on
-    /// this one calm, opaque, appearance-adaptive semantic color. Applied via
+    /// this subtle, appearance-adaptive tint. Applied via
     /// ``SwiftUI/View/meterBarCardSurface(cornerRadius:)`` — the one source of
     /// truth for card fills.
-    static let content = Color(nsColor: .controlBackgroundColor)
+    static let content = Color.adaptive(
+      light: NSColor(srgbRed: 0.10, green: 0.42, blue: 0.50, alpha: 0.055),
+      dark: NSColor(srgbRed: 0.34, green: 0.72, blue: 0.80, alpha: 0.18),
+      lightHighContrast: NSColor(srgbRed: 0.08, green: 0.38, blue: 0.46, alpha: 0.12),
+      darkHighContrast: NSColor(srgbRed: 0.38, green: 0.76, blue: 0.84, alpha: 0.28)
+    )
+
+    /// Opaque accessibility fallback used only when Reduce Transparency is on.
+    static let contentOpaqueFallback = Color(nsColor: .controlBackgroundColor)
 
     /// **Layer 2 — inset.** A row nested inside a ``content`` card, one step
     /// recessed. Use for grouped rows *within* a card, not for the card itself.
-    static let inset = Color(nsColor: .windowBackgroundColor)
+    static let inset = Color.adaptive(
+      light: NSColor(srgbRed: 0.08, green: 0.35, blue: 0.42, alpha: 0.04),
+      dark: NSColor(srgbRed: 0.28, green: 0.60, blue: 0.68, alpha: 0.10),
+      lightHighContrast: NSColor(srgbRed: 0.06, green: 0.32, blue: 0.39, alpha: 0.09),
+      darkHighContrast: NSColor(srgbRed: 0.32, green: 0.66, blue: 0.74, alpha: 0.18)
+    )
   }
 
   // MARK: - Brand accents (semantic indicators only; adapt to light/dark)
@@ -356,19 +374,23 @@ extension View {
 
 private struct MeterBarCardSurfaceModifier: ViewModifier {
   let cornerRadius: CGFloat
+  @Environment(\.accessibilityReduceTransparency)
+  private var reduceTransparency
 
   func body(content: Content) -> some View {
     let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
 
-    // Every flat content card funnels through here — the single source of truth
-    // for card fills, so every card in every surface reads identically. One
-    // opaque `Surface.content` fill (Layer 2, never glass) plus a single hairline
-    // stroke to trace the edge. No drop shadow: the card's separation comes from
-    // the material it sits on (the glass popover shell, the dashboard's material
-    // background), not from lifting each card — shadows on a dense column read as
-    // noise. Uniform fill + uniform hairline, everywhere.
+    // Every content card funnels through here. The adaptive translucent tint
+    // preserves the window's material instead of painting opaque gray slabs;
+    // Reduce Transparency gets a semantic opaque fallback. A hairline provides
+    // the boundary without shadows or a second glass layer.
     content
-      .background(MeterBarTheme.Surface.content, in: shape)
+      .background(
+        reduceTransparency
+          ? MeterBarTheme.Surface.contentOpaqueFallback
+          : MeterBarTheme.Surface.content,
+        in: shape
+      )
       .overlay {
         shape.strokeBorder(MeterBarTheme.glassCardStroke, lineWidth: 1)
       }

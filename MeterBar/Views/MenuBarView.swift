@@ -540,11 +540,11 @@ struct ProviderStatusCard: View {
     snapshot.band?.shortLabel ?? "Offline"
   }
 
-  /// Exhausted cards are terminal summaries: their reset countdown is the only
-  /// actionable quota information, so no surface may open a redundant detail
-  /// view or show a disclosure affordance for them.
+  /// Cards without usage data and exhausted cards are terminal summaries. A
+  /// login/waiting card has no quota detail to reveal, while an exhausted card
+  /// already shows its only actionable reset information inline.
   var allowsDetailNavigation: Bool {
-    onSelect != nil && !snapshot.hasExhaustedLimit
+    onSelect != nil && snapshot.hasMetrics && !snapshot.hasExhaustedLimit
   }
 
   var body: some View {
@@ -601,7 +601,7 @@ struct ProviderStatusCard: View {
   }
 
   private var cardContent: some View {
-    DashboardTile(padding: 11, surface: .glass) {
+    DashboardTile(padding: 11) {
       VStack(alignment: .leading, spacing: 10) {
         HStack(spacing: 7) {
           ProviderLogoView(kind: snapshot.logoKind, size: 17, foregroundColor: snapshot.accentColor)

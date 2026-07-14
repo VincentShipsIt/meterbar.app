@@ -16,7 +16,7 @@ colors:
   text-secondary: "Color.secondary / NSColor.secondaryLabelColor"
   text-tertiary: ".tertiary"
   window-background: "Color(nsColor: .windowBackgroundColor)"
-  content-surface: "Color(nsColor: .controlBackgroundColor)  # for non-grouped card fills"
+  content-surface: "adaptive blue-green translucent tint over the window material; opaque controlBackgroundColor only for Reduce Transparency"
   separator: "Color(nsColor: .separatorColor) / .quaternary"
   fill-subtle: ".quaternary  # tracks, inactive chips, zebra rows"
   accent: "Color.accentColor  # follows the user's system accent"
@@ -63,7 +63,8 @@ Both surfaces stay lean. Avoid decorative hero layouts, big nested cards, and ex
 Liquid Glass is the system's **chrome layer** — the menu bar, the popover surface, toolbars, sidebars, and the occasional floating control. We get it for free by using standard components and **removing** custom chrome. The work is subtraction, not decoration:
 
 - **Do not** paint popover/window backgrounds with a color + material. Let the system popover/window surface (and `NavigationSplitView` sidebar/toolbar) supply the glass.
-- **Do not** wrap content cards in material + a manual hairline border ("fake glass"). Content is **not** a glass layer.
+- **Do not** paint content cards with opaque dark-gray slabs. Use the shared adaptive translucent tint and hairline so the window material remains visible.
+- **Do not** wrap content cards in a second material layer ("fake glass"). Content is **not** a glass layer.
 - **Never** stack a material over another material (glass-on-glass).
 - For genuinely free-floating custom controls only, use a single `.glassEffect(.regular, in:)` inside a `GlassEffectContainer`. Use it sparingly.
 
@@ -79,7 +80,7 @@ Native SF fonts via SwiftUI system font APIs. Keep text compact (see frontmatter
 
 ## Layout & Spacing
 
-- Companion window: `NavigationSplitView` with a native `.sidebar` `List`; content in a `ScrollView` with ~22px padding; cards as `GroupBox`.
+- Companion window: compact 8pt sidebar shell with a native `.sidebar` `List`; content in a `ScrollView` with ~22px padding; cards use the shared translucent surface.
 - Settings: native `Form` with `.formStyle(.grouped)` and `Section`s.
 - Popover: a single dense overview (native `List`/`Section` or `GroupBox`), not a tab strip. Refresh/dashboard actions only.
 - Repeated rows: 8–12px vertical spacing.

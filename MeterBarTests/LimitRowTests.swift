@@ -200,12 +200,22 @@ final class ProviderStatusCardSmokeTests: XCTestCase {
         XCTAssertGreaterThan(host.fittingSize.height, 0)
     }
 
-    func testOnlyAvailableCardAllowsDetailNavigation() {
+    func testOnlyCardWithUsageAvailableAllowsDetailNavigation() {
         let action = {}
         let available = ProviderStatusCard(snapshot: snapshot(exhausted: false), onSelect: action)
         let exhausted = ProviderStatusCard(snapshot: snapshot(exhausted: true), onSelect: action)
+        let loginRequired = ProviderStatusCard(
+            snapshot: ProviderSnapshotBuilder.snapshot(
+                title: "shipshitdev",
+                service: .claudeCode,
+                metrics: nil,
+                emptyDetail: "Run claude login"
+            ),
+            onSelect: action
+        )
 
         XCTAssertTrue(available.allowsDetailNavigation)
         XCTAssertFalse(exhausted.allowsDetailNavigation)
+        XCTAssertFalse(loginRequired.allowsDetailNavigation)
     }
 }

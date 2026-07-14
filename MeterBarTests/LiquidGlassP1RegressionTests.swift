@@ -8,12 +8,16 @@ import XCTest
 final class LiquidGlassP1RegressionTests: XCTestCase {
     // MARK: - Surface vocabulary invariants
 
-    /// The content-layer fills must stay opaque in both appearances so cards
-    /// read as solid regardless of Reduce Transparency (they are Layer 2 and
-    /// never glass).
-    func testContentSurfaceTokensAreOpaque() {
-        assertOpaque(MeterBarTheme.Surface.content)
-        assertOpaque(MeterBarTheme.Surface.inset)
+    /// Normal content surfaces stay translucent so the window material remains
+    /// visible instead of becoming opaque dark-gray slabs.
+    func testContentSurfaceTokensAreTranslucent() {
+        assertTranslucent(MeterBarTheme.Surface.content)
+        assertTranslucent(MeterBarTheme.Surface.inset)
+    }
+
+    /// Reduce Transparency still has an opaque semantic card fill.
+    func testContentReduceTransparencyFallbackIsOpaque() {
+        assertOpaque(MeterBarTheme.Surface.contentOpaqueFallback)
     }
 
     /// Chrome glass collapses to this fill under Reduce Transparency; the whole
@@ -47,6 +51,23 @@ final class LiquidGlassP1RegressionTests: XCTestCase {
                 alpha = NSColor(color).usingColorSpace(.sRGB)?.alphaComponent ?? -1
             }
             XCTAssertEqual(alpha, 1, accuracy: 0.0001, file: file, line: line)
+        }
+    }
+
+    private func assertTranslucent(
+        _ color: Color,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let appearances = [NSAppearance(named: .aqua), NSAppearance(named: .darkAqua)]
+            .compactMap { $0 }
+        for appearance in appearances {
+            var alpha: CGFloat = -1
+            appearance.performAsCurrentDrawingAppearance {
+                alpha = NSColor(color).usingColorSpace(.sRGB)?.alphaComponent ?? -1
+            }
+            XCTAssertGreaterThan(alpha, 0, file: file, line: line)
+            XCTAssertLessThan(alpha, 1, file: file, line: line)
         }
     }
 
