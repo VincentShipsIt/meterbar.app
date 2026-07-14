@@ -39,7 +39,6 @@ struct ResetCountdownLabel: View {
                             .minimumScaleFactor(0.8)
                     }
                     .foregroundColor(foregroundColor)
-                    .help(text)
                 }
             }
         }
@@ -83,7 +82,6 @@ struct NextResetCountdownLabel: View {
                             .minimumScaleFactor(0.8)
                     }
                     .foregroundColor(foregroundColor)
-                    .help(text)
                 }
             }
         }
@@ -158,7 +156,6 @@ struct BlockingLimitResetCounter: View {
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
-            .help("\(title) \(counter)")
         }
     }
 
@@ -262,7 +259,6 @@ struct CompactBlockingLimitResetRow: View {
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .help("\(title) \(counter)")
         }
     }
 }

@@ -132,4 +132,53 @@ final class MenuBarSmokeTests: XCTestCase {
 
         XCTAssertEqual(Set(manager.metrics.keys), Set(seeded.keys))
     }
+
+    // MARK: - Popover provider card affordances
+
+    /// The tappable popover card hosts with its hover button style, disclosure
+    /// chevron, and context menu attached — a broken affordance (e.g. a bad
+    /// command wiring or a layout regression from the chevron) fails to build here.
+    func testPopoverProviderCardHostsWithContextMenu() throws {
+        let snapshot = ProviderSnapshotBuilder.snapshot(
+            title: "Codex",
+            service: .codexCli,
+            metrics: MetricsFixtures.codexCli(),
+            emptyDetail: ""
+        )
+        let card = PopoverProviderStatusCard(snapshot: snapshot) {}
+
+        let hostingView = NSHostingView(rootView: card)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 390, height: 160)
+        hostingView.layoutSubtreeIfNeeded()
+
+        XCTAssertGreaterThan(hostingView.fittingSize.height, 0)
+    }
+
+    /// Firing the popover card's context-menu commands runs each side effect for
+    /// the card's own service — the "Refresh this provider" / "Hide provider"
+    /// items must act on the provider the menu was opened from.
+    func testPopoverProviderCardCommandsFireForItsService() {
+        let snapshot = ProviderSnapshotBuilder.snapshot(
+            title: "Codex",
+            service: .codexCli,
+            metrics: nil,
+            emptyDetail: ""
+        )
+
+        var refreshed: [ServiceType] = []
+        var hidden: [ServiceType] = []
+        let commands = ProviderCardCommands.make(
+            snapshot: snapshot,
+            refresh: { refreshed.append($0) },
+            openStatusPage: { _ in },
+            hide: { hidden.append($0) },
+            openInDashboard: {}
+        )
+
+        commands.first { $0.id == .refresh }?.action()
+        commands.first { $0.id == .hide }?.action()
+
+        XCTAssertEqual(refreshed, [.codexCli])
+        XCTAssertEqual(hidden, [.codexCli])
+    }
 }

@@ -157,7 +157,8 @@ struct MenuBarView: View {
               .font(.system(size: 12, weight: .semibold))
           }
           .meterBarGlassIconButton()
-          .help(dataManager.isLoading ? "Refreshing usage" : "Refresh usage")
+          .help(dataManager.isLoading ? "Refreshing usage" : "Refresh usage (⌘R)")
+          .meterBarRefreshShortcut()
           .disabled(dataManager.isLoading)
         }
       }
@@ -372,7 +373,9 @@ struct PopoverOverviewPanel: View {
   }
 }
 
-private struct PopoverProviderStatusCard: View {
+// Internal (not private) so the affordance smoke test can host the card and
+// assert its context menu / disclosure chevron wiring builds.
+struct PopoverProviderStatusCard: View {
   let snapshot: ProviderSnapshot
   var onSelect: (() -> Void)?
 
@@ -390,11 +393,20 @@ private struct PopoverProviderStatusCard: View {
         Button(action: onSelect) {
           cardContent
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ProviderCardButtonStyle())
         .accessibilityHint("Open \(snapshot.title) provider details")
       } else {
         cardContent
       }
+    }
+    .providerCardContextMenu(ProviderCardCommands.standard(snapshot: snapshot))
+  }
+
+  /// Chevron shown only when the card opens a detail panel, so "clickable" is
+  /// visible instead of relying on an accessibilityHint alone.
+  @ViewBuilder private var disclosureChevron: some View {
+    if onSelect != nil {
+      CardDisclosureChevron()
     }
   }
 
@@ -447,7 +459,8 @@ private struct PopoverProviderStatusCard: View {
                 .minimumScaleFactor(0.72)
             }
             .foregroundColor(snapshot.accentColor)
-            .help("\(title) \(counter)")
+
+            disclosureChevron
           }
         }
 
@@ -482,6 +495,8 @@ private struct PopoverProviderStatusCard: View {
             .font(.caption2)
             .fontWeight(.semibold)
             .foregroundColor(statusColor)
+
+          disclosureChevron
         }
 
         if snapshot.limits.isEmpty {
