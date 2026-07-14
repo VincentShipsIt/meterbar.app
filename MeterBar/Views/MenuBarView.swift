@@ -162,9 +162,10 @@ struct MenuBarView: View {
               .accessibilityHidden(true)
           }
           .meterBarGlassIconButton()
-          .help(dataManager.isLoading ? "Refreshing usage" : "Refresh usage")
+          .help(dataManager.isLoading ? "Refreshing usage" : "Refresh usage (⌘R)")
           .accessibilityLabel("Refresh")
           .accessibilityValue(dataManager.isLoading ? "Refreshing" : "")
+          .meterBarRefreshShortcut()
           .disabled(dataManager.isLoading)
         }
       }
@@ -472,6 +473,7 @@ struct PopoverProviderStatusCard: View {
         selectableCard
       }
     }
+    .providerCardContextMenu(ProviderCardCommands.standard(snapshot: snapshot))
     .task(id: snapshot.updatedAt) {
       await refreshCodexAuthenticationState()
     }
@@ -506,10 +508,18 @@ struct PopoverProviderStatusCard: View {
       Button(action: onSelect) {
         cardContent
       }
-      .buttonStyle(.plain)
+      .buttonStyle(ProviderCardButtonStyle())
       .accessibilityHint("Open \(snapshot.title) provider details")
     } else {
       cardContent
+    }
+  }
+
+  /// Chevron shown only when the card opens a detail panel, so "clickable" is
+  /// visible instead of relying on an accessibilityHint alone.
+  @ViewBuilder private var disclosureChevron: some View {
+    if onSelect != nil {
+      CardDisclosureChevron()
     }
   }
 
@@ -651,6 +661,8 @@ struct PopoverProviderStatusCard: View {
             .font(.caption2)
             .fontWeight(.semibold)
             .foregroundColor(statusColor)
+
+          disclosureChevron
         }
 
         if snapshot.limits.isEmpty {

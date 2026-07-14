@@ -55,7 +55,7 @@ struct ProviderOverviewStatusCard: View {
         Button(action: onSelect) {
           cardContent
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ProviderCardButtonStyle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(snapshot.title), \(statusText), \(snapshot.updatedText)")
         .accessibilityHint("Open \(snapshot.title) quota overview")
@@ -64,6 +64,15 @@ struct ProviderOverviewStatusCard: View {
           .accessibilityElement(children: .combine)
           .accessibilityLabel("\(snapshot.title), \(statusText), \(snapshot.updatedText)")
       }
+    }
+    .providerCardContextMenu(ProviderCardCommands.standard(snapshot: snapshot))
+  }
+
+  /// Chevron shown only when the card opens the limits detail, making the
+  /// affordance visible instead of relying on an accessibilityHint alone.
+  @ViewBuilder private var disclosureChevron: some View {
+    if onSelect != nil {
+      CardDisclosureChevron()
     }
   }
 
@@ -85,6 +94,8 @@ struct ProviderOverviewStatusCard: View {
             .font(.caption)
             .fontWeight(.semibold)
             .foregroundColor(statusColor)
+
+          disclosureChevron
         }
 
         ProviderLimitsBody(snapshot: snapshot, emptyMinHeight: 54, rowSpacing: 12)
