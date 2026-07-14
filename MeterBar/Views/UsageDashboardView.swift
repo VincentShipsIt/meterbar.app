@@ -477,9 +477,12 @@ struct UsageDashboardView: View {
 
             LazyVGrid(columns: overviewGridColumns, alignment: .leading, spacing: 12) {
                 ForEach(providerSnapshots) { snapshot in
-                    ProviderOverviewStatusCard(snapshot: snapshot) {
-                        navigation.navigate(to: .limits, focusedProviderID: snapshot.id)
-                    }
+                    // Same shared provider card as the popover and the Limits
+                    // page; tapping it jumps to that provider in Limits.
+                    PopoverProviderStatusCard(
+                        snapshot: snapshot,
+                        onSelect: { navigation.navigate(to: .limits, focusedProviderID: snapshot.id) }
+                    )
                 }
             }
             .frame(maxWidth: .infinity)
@@ -496,7 +499,9 @@ struct UsageDashboardView: View {
                 }
             } else {
                 ForEach(orderedProviderSnapshotsForLimits) { snapshot in
-                    ProviderLimitsCard(snapshot: snapshot)
+                    // The one provider card, shared with the popover, so the two
+                    // surfaces are physically the same component and cannot drift.
+                    PopoverProviderStatusCard(snapshot: snapshot)
                 }
             }
         }
