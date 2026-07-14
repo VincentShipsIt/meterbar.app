@@ -14,6 +14,9 @@ struct OptimizeInsightsView: View {
   @StateObject private var costTracker = CostTracker.shared
   @StateObject private var providerVisibility = ProviderVisibilityStore.shared
 
+  @Environment(\.accessibilityReduceMotion)
+  private var reduceMotion
+
   /// 7/30-day window for the token-burn chart.
   @State private var chartDays = 30
 
@@ -25,14 +28,48 @@ struct OptimizeInsightsView: View {
     visibleSummary.map { OptimizationInsights(summary: $0) }
   }
 
+  /// The page's three mutually-exclusive states. Animate on the phase so a scan
+  /// that refreshes the numbers (staying `.loaded`) doesn't re-run the swap.
+  private enum Phase: Equatable { case loading, loaded, empty }
+
+  private var phase: Phase {
+    if costTracker.isScanning, insights?.hasData != true { return .loading }
+    if let insights, insights.hasData { return .loaded }
+    return .empty
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
-      if costTracker.isScanning, insights?.hasData != true {
-        loadingCard
-      } else if let insights, insights.hasData {
+      phaseContent
+        .animation(MeterBarTheme.Motion.resolve(MeterBarTheme.Motion.standard, reduceMotion: reduceMotion), value: phase)
+    }
+  }
+
+  /// The swapping page body. Each branch is `.id`-tagged and carries the shared
+  /// `cardPhase` transition so a phase change is a clean replacement.
+  @ViewBuilder private var phaseContent: some View {
+    switch phase {
+    case .loading:
+      loadingCard
+        .id(Phase.loading)
+        .transition(MeterBarTheme.Motion.cardPhase)
+    case .loaded:
+      loadedContent
+        .id(Phase.loaded)
+        .transition(MeterBarTheme.Motion.cardPhase)
+    case .empty:
+      emptyStateCard
+        .id(Phase.empty)
+        .transition(MeterBarTheme.Motion.cardPhase)
+    }
+  }
+
+  /// Wraps the populated cards in their own 14pt stack so they stay a single
+  /// transition target (and keep the spacing they had as direct children).
+  @ViewBuilder private var loadedContent: some View {
+    if let insights, insights.hasData {
+      VStack(alignment: .leading, spacing: 14) {
         content(for: insights)
-      } else {
-        emptyStateCard
       }
     }
   }

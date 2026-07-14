@@ -119,22 +119,6 @@ enum MeterBarTheme {
     static let inset = Color(nsColor: .windowBackgroundColor)
   }
 
-  // MARK: - Motion
-
-  /// Animation durations for menu-chrome show/hide/resize. Kept short so the
-  /// menu bar still feels instant while the frame/alpha changes read as a
-  /// glide rather than a snap. Honor Reduce Motion at the call site.
-  enum Motion {
-    /// Popover/detail frame resize (expand/collapse, provider appearing).
-    static let panelResize: TimeInterval = 0.2
-    /// Fade in when a panel is ordered front.
-    static let panelFadeIn: TimeInterval = 0.15
-    /// Fade out before a panel is ordered out.
-    static let panelFadeOut: TimeInterval = 0.12
-    /// Status-item alpha change for the parse-health attention state.
-    static let statusItemAlpha: TimeInterval = 0.2
-  }
-
   // MARK: - Brand accents (semantic indicators only; adapt to light/dark)
 
   static let codexAccent = Color.adaptive(
@@ -218,9 +202,12 @@ enum MeterBarTheme {
 
   // MARK: - Motion (shared animation vocabulary)
 
-  /// The single place MeterBar's animation curves live. Views reach for these
-  /// tokens instead of hand-rolling `.snappy`/`.smooth`/`.easeInOut` so motion
-  /// stays consistent and Reduce Motion is honored in one spot.
+  /// The single place MeterBar's animation curves and structural-swap
+  /// transitions live. Views reach for these tokens instead of hand-rolling
+  /// `.snappy`/`.smooth`/`.easeInOut` so motion stays consistent and Reduce
+  /// Motion is honored in one spot. Drive `.animation(_, value:)` off a
+  /// *structural* key for the transitions; value ticks (a number rolling on a
+  /// refresh) are handled separately by `.contentTransition(.numericText())`.
   enum Motion {
     /// Row expand/collapse and other quick toggles.
     static let quick: Animation = .snappy(duration: 0.18)
@@ -228,17 +215,38 @@ enum MeterBarTheme {
     /// In-place status/day disclosure rows (same feel as `quick`, named for intent).
     static let disclosure: Animation = .snappy(duration: 0.18)
 
-    /// Content swaps, status-text changes, and `glassEffectID` card morphs.
+    /// Content swaps, status-text changes, `glassEffectID` morphs, and the
+    /// popover/card structural state swaps.
     static let standard: Animation = .smooth(duration: 0.3)
 
     /// Window resize / panel fade.
     static let panel: Animation = .smooth(duration: 0.22)
+
+    // Menu-chrome (AppKit NSPanel) durations, in seconds — used with
+    // NSAnimationContext for show/hide/resize. Kept short so the menu bar still
+    // feels instant while frame/alpha changes read as a glide, not a snap.
+    /// Popover/detail frame resize (expand/collapse, provider appearing).
+    static let panelResize: TimeInterval = 0.2
+    /// Fade in when a panel is ordered front.
+    static let panelFadeIn: TimeInterval = 0.15
+    /// Fade out before a panel is ordered out.
+    static let panelFadeOut: TimeInterval = 0.12
+    /// Status-item alpha change for the parse-health attention state.
+    static let statusItemAlpha: TimeInterval = 0.2
 
     /// Numeric-text rolls and progress-bar fills reacting to a refresh.
     static let standardCurve: Animation = .smooth(duration: 0.35)
 
     /// Icon/state swaps (chevrons, symbol replace, spinner crossfade).
     static let snappyCurve: Animation = .smooth(duration: 0.22)
+
+    /// Card content swaps (loading / loaded / empty): the outgoing branch softens
+    /// out as the incoming one resolves in, no positional jump.
+    static let cardPhase = AnyTransition(.blurReplace)
+
+    /// Tiles entering/leaving the popover column: fade while sliding from the top
+    /// edge so cards slide+fade rather than pop in place.
+    static let popoverTile: AnyTransition = .opacity.combined(with: .move(edge: .top))
 
     /// Returns `base`, or `nil` under Reduce Motion (an instant, motion-free
     /// update). Plugs straight into `withAnimation(_:)` / `.animation(_:value:)`.
