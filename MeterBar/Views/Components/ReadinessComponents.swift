@@ -46,7 +46,7 @@ struct ReadinessCheckRow: View {
       Image(systemName: check.level.iconName)
         .font(.system(size: compact ? 11 : 13, weight: .semibold))
         .foregroundStyle(check.level.tint)
-        .padding(.top, 1)
+        .padding(.top, MeterBarTheme.Spacing.xxs)
 
       VStack(alignment: .leading, spacing: 2) {
         Text(check.title)
@@ -173,6 +173,6 @@ private extension View {
       .fontWeight(.medium)
       .foregroundStyle(tint)
       .fixedSize(horizontal: false, vertical: true)
-      .padding(.top, 1)
+      .padding(.top, MeterBarTheme.Spacing.xxs)
   }
 }

@@ -218,10 +218,10 @@ struct UsageBar: View {
 
                 if isExhausted {
                     Capsule()
-                        .fill(MeterBarTheme.danger.opacity(0.16))
+                        .fill(MeterBarTheme.danger.opacity(MeterBarTheme.Fill.subtle))
                         .frame(width: proxy.size.width, height: 7)
                         .offset(y: 4)
-                    RoundedRectangle(cornerRadius: 1)
+                    RoundedRectangle(cornerRadius: MeterBarTheme.Radius.small)
                         .fill(MeterBarTheme.danger)
                         .frame(width: 2, height: 13)
                         .offset(x: max(0, proxy.size.width - 2), y: 1)
@@ -245,7 +245,7 @@ struct UsageBar: View {
                     .clipShape(Capsule())
                     .offset(y: 4)
 
-                    RoundedRectangle(cornerRadius: 1)
+                    RoundedRectangle(cornerRadius: MeterBarTheme.Radius.small)
                         .fill(markerColor(for: pace))
                         .frame(width: 2, height: 13)
                         .offset(x: min(max(0, expectedX - 1), max(0, proxy.size.width - 2)), y: 1)
@@ -253,7 +253,7 @@ struct UsageBar: View {
                     Rectangle()
                         .fill(accentColor)
                         .frame(width: proxy.size.width * clampedRemainingPercentage / 100, height: 7)
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                        .clipShape(RoundedRectangle(cornerRadius: MeterBarTheme.Radius.small))
                         .offset(y: 4)
                 }
             }
