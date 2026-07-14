@@ -114,6 +114,12 @@ enum MeterBarMenuDetailPanelLayout {
 struct MenuBarProviderDetailContent: View {
   let snapshot: ProviderSnapshot
 
+  @ObservedObject private var menuBarDisplayPreferences = MenuBarDisplayPreferencesStore.shared
+
+  init(snapshot: ProviderSnapshot) {
+    self.snapshot = snapshot
+  }
+
   private var detailLimits: [SnapshotLimit] {
     snapshot.detailLimits
   }
@@ -162,7 +168,8 @@ struct MenuBarProviderDetailContent: View {
         if snapshot.hasExhaustedLimit {
           BlockingLimitResetCounter(
             windows: snapshot.resetWindows,
-            accentColor: snapshot.accentColor
+            accentColor: snapshot.accentColor,
+            format: menuBarDisplayPreferences.resetTimeFormat
           )
           .padding(10)
           .meterBarCardSurface(cornerRadius: 10)
@@ -262,7 +269,8 @@ private struct MenuBarProviderLimitDetailRow: View {
             limit: limit.usageLimit,
             font: .caption2,
             foregroundColor: .secondary,
-            iconSize: 9
+            iconSize: 9,
+            usesPopoverPreference: true
           )
         }
       }

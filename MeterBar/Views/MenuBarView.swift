@@ -376,6 +376,13 @@ private struct PopoverProviderStatusCard: View {
   let snapshot: ProviderSnapshot
   var onSelect: (() -> Void)?
 
+  @ObservedObject private var menuBarDisplayPreferences = MenuBarDisplayPreferencesStore.shared
+
+  init(snapshot: ProviderSnapshot, onSelect: (() -> Void)? = nil) {
+    self.snapshot = snapshot
+    self.onSelect = onSelect
+  }
+
   private var statusColor: Color {
     snapshot.band?.color ?? .secondary
   }
@@ -418,7 +425,11 @@ private struct PopoverProviderStatusCard: View {
             now: timeline.date
           )
           let title = BlockingLimitResetCounter.titleText(for: blockingWindow, in: snapshot.resetWindows)
-          let counter = BlockingLimitResetCounter.counterText(for: blockingWindow, now: timeline.date)
+          let counter = BlockingLimitResetCounter.counterText(
+            for: blockingWindow,
+            now: timeline.date,
+            format: menuBarDisplayPreferences.resetTimeFormat
+          )
 
           HStack(alignment: .center, spacing: 9) {
             ProviderLogoView(kind: snapshot.logoKind, size: 17, foregroundColor: snapshot.accentColor)
@@ -552,7 +563,8 @@ private struct PopoverLimitRow: View {
           limit: limit.usageLimit,
           font: .caption2,
           foregroundColor: .secondary,
-          iconSize: 9
+          iconSize: 9,
+          usesPopoverPreference: true
         )
       }
     }

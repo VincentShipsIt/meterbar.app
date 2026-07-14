@@ -12,6 +12,7 @@ struct ProviderSnapshot: Identifiable {
     let id: String
     let title: String
     let service: ServiceType
+    let accountID: UUID?
     let updatedAt: Date?
     let limits: [SnapshotLimit]
     let emptyDetail: String
@@ -176,7 +177,8 @@ enum ProviderSnapshotBuilder {
                     title: "Codex",
                     service: .codexCli,
                     metrics: input.metrics[.codexCli],
-                    emptyDetail: input.codexCliHasAccess ? "Waiting for refresh" : "Run codex login"
+                    emptyDetail: input.codexCliHasAccess ? "Waiting for refresh" : "Run codex login",
+                    accountID: CodexAccount.defaultID
                 ))
             }
         }
@@ -236,6 +238,7 @@ enum ProviderSnapshotBuilder {
             id: "\(service.rawValue)-\(title)-\(accountID?.uuidString ?? "default")",
             title: title,
             service: service,
+            accountID: accountID,
             updatedAt: metrics?.lastUpdated,
             limits: limits(for: metrics, service: service),
             emptyDetail: emptyDetail,
@@ -274,6 +277,23 @@ enum ProviderSnapshotBuilder {
             result.append(SnapshotLimit(id: "codeReview", kind: .codeReview, title: title, usageLimit: codeReview))
         }
         return result
+    }
+}
+
+extension Array where Element == ProviderSnapshot {
+    var statusItemPinOptions: [StatusItemPinOption] {
+        flatMap { snapshot in
+            snapshot.limits.map { limit in
+                StatusItemPinOption(
+                    id: StatusItemPinKey.make(
+                        service: snapshot.service,
+                        accountID: snapshot.accountID,
+                        windowID: limit.id
+                    ),
+                    title: "\(snapshot.title) · \(limit.title)"
+                )
+            }
+        }
     }
 }
 
