@@ -14,7 +14,7 @@ final class MeterBarMotionTests: XCTestCase {
     func testMotionTokensMatchCalibratedCurves() {
         XCTAssertEqual(MB.quick, .snappy(duration: 0.18))
         XCTAssertEqual(MB.disclosure, .snappy(duration: 0.18))
-        XCTAssertEqual(MB.standard, .smooth(duration: 0.3))
+        XCTAssertEqual(MB.standard, .smooth(duration: 0.32))
         XCTAssertEqual(MB.panel, .smooth(duration: 0.22))
         XCTAssertEqual(MB.standardCurve, .smooth(duration: 0.35))
         XCTAssertEqual(MB.snappyCurve, .smooth(duration: 0.22))

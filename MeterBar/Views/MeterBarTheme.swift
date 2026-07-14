@@ -223,7 +223,7 @@ enum MeterBarTheme {
 
     /// Content swaps, status-text changes, `glassEffectID` morphs, and the
     /// popover/card structural state swaps.
-    static let standard: Animation = .smooth(duration: 0.3)
+    static let standard: Animation = .smooth(duration: 0.32)
 
     /// Window resize / panel fade.
     static let panel: Animation = .smooth(duration: 0.22)
