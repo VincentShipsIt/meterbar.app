@@ -146,7 +146,7 @@ final class CodexResetCreditsTests: XCTestCase {
                 return (response, Data(#"{"credits":[{"id":"credit-1","reset_type":"codex_rate_limits","status":"available"}],"available_count":1}"#.utf8))
             case ("POST", "/backend-api/wham/rate-limit-reset-credits/consume"):
                 XCTAssertEqual(request.value(forHTTPHeaderField: "ChatGPT-Account-Id"), "account-1")
-                let body = try requestBodyData(from: request)
+                let body = try self.requestBodyData(from: request)
                 let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
                 XCTAssertEqual(json["credit_id"], "credit-1")
                 XCTAssertFalse(try XCTUnwrap(json["redeem_request_id"]).isEmpty)
