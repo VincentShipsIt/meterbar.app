@@ -7,7 +7,7 @@ import XCTest
 /// Coverage for the unified `LimitRow` component that replaced the three
 /// hand-drifted per-surface rows (`PopoverLimitRow`,
 /// `MenuBarProviderLimitDetailRow`, `DashboardLimitRow`). The pure
-/// `LimitRow.Content` value type carries the display logic so trailing/used
+/// `LimitRow.RowContent` value type carries the display logic so trailing/used
 /// formatting, the "Out"/estimated rules, and currency handling can be asserted
 /// directly; hosting-view smoke tests then confirm each density renders.
 @MainActor
@@ -48,13 +48,13 @@ final class LimitRowTests: XCTestCase {
     // MARK: - Trailing value
 
     func testQuotaTrailingShowsPercentLeftWhenHasRoom() {
-        let content = LimitRow.Content(limit: quotaLimit(used: 40))
+        let content = LimitRow.RowContent(limit: quotaLimit(used: 40))
         XCTAssertEqual(content.trailingText, "60% left")
         XCTAssertFalse(content.isTrailingDanger)
     }
 
     func testQuotaTrailingShowsOutWhenExhausted() {
-        let content = LimitRow.Content(limit: quotaLimit(used: 100))
+        let content = LimitRow.RowContent(limit: quotaLimit(used: 100))
         XCTAssertEqual(content.trailingText, "Out")
         XCTAssertTrue(content.isTrailingDanger)
     }
@@ -62,32 +62,32 @@ final class LimitRowTests: XCTestCase {
     func testEstimatedExhaustedShowsPercentInsteadOfOut() {
         // An estimated total must never claim a hard "Out" — the total is a
         // guess, so it falls back to the (approximate) percent-left label.
-        let content = LimitRow.Content(limit: quotaLimit(used: 100, isEstimated: true))
+        let content = LimitRow.RowContent(limit: quotaLimit(used: 100, isEstimated: true))
         XCTAssertEqual(content.trailingText, "~0% left")
         XCTAssertNil(content.pace, "estimated limits suppress the pace overlay")
     }
 
     func testCurrencyTrailingAndUsedFormatAsMoney() {
-        let content = LimitRow.Content(limit: currencyLimit(used: 3, total: 10))
+        let content = LimitRow.RowContent(limit: currencyLimit(used: 3, total: 10))
         XCTAssertEqual(content.trailingText, "\(UsageFormat.cost(7)) left")
         XCTAssertEqual(content.usedText, "\(UsageFormat.cost(3)) spent")
     }
 
     func testQuotaUsedTextIsPercentUsed() {
-        let content = LimitRow.Content(limit: quotaLimit(used: 40))
+        let content = LimitRow.RowContent(limit: quotaLimit(used: 40))
         XCTAssertEqual(content.usedText, "40% used")
     }
 
     // MARK: - Reset + estimated flags
 
     func testShowsResetOnlyWhenResetTimePresent() {
-        XCTAssertFalse(LimitRow.Content(limit: quotaLimit(used: 40)).showsReset)
-        XCTAssertTrue(LimitRow.Content(limit: quotaLimit(used: 40, resetTime: future)).showsReset)
+        XCTAssertFalse(LimitRow.RowContent(limit: quotaLimit(used: 40)).showsReset)
+        XCTAssertTrue(LimitRow.RowContent(limit: quotaLimit(used: 40, resetTime: future)).showsReset)
     }
 
     func testShowsEstimatedTagTracksEstimatedFlag() {
-        XCTAssertFalse(LimitRow.Content(limit: quotaLimit(used: 40)).showsEstimatedTag)
-        XCTAssertTrue(LimitRow.Content(limit: quotaLimit(used: 40, isEstimated: true)).showsEstimatedTag)
+        XCTAssertFalse(LimitRow.RowContent(limit: quotaLimit(used: 40)).showsEstimatedTag)
+        XCTAssertTrue(LimitRow.RowContent(limit: quotaLimit(used: 40, isEstimated: true)).showsEstimatedTag)
     }
 
     // MARK: - Rendering smoke (every density builds)

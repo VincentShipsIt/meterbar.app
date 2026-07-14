@@ -204,6 +204,7 @@ nonisolated private extension ServiceType {
         case .codexCli: return "codex"
         case .cursor: return "cursor"
         case .openRouter: return "openrouter"
+        case .grok: return "grok"
         }
     }
 }

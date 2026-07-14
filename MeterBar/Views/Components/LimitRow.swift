@@ -27,7 +27,7 @@ struct LimitRow: View {
     @Environment(\.accessibilityReduceMotion)
     private var reduceMotion
 
-    private var content: Content { Content(limit: limit) }
+    private var content: RowContent { RowContent(limit: limit) }
 
     var body: some View {
         core
@@ -142,7 +142,7 @@ extension LimitRow {
     /// Pure display logic for a limit row — no SwiftUI, so every branch (Out vs
     /// percent-left, estimated suppression, currency formatting, reset presence)
     /// is directly testable.
-    struct Content {
+    struct RowContent {
         let limit: SnapshotLimit
 
         private var isEstimated: Bool { limit.usageLimit.isEstimated }
