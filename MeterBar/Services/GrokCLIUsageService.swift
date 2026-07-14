@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import MeterBarShared
+import os
 
 /// Reads Grok Build subscription usage through the CLI's official ACP stdio
 /// extension. MeterBar asks the CLI to authenticate with its cached login and
