@@ -24,6 +24,9 @@ struct LimitRow: View {
     let accentColor: Color
     var density: Density = .regular
 
+    @Environment(\.accessibilityReduceMotion)
+    private var reduceMotion
+
     private var content: Content { Content(limit: limit) }
 
     var body: some View {
@@ -63,6 +66,7 @@ struct LimitRow: View {
                 .fontWeight(density.trailingWeight)
                 .foregroundColor(content.isTrailingDanger ? MeterBarTheme.danger : .primary)
                 .lineLimit(1)
+                .numericRefreshTransition(value: content.trailingText, reduceMotion: reduceMotion)
         }
     }
 
@@ -94,6 +98,7 @@ struct LimitRow: View {
                 Text(content.usedText)
                     .font(density.footerFont)
                     .foregroundColor(.secondary)
+                    .numericRefreshTransition(value: content.usedText, reduceMotion: reduceMotion)
 
                 if let pace = content.pace {
                     Text(pace.leftLabel)

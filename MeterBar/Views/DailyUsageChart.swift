@@ -460,6 +460,9 @@ struct DailyUsageDetailRow: View {
   let isExpanded: Bool
   let toggle: () -> Void
 
+  @Environment(\.accessibilityReduceMotion)
+  private var reduceMotion
+
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       Button(action: toggle) {
@@ -470,6 +473,8 @@ struct DailyUsageDetailRow: View {
               .fontWeight(.bold)
               .foregroundColor(.secondary)
               .frame(width: 12)
+              .contentTransition(.symbolEffect(.replace))
+              .animation(MeterBarTheme.Motion.snappy(reduceMotion: reduceMotion), value: isExpanded)
 
             Text(dateLabel(day.date))
               .font(.subheadline)

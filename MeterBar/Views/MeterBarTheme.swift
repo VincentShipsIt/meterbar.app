@@ -202,49 +202,38 @@ enum MeterBarTheme {
 
   // MARK: - Motion (shared animation vocabulary)
 
-  /// The one place MeterBar's animation curves are defined. Views should reach
-  /// for these tokens instead of hand-rolling `.snappy`/`.easeInOut` so the
-  /// app's motion stays consistent and Reduce Motion is honored in one spot.
+  /// The single place MeterBar's animation curves live. Views reach for these
+  /// tokens instead of hand-rolling `.snappy`/`.smooth`/`.easeInOut` so motion
+  /// stays consistent and Reduce Motion is honored in one spot.
   enum Motion {
-    /// Row expand/collapse and other quick toggles. Preserves the snappy feel
-    /// the daily-usage and provider-status rows already used.
+    /// Row expand/collapse and other quick toggles.
     static let quick: Animation = .snappy(duration: 0.18)
 
-    /// Content swaps and status-text changes — a touch calmer than `quick`.
-    static let standard: Animation = .smooth(duration: 0.25)
+    /// In-place status/day disclosure rows (same feel as `quick`, named for intent).
+    static let disclosure: Animation = .snappy(duration: 0.18)
+
+    /// Content swaps, status-text changes, and `glassEffectID` card morphs.
+    static let standard: Animation = .smooth(duration: 0.3)
 
     /// Window resize / panel fade.
     static let panel: Animation = .smooth(duration: 0.22)
 
-    /// Returns `base` unless Reduce Motion is on, in which case animation is
-    /// suppressed. Plugs directly into `withAnimation(_:)` (its `nil` overload
-    /// applies the change instantly) and `.animation(_:value:)`. Mirrors how
-    /// `CostScanLoadingChart` freezes its sweep when Reduce Motion is set.
-    ///
-    /// Read `accessibilityReduceMotion` from the environment at the call site
-    /// and pass it here, e.g.
-    /// `withAnimation(MeterBarTheme.Motion.resolve(.quick, reduceMotion: reduceMotion))`.
+    /// Numeric-text rolls and progress-bar fills reacting to a refresh.
+    static let standardCurve: Animation = .smooth(duration: 0.35)
+
+    /// Icon/state swaps (chevrons, symbol replace, spinner crossfade).
+    static let snappyCurve: Animation = .smooth(duration: 0.22)
+
+    /// Returns `base`, or `nil` under Reduce Motion (an instant, motion-free
+    /// update). Plugs straight into `withAnimation(_:)` / `.animation(_:value:)`.
     static func resolve(_ base: Animation, reduceMotion: Bool) -> Animation? {
       reduceMotion ? nil : base
     }
-  }
-}
 
-extension MeterBarTheme {
-  /// Animation tokens for state transitions. Centralizing them keeps the
-  /// Liquid Glass morphs (exhausted↔expanded card height swaps) and the
-  /// in-place disclosure expansions on one shared timing instead of scattering
-  /// `.smooth` / `.snappy` literals across the views.
-  enum Motion {
-    /// Smooth spring driving `glassEffectID` morphs inside a
-    /// `GlassEffectContainer` — the flagship exhausted/expanded provider-card
-    /// swap and its dashboard twin. Follows the SwiftUI Liquid Glass docs'
-    /// `.smooth` guidance for glass state changes.
-    static let standard: Animation = .smooth(duration: 0.32)
-
-    /// Snappier timing for the in-place status/day disclosure rows, preserving
-    /// the prior `.snappy(0.18)` feel now that it flows through a token.
-    static let disclosure: Animation = .snappy(duration: 0.18)
+    /// Quicker icon/state-swap curve, or `nil` under Reduce Motion.
+    static func snappy(reduceMotion: Bool) -> Animation? {
+      reduceMotion ? nil : snappyCurve
+    }
   }
 }
 
@@ -319,6 +308,16 @@ extension NSPanel {
 extension View {
   func meterBarCardSurface(cornerRadius: CGFloat = MeterBarTheme.Radius.card) -> some View {
     modifier(MeterBarCardSurfaceModifier(cornerRadius: cornerRadius))
+  }
+
+  /// Micro-motion for a numeric `Text` that changes on refresh: the digits roll
+  /// via `.numericText()` instead of snapping. `value` is what the caller wants
+  /// the transition to key off (usually the underlying number or its formatted
+  /// string); when it changes, the animation transaction drives the content
+  /// transition. Collapses to an instant update under Reduce Motion.
+  func numericRefreshTransition(value: some Equatable, reduceMotion: Bool) -> some View {
+    contentTransition(.numericText())
+      .animation(MeterBarTheme.Motion.resolve(MeterBarTheme.Motion.standardCurve, reduceMotion: reduceMotion), value: value)
   }
 }
 
