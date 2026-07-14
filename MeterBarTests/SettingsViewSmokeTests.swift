@@ -16,6 +16,29 @@ final class SettingsViewSmokeTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(hostingView.fittingSize.height, 560)
     }
 
+    func testProviderNotConnectedEmptyStateRendersInSettingsSection() {
+        // Mirrors the real composition: the unified EmptyStateCard nested inside
+        // a SettingsPanelSection tile, at the settings column width. Guards that
+        // the migrated not-connected notices lay out where the old stacked
+        // SettingsNotices used to.
+        let section = SettingsPanelSection(
+            title: "Cursor",
+            systemImage: "person.crop.circle",
+            color: MeterBarTheme.cursorAccent
+        ) {
+            EmptyStateCard(
+                systemImage: "person.crop.circle.badge.exclamationmark",
+                title: "Not connected",
+                message: "Log in to Cursor IDE, then Check Again.",
+                tone: .warning
+            )
+        }
+
+        let hostingView = NSHostingView(rootView: section.frame(width: 720))
+        hostingView.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThan(hostingView.fittingSize.height, 0)
+    }
+
     /// Cost Tracking's "Scan 30 Days" (`.glassProminent`) and the Refresh
     /// section's "Refresh Now" (`.glass`) are the Settings CTAs that adopted
     /// Liquid Glass button styles. SwiftPM CI can't drive AppKit hit-testing, so

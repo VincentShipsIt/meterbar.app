@@ -272,7 +272,12 @@ struct SettingsView: View {
                         .fontWeight(.semibold)
                 }
             } else if !codexCliService.hasAccess {
-                SettingsNotice(text: "Run codex login, then check again.", color: MeterBarTheme.warning)
+                EmptyStateCard(
+                    systemImage: "person.crop.circle.badge.exclamationmark",
+                    title: "Not connected",
+                    message: "Run codex login, then Check Again.",
+                    tone: .warning
+                )
             }
 
             SettingsDivider()
@@ -589,13 +594,11 @@ struct SettingsView: View {
                     }
                 }
             } else {
-                SettingsNotice(
-                    text: claudeCodeService.authState.guidanceText,
-                    color: .secondary
-                )
-                SettingsNotice(
-                    text: "MeterBar reads usage from Claude Code's OAuth login; the CLI output is a fallback.",
-                    color: MeterBarTheme.warning
+                EmptyStateCard(
+                    systemImage: "person.crop.circle.badge.exclamationmark",
+                    title: "Not connected",
+                    message: claudeCodeService.authState.guidanceText,
+                    tone: .warning
                 )
             }
 
@@ -698,11 +701,12 @@ struct SettingsView: View {
                         .fontWeight(.semibold)
                 }
             } else if !cursorService.hasAccess {
-                SettingsNotice(
-                    text: "Reads Cursor IDE credentials from Cursor's local state database.",
-                    color: .secondary
+                EmptyStateCard(
+                    systemImage: "person.crop.circle.badge.exclamationmark",
+                    title: "Not connected",
+                    message: "Log in to Cursor IDE, then Check Again.",
+                    tone: .warning
                 )
-                SettingsNotice(text: "Log in to Cursor IDE first, then check again.", color: MeterBarTheme.warning)
             }
         }
     }
@@ -759,7 +763,12 @@ struct SettingsView: View {
                 default:
                     error.localizedDescription
                 }
-                SettingsNotice(text: detail, color: MeterBarTheme.warning)
+                EmptyStateCard(
+                    systemImage: "exclamationmark.triangle.fill",
+                    title: "Not connected",
+                    message: detail,
+                    tone: .warning
+                )
             }
         }
     }
@@ -860,15 +869,27 @@ struct SettingsView: View {
                     SettingsNotice(text: "Last scanned \(formatDate(lastScan)) ago.", color: .secondary)
                 }
             } else if costTracker.costSummary != nil {
-                SettingsNotice(text: "No cost data for enabled providers.", color: .secondary)
+                // Scanned, but nothing landed for the providers that are enabled.
+                EmptyStateCard(
+                    systemImage: "tray",
+                    title: "No cost data",
+                    message: "Enabled providers logged no local tokens in the last 30 days."
+                )
             } else {
-                SettingsNotice(text: "No cost data loaded yet.", color: .secondary)
+                // Never scanned this session — the button below kicks off the first scan.
+                EmptyStateCard(
+                    systemImage: "magnifyingglass",
+                    title: "No scan yet",
+                    message: "Scan 30 days to estimate local token cost."
+                )
             }
 
             if !canScanCosts {
-                SettingsNotice(
-                    text: "Enable Claude Code or OpenAI Codex to scan local token logs.",
-                    color: MeterBarTheme.warning
+                EmptyStateCard(
+                    systemImage: "exclamationmark.triangle.fill",
+                    title: "Nothing to scan",
+                    message: "Enable Claude Code or OpenAI Codex to scan local token logs.",
+                    tone: .warning
                 )
             }
 
@@ -1000,11 +1021,19 @@ struct SettingsView: View {
         ) {
             let snapshots = providerSnapshots(for: service).filter(\.hasMetrics)
             if snapshots.isEmpty {
-                SettingsNotice(
-                    text: providerVisibility
-                        .isEnabled(service) ? "No usage data yet. Refresh after signing in." : "Provider is disabled.",
-                    color: .secondary
-                )
+                if providerVisibility.isEnabled(service) {
+                    EmptyStateCard(
+                        systemImage: "chart.bar",
+                        title: "No usage yet",
+                        message: "Refresh after signing in to see \(service.displayName) usage."
+                    )
+                } else {
+                    EmptyStateCard(
+                        systemImage: "eye.slash",
+                        title: "Provider disabled",
+                        message: "Enable \(service.displayName) to track its usage."
+                    )
+                }
             } else {
                 ForEach(snapshots) { snapshot in
                     VStack(alignment: .leading, spacing: 10) {
@@ -1018,7 +1047,11 @@ struct SettingsView: View {
                         }
 
                         if snapshot.detailLimits.isEmpty {
-                            SettingsNotice(text: "No quota windows reported.", color: .secondary)
+                            EmptyStateCard(
+                                systemImage: "clock.badge.questionmark",
+                                title: "No quota windows",
+                                message: "This provider didn't report any limit windows."
+                            )
                         } else {
                             ForEach(snapshot.detailLimits) { limit in
                                 LimitRow(limit: limit, accentColor: snapshot.accentColor, density: .regular)
