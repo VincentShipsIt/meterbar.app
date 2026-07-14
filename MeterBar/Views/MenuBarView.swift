@@ -245,6 +245,8 @@ struct PopoverOverviewPanel: View {
   @StateObject private var onboarding = FirstRunOnboardingStore.shared
   @Environment(\.openSettings)
   private var openSettings
+  @Environment(\.accessibilityReduceMotion)
+  private var reduceMotion
 
   /// The enabled providers currently shown in the popover.
   private var enabledProviders: Set<ServiceType> {
@@ -257,10 +259,33 @@ struct PopoverOverviewPanel: View {
     setupReports.filter { enabledProviders.contains($0.provider) && !$0.isHealthy }
   }
 
+  /// Captures *which* tiles the panel shows, not their values. The panel
+  /// refreshes periodically; animating on this key means a routine data tick
+  /// (a number moving, a countdown ticking) does not re-trigger the tile
+  /// transitions — only a structural change (a tile appearing/leaving, a
+  /// provider entering/exiting the list) does. Numeric ticks animate
+  /// separately via the cards' own `.numericText()` content transitions.
+  private struct StructuralKey: Equatable {
+    let showsFirstRun: Bool
+    let isEmpty: Bool
+    let setupProviders: [ServiceType]
+    let snapshotIDs: [String]
+  }
+
+  private var structuralKey: StructuralKey {
+    StructuralKey(
+      showsFirstRun: onboarding.shouldPresent,
+      isEmpty: snapshots.isEmpty,
+      setupProviders: providersNeedingSetup.map(\.provider),
+      snapshotIDs: snapshots.map(\.id)
+    )
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       if onboarding.shouldPresent {
         firstRunCallout
+          .transition(MeterBarTheme.Motion.popoverTile)
       }
 
       if snapshots.isEmpty {
@@ -288,10 +313,12 @@ struct PopoverOverviewPanel: View {
               .controlSize(.small)
           }
         }
+        .transition(MeterBarTheme.Motion.popoverTile)
       }
 
       if !providersNeedingSetup.isEmpty {
         setupChecklist
+          .transition(MeterBarTheme.Motion.popoverTile)
       }
 
       PopoverProviderStatusSummaryCard(openStatusDetail: openStatusDetail)
@@ -303,9 +330,11 @@ struct PopoverOverviewPanel: View {
             openProviderOverview(snapshot)
           }
           .reportPopoverCardFrame(id: snapshot.id)
+          .transition(MeterBarTheme.Motion.popoverTile)
         }
       }
     }
+    .animation(MeterBarTheme.Motion.resolved(reduceMotion: reduceMotion), value: structuralKey)
     .task {
       await loadSetupReports()
     }

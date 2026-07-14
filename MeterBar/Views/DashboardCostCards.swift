@@ -10,10 +10,24 @@ struct CostOverviewStatusCard: View {
   let isRefreshingMissingDays: Bool
   let formattedTokens: String
 
+  @Environment(\.accessibilityReduceMotion)
+  private var reduceMotion
+
   private var subtitle: String {
     if isScanning { return "Scanning local logs" }
     if isRefreshingMissingDays { return "Updating…" }
     return "Last 30 days"
+  }
+
+  /// The hero value's three mutually-exclusive states. Animate the swap on the
+  /// *phase*, not `formattedTotalCost` — a refreshed dollar figure re-renders
+  /// the same `.loaded` phase and updates in place via `.numericText()`.
+  private enum Phase: Equatable { case loaded, scanning, needsScan }
+
+  private var phase: Phase {
+    if summary?.formattedTotalCost != nil { return .loaded }
+    if isScanning { return .scanning }
+    return .needsScan
   }
 
   var body: some View {
@@ -34,29 +48,8 @@ struct CostOverviewStatusCard: View {
           Spacer()
         }
 
-        if let formattedTotalCost = summary?.formattedTotalCost {
-          Text(formattedTotalCost)
-            .font(.system(size: 34, weight: .bold))
-            .foregroundColor(.primary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.75)
-        } else if isScanning {
-          HStack(spacing: 10) {
-            ProgressView()
-              .controlSize(.small)
-            Text("Scanning...")
-              .font(.system(size: 28, weight: .bold))
-              .foregroundColor(.primary)
-              .lineLimit(1)
-              .minimumScaleFactor(0.75)
-          }
-        } else {
-          Text("Scan needed")
-            .font(.system(size: 34, weight: .bold))
-            .foregroundColor(.primary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.75)
-        }
+        heroValue
+          .animation(MeterBarTheme.Motion.resolved(reduceMotion: reduceMotion), value: phase)
 
         VStack(spacing: 7) {
           HStack {
@@ -88,6 +81,42 @@ struct CostOverviewStatusCard: View {
           }
         }
       }
+    }
+  }
+
+  /// The swapping hero figure. Each branch is `.id`-tagged and carries the
+  /// shared `cardPhase` transition so a phase change is a clean replacement.
+  @ViewBuilder private var heroValue: some View {
+    switch phase {
+    case .loaded:
+      Text(summary?.formattedTotalCost ?? "")
+        .font(.system(size: 34, weight: .bold))
+        .foregroundColor(.primary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+        .contentTransition(.numericText())
+        .id(Phase.loaded)
+        .transition(MeterBarTheme.Motion.cardPhase)
+    case .scanning:
+      HStack(spacing: 10) {
+        ProgressView()
+          .controlSize(.small)
+        Text("Scanning...")
+          .font(.system(size: 28, weight: .bold))
+          .foregroundColor(.primary)
+          .lineLimit(1)
+          .minimumScaleFactor(0.75)
+      }
+      .id(Phase.scanning)
+      .transition(MeterBarTheme.Motion.cardPhase)
+    case .needsScan:
+      Text("Scan needed")
+        .font(.system(size: 34, weight: .bold))
+        .foregroundColor(.primary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+        .id(Phase.needsScan)
+        .transition(MeterBarTheme.Motion.cardPhase)
     }
   }
 }

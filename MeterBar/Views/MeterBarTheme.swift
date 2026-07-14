@@ -92,6 +92,40 @@ enum MeterBarTheme {
   static func quotaStatusColor(percentLeft: Int) -> Color {
     QuotaBand.forPercentLeft(percentLeft).color
   }
+
+  // MARK: - Motion
+
+  /// The single motion convention for structural state changes across the
+  /// popover and dashboard cards: one curve plus the two transitions the app
+  /// uses when *which* content is shown changes (a loading→loaded→empty card
+  /// swap, or a tile entering/leaving the popover column).
+  ///
+  /// These describe structural swaps only — animating one branch out and its
+  /// replacement in. Value ticks (a number going up on a refresh) are handled
+  /// separately by `.contentTransition(.numericText())`, so drive
+  /// `.animation(_, value:)` off a *structural* key, never a raw data value.
+  enum Motion {
+    /// Standard curve for structural swaps. Snappy but soft — long enough to
+    /// read as a replacement, short enough not to feel sluggish on a menu-bar
+    /// popover that refreshes periodically.
+    static let standard: Animation = .smooth(duration: 0.26)
+
+    /// Card content swaps (loading / loaded / empty). `blurReplace` reads well
+    /// on these small tiles: the outgoing branch softens out as the incoming
+    /// one resolves in, without any positional jump.
+    static let cardPhase = AnyTransition(.blurReplace)
+
+    /// Tiles appearing in / leaving the popover column: fade while sliding from
+    /// the top edge so cards slide+fade rather than pop in place.
+    static let popoverTile: AnyTransition = .opacity.combined(with: .move(edge: .top))
+
+    /// The standard curve, or `nil` when Reduce Motion is on so SwiftUI applies
+    /// the structural change instantly (still a clean replacement, just no
+    /// animated blur/slide). Pass the `\.accessibilityReduceMotion` value.
+    static func resolved(reduceMotion: Bool) -> Animation? {
+      reduceMotion ? nil : standard
+    }
+  }
 }
 
 extension QuotaBand {
