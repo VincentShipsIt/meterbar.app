@@ -171,6 +171,7 @@ struct UsageDashboardView: View {
     @StateObject private var codexCliService = CodexCliLocalService.shared
     @StateObject private var cursorService = CursorLocalService.shared
     @StateObject private var openRouterService = OpenRouterService.shared
+    @StateObject private var grokService = GrokCLIUsageService.shared
     @StateObject private var apiUsageStore = ApiUsageStore.shared
     @StateObject private var providerStatusMonitor = ProviderStatusMonitor.shared
     @StateObject private var navigation = DashboardNavigationStore.shared
@@ -587,7 +588,8 @@ struct UsageDashboardView: View {
             claudeCodeHasAccess: claudeCodeService.hasAccess,
             codexCliHasAccess: codexCliService.hasAccess,
             cursorHasAccess: cursorService.hasAccess,
-            openRouterHasAccess: openRouterService.hasAccess
+            openRouterHasAccess: openRouterService.hasAccess,
+            grokHasAccess: grokService.hasAccess
         ))
         .filter(\.hasMetrics)
     }
@@ -742,6 +744,8 @@ struct UsageDashboardView: View {
         if let error = claudeCodeService.lastError { result[.claudeCode] = error }
         if let error = codexCliService.lastError { result[.codexCli] = error }
         if let error = cursorService.lastError { result[.cursor] = error }
+        if let error = openRouterService.lastError { result[.openRouter] = error }
+        if let error = grokService.lastError { result[.grok] = error }
         return result
     }
 

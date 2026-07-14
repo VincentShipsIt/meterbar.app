@@ -580,6 +580,8 @@ struct DailyProviderUsageSummaryRow: View {
       return "Cursor"
     case .openRouter:
       return "OpenRouter"
+    case .grok:
+      return "Grok"
     }
   }
 }
