@@ -67,6 +67,15 @@ enum MeterBarTheme {
     darkHighContrast: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.16)
   )
 
+  /// Opaque, pure-neutral (very slightly cool) card fill. Reads as clean grey
+  /// against the teal glass shell, where `.controlBackgroundColor` skews warm.
+  static let cardFill = Color.adaptive(
+    light: NSColor(srgbRed: 0.965, green: 0.970, blue: 0.978, alpha: 1),
+    dark: NSColor(srgbRed: 0.14, green: 0.15, blue: 0.165, alpha: 1),
+    lightHighContrast: NSColor(srgbRed: 0.945, green: 0.952, blue: 0.962, alpha: 1),
+    darkHighContrast: NSColor(srgbRed: 0.17, green: 0.18, blue: 0.20, alpha: 1)
+  )
+
   static func accent(for service: ServiceType) -> Color {
     switch service {
     case .claudeCode:
@@ -166,7 +175,8 @@ private struct MeterBarCardSurfaceModifier: ViewModifier {
     let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
 
     content
-      .background(Color(nsColor: .controlBackgroundColor), in: shape)
+      .background(MeterBarTheme.cardFill, in: shape)
+      .overlay(shape.strokeBorder(MeterBarTheme.glassCardStroke, lineWidth: 1))
   }
 }
 

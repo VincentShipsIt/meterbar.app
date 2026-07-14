@@ -141,26 +141,32 @@ struct MenuBarView: View {
     HStack(spacing: 8) {
       Spacer()
 
-      GlassEffectContainer(spacing: 8) {
-        HStack(spacing: 8) {
-          Button(action: openDashboard) {
-            Image(systemName: MenuBarOverlayIcons.dashboard)
-              .font(.system(size: 12, weight: .semibold))
-          }
-          .meterBarGlassIconButton()
-          .help("Open Usage Dashboard")
-
-          Button {
-            Task { await dataManager.refreshAll() }
-          } label: {
-            RefreshingIcon(isRefreshing: dataManager.isLoading)
-              .font(.system(size: 12, weight: .semibold))
-          }
-          .meterBarGlassIconButton()
-          .help(dataManager.isLoading ? "Refreshing usage" : "Refresh usage")
-          .disabled(dataManager.isLoading)
+      HStack(spacing: 0) {
+        Button(action: openDashboard) {
+          Image(systemName: MenuBarOverlayIcons.dashboard)
+            .font(.system(size: 12, weight: .semibold))
+            .frame(width: 34, height: 28)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .help("Open Usage Dashboard")
+
+        Divider()
+          .frame(height: 16)
+
+        Button {
+          Task { await dataManager.refreshAll() }
+        } label: {
+          RefreshingIcon(isRefreshing: dataManager.isLoading)
+            .font(.system(size: 12, weight: .semibold))
+            .frame(width: 34, height: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(dataManager.isLoading ? "Refreshing usage" : "Refresh usage")
+        .disabled(dataManager.isLoading)
       }
+      .glassEffect(.regular.interactive(), in: .capsule)
     }
     .font(.body)
     .padding(.horizontal, 14)
@@ -220,15 +226,6 @@ struct MenuBarView: View {
   }
 }
 
-private extension View {
-  func meterBarGlassIconButton() -> some View {
-    frame(width: 30, height: 30)
-      .contentShape(Circle())
-      .glassEffect(.regular.interactive(), in: .circle)
-      .buttonStyle(.plain)
-  }
-}
-
 private enum MenuBarOverlayIcons {
   static let dashboard = "rectangle.split.2x1"
 }
@@ -254,7 +251,7 @@ struct PopoverOverviewPanel: View {
   /// Enabled providers that still need setup — drives the first-run checklist.
   /// The section collapses (renders nothing) once these are all healthy.
   private var providersNeedingSetup: [ProviderReadiness] {
-    setupReports.filter { enabledProviders.contains($0.provider) && !$0.isHealthy }
+    setupReports.filter { enabledProviders.contains($0.provider) && $0.needsSetup }
   }
 
   var body: some View {
@@ -462,7 +459,7 @@ private struct PopoverProviderStatusCard: View {
   private var expandedCard: some View {
     DashboardTile(
       padding: 11,
-      minHeight: 124
+      minHeight: snapshot.limits.isEmpty ? nil : 124
     ) {
       VStack(alignment: .leading, spacing: 10) {
         HStack(spacing: 7) {
@@ -488,7 +485,7 @@ private struct PopoverProviderStatusCard: View {
           Text(snapshot.emptyDetail)
             .font(.caption)
             .foregroundColor(.secondary)
-            .frame(maxWidth: .infinity, minHeight: 54, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         } else {
           VStack(alignment: .leading, spacing: 9) {
             ForEach(snapshot.limits) { limit in
