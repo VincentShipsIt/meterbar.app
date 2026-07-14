@@ -124,7 +124,9 @@ enum ProviderLogoImageCache {
 struct ExtraUsageStatusPill: View {
     let status: ExtraUsageStatus
 
-    private var label: String {
+    // `label`/`color` are the chip's text + tint; kept internal (not private)
+    // so the migration test can assert the On/Off/Unknown mapping is preserved.
+    var label: String {
         switch status.state {
         case .on: return "On"
         case .off: return "Off"
@@ -132,7 +134,7 @@ struct ExtraUsageStatusPill: View {
         }
     }
 
-    private var color: Color {
+    var color: Color {
         switch status.state {
         case .on: return MeterBarTheme.warning
         case .off: return MeterBarTheme.success
@@ -153,23 +155,11 @@ struct ExtraUsageStatusPill: View {
     }
 
     var body: some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(color)
-                .frame(width: 6, height: 6)
-            Text(label)
-                .font(.caption2)
-                .fontWeight(.semibold)
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(color.opacity(0.14))
-        .clipShape(Capsule())
-        .overlay {
-            Capsule()
-                .stroke(color.opacity(0.20), lineWidth: 1)
-        }
-        .help(tooltip)
+        // Migrated to the shared `MeterBarChip`. The status color now tints the
+        // whole chip (leading dot + label) rather than only the dot, matching
+        // the other status badges; the On/Off/Unknown semantics are unchanged.
+        MeterBarChip(label, systemImage: "circle.fill", tint: color, style: .flat)
+            .help(tooltip)
     }
 }
 
