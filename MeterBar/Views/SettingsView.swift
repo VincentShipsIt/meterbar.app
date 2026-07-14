@@ -2,134 +2,13 @@ import AppKit
 import MeterBarShared
 import SwiftUI
 
-// MARK: - SettingsPane
-
-private enum SettingsPane: Hashable, Identifiable {
-    case general
-    case apiUsage
-    case costTracking
-    case automation
-    case provider(ServiceType)
-
-    // MARK: Internal
-
-    static let windowMinWidth: CGFloat = 840
-    static let windowMinHeight: CGFloat = 560
-    static let sidebarWidth: CGFloat = 238
-    static let detailMaxWidth: CGFloat = 760
-    static let appPanes: [SettingsPane] = [.general, .apiUsage, .costTracking, .automation]
-    static let providerPanes: [SettingsPane] = ServiceType.allCases
-        .sorted { $0.sortOrder < $1.sortOrder }
-        .map(SettingsPane.provider)
-
-    var id: String {
-        switch self {
-        case .general:
-            "general"
-        case .apiUsage:
-            "api-usage"
-        case .costTracking:
-            "cost-tracking"
-        case .automation:
-            "automation"
-        case let .provider(service):
-            "provider-\(service.rawValue)"
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .general:
-            "General"
-        case .apiUsage:
-            "API Usage"
-        case .costTracking:
-            "Cost Tracking"
-        case .automation:
-            "Automation"
-        case let .provider(service):
-            service.displayName
-        }
-    }
-
-    var subtitle: String {
-        switch self {
-        case .general:
-            "Launch, refresh, notifications"
-        case .apiUsage:
-            "Admin keys and overage"
-        case .costTracking:
-            "Local token spend"
-        case .automation:
-            "Session Wake auto-resume"
-        case let .provider(service):
-            switch service {
-            case .claudeCode:
-                "Claude CLI profiles"
-            case .codexCli:
-                "Codex CLI OAuth"
-            case .cursor:
-                "Cursor local state"
-            case .openRouter:
-                "OpenRouter API key"
-            }
-        }
-    }
-
-    var systemImage: String? {
-        switch self {
-        case .general:
-            "gearshape.fill"
-        case .apiUsage:
-            "network"
-        case .costTracking:
-            "chart.bar.xaxis"
-        case .automation:
-            "moon.zzz.fill"
-        case .provider:
-            nil
-        }
-    }
-
-    var logoKind: ProviderLogoKind? {
-        guard case let .provider(service) = self else {
-            return nil
-        }
-        return .forService(service)
-    }
-
-    var color: Color {
-        switch self {
-        case .general,
-             .apiUsage,
-             .automation:
-            MeterBarTheme.appAccent
-        case .costTracking:
-            MeterBarTheme.success
-        case let .provider(service):
-            MeterBarTheme.accent(for: service)
-        }
-    }
-
-    var service: ServiceType? {
-        guard case let .provider(service) = self else {
-            return nil
-        }
-        return service
-    }
-}
-
 // MARK: - SettingsView
 
 struct SettingsView: View {
     // MARK: Internal
 
     var body: some View {
-        settingsWindow
-        .frame(
-            minWidth: SettingsPane.windowMinWidth,
-            minHeight: SettingsPane.windowMinHeight
-        )
+        settingsTabView
         .alert(
             "Claude Reconnect Failed",
             isPresented: Binding(
@@ -185,34 +64,13 @@ struct SettingsView: View {
     @State private var claudeAdminKeyDraft = ""
     @State private var openaiAdminKeyDraft = ""
     @State private var openRouterKeyDraft = ""
-    @State private var selectedPane: SettingsPane = .general
-    @State private var providerSearchText = ""
+    @State private var selectedProviderTab: ServiceType = .claudeCode
 
-    /// Same key ClaudeCodeLocalService reads. Previously this flag was only
-    /// settable via `defaults write`; exposing it here makes the legacy OAuth
-    /// fallback discoverable instead of a hidden switch.
+    /// Same key ClaudeCodeLocalService reads. OAuth (`/api/oauth/usage`) is the
+    /// primary Claude Code usage source and is on by default; turning this off
+    /// forces the CLI-output fallback (which no longer renders headlessly).
     @AppStorage(StorageKeys.claudeCodeOAuthFallback)
-    private var oauthFallbackEnabled = false
-
-    private var filteredProviderPanes: [SettingsPane] {
-        let query = providerSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else {
-            return SettingsPane.providerPanes
-        }
-
-        return SettingsPane.providerPanes.filter { pane in
-            pane.title.localizedCaseInsensitiveContains(query)
-                || pane.subtitle.localizedCaseInsensitiveContains(query)
-        }
-    }
-
-    private var enabledProviderCount: Int {
-        ServiceType.allCases.filter { providerVisibility.isEnabled($0) }.count
-    }
-
-    private var visibleAppPanes: [SettingsPane] {
-        SettingsPane.appPanes.filter { $0 != .automation || sessionWakeStore.featureEnabled }
-    }
+    private var oauthFallbackEnabled = true
 
     private var providerSnapshots: [ProviderSnapshot] {
         ProviderSnapshotBuilder.snapshots(
@@ -255,147 +113,125 @@ struct SettingsView: View {
         CodexHomeDirectory.authFileDisplayPath()
     }
 
-    private var settingsWindow: some View {
-        HStack(spacing: 0) {
-            settingsSidebar
+    // MARK: - Compact tabbed layout
 
-            Divider()
-
-            ScrollView {
-                settingsDetail
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 22)
-                    .frame(maxWidth: SettingsPane.detailMaxWidth, alignment: .topLeading)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
+    /// Compact, MacSweep-style settings: a top tab bar over a fixed-size window
+    /// instead of a sidebar. Each tab reuses the existing section builders.
+    private var settingsTabView: some View {
+        TabView {
+            settingsTab {
+                trackedProvidersSection
+                refreshSection
+                notificationsSection
+                generalSection
             }
-            .scrollContentBackground(.hidden)
-            .scrollEdgeEffectStyle(.soft, for: .top)
+            .tabItem { Label("General", systemImage: "gearshape") }
+
+            settingsTab {
+                Picker("Provider", selection: $selectedProviderTab) {
+                    ForEach(ServiceType.allCases) { service in
+                        Text(service.displayName).tag(service)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.bottom, 4)
+
+                providerSettingsPane(for: selectedProviderTab)
+            }
+            .tabItem { Label("Providers", systemImage: "square.grid.2x2") }
+
+            settingsTab {
+                if showExtraUsageSection {
+                    extraUsageSection
+                }
+                apiUsageSection
+            }
+            .tabItem { Label("API Usage", systemImage: "key") }
+
+            settingsTab {
+                costTrackingSection
+            }
+            .tabItem { Label("Cost", systemImage: "chart.bar") }
+
+            if sessionWakeStore.featureEnabled {
+                settingsTab {
+                    SessionWakeSettingsView()
+                }
+                .tabItem { Label("Automation", systemImage: "moon.zzz") }
+            }
+
+            settingsTab {
+                aboutTabContent
+            }
+            .tabItem { Label("About", systemImage: "info.circle") }
         }
-        .frame(
-            minWidth: SettingsPane.windowMinWidth,
-            idealWidth: 920,
-            minHeight: SettingsPane.windowMinHeight,
-            idealHeight: 620
-        )
+        .frame(width: Self.windowWidth, height: Self.windowHeight)
         .background {
             MeterBarDetailBackground()
                 .ignoresSafeArea()
         }
     }
 
-    private var settingsSidebar: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SettingsSidebarSearchField(searchText: $providerSearchText)
-                .padding(.horizontal, 10)
-                .padding(.top, 16)
+    // Compact, fixed window. Wide enough for the provider pane's account rows
+    // and usage bars; content is pinned to a leading-aligned column so nothing
+    // centers or clips at the window edges.
+    private static let windowWidth: CGFloat = 760
+    private static let windowHeight: CGFloat = 660
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    SettingsSidebarSectionHeader(title: "Settings")
-
-                    VStack(spacing: 3) {
-                        ForEach(visibleAppPanes) { pane in
-                            SettingsSidebarRow(
-                                pane: pane,
-                                isSelected: selectedPane == pane,
-                                isEnabled: true,
-                                statusColor: nil
-                            ) {
-                                selectedPane = pane
-                            }
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        SettingsSidebarSectionHeader(title: "Providers", trailing: "\(enabledProviderCount) on")
-
-                        VStack(spacing: 3) {
-                            ForEach(filteredProviderPanes) { pane in
-                                SettingsSidebarRow(
-                                    pane: pane,
-                                    isSelected: selectedPane == pane,
-                                    isEnabled: pane.service.map { providerVisibility.isEnabled($0) } ?? true,
-                                    statusColor: pane.service.flatMap(providerSidebarStatusColor)
-                                ) {
-                                    selectedPane = pane
-                                }
-                            }
-
-                            if filteredProviderPanes.isEmpty {
-                                Text("No matching providers")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 9)
-                                    .padding(.vertical, 6)
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.bottom, 14)
+    /// Wraps a tab's content in a padded, scrollable, top-aligned column so
+    /// long sections stay reachable in the compact fixed-height window.
+    private func settingsTab<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                content()
             }
-            .scrollIndicators(.hidden)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
+            .frame(width: Self.windowWidth, alignment: .topLeading)
         }
-        .frame(width: SettingsPane.sidebarWidth)
-        .background(.thinMaterial)
+        .scrollContentBackground(.hidden)
     }
 
-    private var settingsDetail: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            settingsDetailHeader
+    @ViewBuilder private var aboutTabContent: some View {
+        SettingsPanelSection(title: "About MeterBar", systemImage: "info.circle", color: MeterBarTheme.appAccent) {
+            SettingsRowView(
+                title: "Version",
+                detail: "Track your AI coding assistant usage limits from the macOS menu bar."
+            ) {
+                Text(Self.appVersionString)
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
 
-            switch selectedPane {
-            case .general:
-                trackedProvidersSection
-                refreshSection
-                notificationsSection
-                generalSection
-            case .apiUsage:
-                if showExtraUsageSection {
-                    extraUsageSection
+            SettingsDivider()
+
+            SettingsRowView(
+                title: "Software Update",
+                detail: softwareUpdates.configurationError ?? "Check for a new signed MeterBar release now."
+            ) {
+                Button("Check Now") {
+                    softwareUpdates.checkForUpdates()
                 }
-                apiUsageSection
-            case .costTracking:
-                costTrackingSection
-            case .automation:
-                SessionWakeSettingsView()
-            case let .provider(service):
-                providerSettingsPane(for: service)
+                .buttonStyle(.bordered)
+                .disabled(!softwareUpdates.canCheckForUpdates)
+            }
+
+            SettingsRowView(
+                title: "Website",
+                detail: "meterbar.dev"
+            ) {
+                Link("Open", destination: URL(string: "https://meterbar.dev")!)
+                    .buttonStyle(.bordered)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .onAppear {
-            keepSelectedPaneValid()
-        }
-        .onChange(of: providerVisibility.enabledServices) {
-            keepSelectedPaneValid()
-        }
-        .onChange(of: sessionWakeStore.featureEnabled) {
-            keepSelectedPaneValid()
-        }
+        .onAppear { softwareUpdates.refreshState() }
     }
 
-    private var settingsDetailHeader: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 8) {
-                if let logoKind = selectedPane.logoKind {
-                    ProviderLogoView(kind: logoKind, size: 18, foregroundColor: selectedPane.color)
-                } else if let systemImage = selectedPane.systemImage {
-                    Image(systemName: systemImage)
-                        .foregroundStyle(selectedPane.color)
-                }
-
-                Text(selectedPane.title)
-                    .font(.title2)
-                    .fontWeight(.semibold)
-            }
-
-            Text(selectedPane.subtitle)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.bottom, 2)
+    private static var appVersionString: String {
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        return short == build ? short : "\(short) (\(build))"
     }
 
     private var codexCliSection: some View {
@@ -720,14 +556,15 @@ struct SettingsView: View {
                     color: .secondary
                 )
                 SettingsNotice(
-                    text: "MeterBar reads Claude CLI usage output before any legacy OAuth fallback.",
+                    text: "MeterBar reads usage from Claude Code's OAuth login; the CLI output is a fallback.",
                     color: MeterBarTheme.warning
                 )
             }
 
             SettingsRowView(
-                title: "Legacy OAuth fallback",
-                detail: "When the Claude CLI is unavailable, read usage via Claude Code's OAuth token."
+                title: "Claude Code OAuth usage",
+                detail: "Read usage from Claude Code's Keychain login (the primary source). "
+                    + "Off = use only the CLI's `claude /usage` output, which no longer renders headlessly."
             ) {
                 Toggle("", isOn: Binding(
                     get: { oauthFallbackEnabled },
@@ -1212,19 +1049,6 @@ struct SettingsView: View {
         providerSnapshots.filter { $0.service == service }
     }
 
-    private func keepSelectedPaneValid() {
-        if selectedPane == .automation, !sessionWakeStore.featureEnabled {
-            selectedPane = .general
-            return
-        }
-        guard case let .provider(service) = selectedPane else {
-            return
-        }
-        if !providerVisibility.isEnabled(service) {
-            selectedPane = .general
-        }
-    }
-
     private func providerEnabledBinding(for service: ServiceType) -> Binding<Bool> {
         Binding(
             get: { providerVisibility.isEnabled(service) },
@@ -1307,13 +1131,6 @@ struct SettingsView: View {
             return band.color
         }
         return .secondary
-    }
-
-    private func providerSidebarStatusColor(for service: ServiceType) -> Color? {
-        guard providerVisibility.isEnabled(service) else {
-            return nil
-        }
-        return providerStatusColor(for: service)
     }
 
     private func providerPlanText(for service: ServiceType) -> String? {
@@ -1409,147 +1226,6 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - SettingsSidebarSectionHeader
-
-private struct SettingsSidebarSectionHeader: View {
-    let title: String
-    var trailing: String?
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(title)
-            Spacer(minLength: 8)
-            if let trailing {
-                Text(trailing)
-                    .foregroundStyle(.tertiary)
-                    .monospacedDigit()
-            }
-        }
-        .font(.caption)
-        .fontWeight(.semibold)
-        .foregroundStyle(.secondary)
-        .textCase(.uppercase)
-        .padding(.horizontal, 9)
-    }
-}
-
-// MARK: - SettingsSidebarSearchField
-
-private struct SettingsSidebarSearchField: View {
-    @Binding var searchText: String
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-
-            TextField("Search providers", text: $searchText)
-                .textFieldStyle(.plain)
-
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel("Clear search")
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .font(.callout)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(MeterBarTheme.glassCardStroke, lineWidth: 0.5)
-        }
-    }
-}
-
-// MARK: - SettingsSidebarRow
-
-private struct SettingsSidebarRow: View {
-    let pane: SettingsPane
-    let isSelected: Bool
-    let isEnabled: Bool
-    let statusColor: Color?
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                if let logoKind = pane.logoKind {
-                    ProviderLogoView(
-                        kind: logoKind,
-                        size: 16,
-                        foregroundColor: isSelected ? .white : (isEnabled ? pane.color : .secondary)
-                    )
-                    .frame(width: SettingsSidebarIconChip.side, height: SettingsSidebarIconChip.side)
-                } else if let systemImage = pane.systemImage {
-                    SettingsSidebarIconChip(systemImage: systemImage, color: pane.color)
-                }
-
-                Text(pane.title)
-                    .font(.subheadline)
-                    .lineLimit(1)
-                    .foregroundStyle(isSelected ? Color.white : (isEnabled ? Color.primary : Color.secondary))
-
-                Spacer(minLength: 6)
-
-                if let statusColor {
-                    Circle()
-                        .fill(statusColor)
-                        .frame(width: 6, height: 6)
-                        .accessibilityHidden(true)
-                }
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .opacity(isEnabled ? 1 : 0.62)
-        .background {
-            if isSelected {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.95))
-            }
-        }
-    }
-}
-
-// MARK: - SettingsSidebarIconChip
-
-private struct SettingsSidebarIconChip: View {
-    static let side: CGFloat = 20
-
-    let systemImage: String
-    let color: Color
-
-    var body: some View {
-        Image(systemName: systemImage)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.white)
-            .frame(width: Self.side, height: Self.side)
-            .background(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [color.opacity(0.82), color],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-            )
-            .accessibilityHidden(true)
-    }
-}
-
 // MARK: - SettingsInfoRow
 
 private struct SettingsInfoRow: View {
@@ -1577,7 +1253,7 @@ private struct SettingsInfoRow: View {
 
 // MARK: - SettingsPanelSection
 
-private struct SettingsPanelSection<Content: View>: View {
+struct SettingsPanelSection<Content: View>: View {
     // MARK: Lifecycle
 
     init(
@@ -1640,13 +1316,13 @@ private struct SettingsPanelSection<Content: View>: View {
 
 // MARK: - SettingsRowViewMetrics
 
-private enum SettingsRowViewMetrics {
+enum SettingsRowViewMetrics {
     static let labelWidth: CGFloat = 190
 }
 
 // MARK: - SettingsRowView
 
-private struct SettingsRowView<Content: View>: View {
+struct SettingsRowView<Content: View>: View {
     // MARK: Lifecycle
 
     init(title: String, detail: String? = nil, @ViewBuilder content: () -> Content) {
@@ -1685,7 +1361,7 @@ private struct SettingsRowView<Content: View>: View {
 
 // MARK: - SettingsNotice
 
-private struct SettingsNotice: View {
+struct SettingsNotice: View {
     let text: String
     let color: Color
 
@@ -1699,7 +1375,7 @@ private struct SettingsNotice: View {
 
 // MARK: - SettingsDivider
 
-private struct SettingsDivider: View {
+struct SettingsDivider: View {
     var body: some View {
         Divider()
     }
