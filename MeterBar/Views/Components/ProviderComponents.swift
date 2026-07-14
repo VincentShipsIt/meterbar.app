@@ -179,6 +179,15 @@ struct UsageBar: View {
     let pace: UsagePace?
     let paceContext: PaceLabelContext
 
+    @Environment(\.accessibilityReduceMotion)
+    private var reduceMotion
+
+    /// Curve the fill/marker sweep to their new positions on refresh instead of
+    /// teleporting. `nil` under Reduce Motion (via `Motion.resolved`).
+    private var fillAnimation: Animation? {
+        MeterBarTheme.Motion.standard(reduceMotion: reduceMotion)
+    }
+
     private var clampedUsedPercentage: Double {
         min(max(usedPercentage, 0), 100)
     }
@@ -267,6 +276,12 @@ struct UsageBar: View {
                         .offset(y: 4)
                 }
             }
+            // Sweep the fill/marker widths to their new values on refresh. Keyed
+            // on every input that moves a bar so all three branches (exhausted /
+            // off-pace / default) animate, not just the default fill.
+            .animation(fillAnimation, value: clampedRemainingPercentage)
+            .animation(fillAnimation, value: pace?.expectedUsedPercent)
+            .animation(fillAnimation, value: isExhausted)
         }
         .frame(height: 15)
         .help(tooltipText ?? "")

@@ -105,6 +105,9 @@ private struct ProviderStatusDisclosureRow: View {
     let toggle: () -> Void
     let openStatusPage: () -> Void
 
+    @Environment(\.accessibilityReduceMotion)
+    private var reduceMotion
+
     private var indicator: ProviderStatusIndicator {
         report?.summary.indicator ?? (error == nil ? .unknown : .critical)
     }
@@ -123,6 +126,8 @@ private struct ProviderStatusDisclosureRow: View {
                             .fontWeight(.bold)
                             .foregroundColor(.secondary)
                             .frame(width: 12)
+                            .contentTransition(.symbolEffect(.replace))
+                            .animation(MeterBarTheme.Motion.snappy(reduceMotion: reduceMotion), value: isExpanded)
 
                         ProviderLogoView(
                             kind: .forService(service),
@@ -236,11 +241,17 @@ private struct ProviderStatusComponentRow: View {
     var indented = false
     var compact = false
 
+    @Environment(\.accessibilityReduceMotion)
+    private var reduceMotion
+
     var body: some View {
         HStack(spacing: 8) {
             Circle()
                 .fill(component.indicator.tint)
                 .frame(width: compact ? 6 : 8, height: compact ? 6 : 8)
+                // Status dots are `Circle` fills, not SF Symbols, so animate the
+                // tint change on refresh rather than a symbol replace.
+                .animation(MeterBarTheme.Motion.snappy(reduceMotion: reduceMotion), value: component.indicator)
 
             Text(component.name)
                 .font(compact ? .caption : .subheadline)
@@ -259,6 +270,9 @@ private struct ProviderStatusComponentRow: View {
 
 struct PopoverProviderStatusSummaryCard: View {
     @StateObject private var statusMonitor = ProviderStatusMonitor.shared
+
+    @Environment(\.accessibilityReduceMotion)
+    private var reduceMotion
 
     let openStatusDetail: () -> Void
 
@@ -314,10 +328,15 @@ struct PopoverProviderStatusSummaryCard: View {
 
                     HStack(spacing: 5) {
                         ForEach(ServiceType.allCases) { service in
+                            let indicator = statusMonitor.reports[service]?.summary.indicator ?? .unknown
                             Circle()
-                                .fill((statusMonitor.reports[service]?.summary.indicator ?? .unknown).tint)
+                                .fill(indicator.tint)
                                 .frame(width: 7, height: 7)
                                 .help(service.statusPageDisplayName)
+                                .animation(
+                                    MeterBarTheme.Motion.snappy(reduceMotion: reduceMotion),
+                                    value: indicator
+                                )
                         }
                     }
 

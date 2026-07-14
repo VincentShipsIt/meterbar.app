@@ -2,6 +2,7 @@ import AppKit
 import MeterBarShared
 import Combine
 import os
+import QuartzCore
 import SwiftUI
 import UserNotifications
 
@@ -724,7 +725,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             previousKey: shownStatusItemKey
         ) else {
             shownStatusItemKey = nil
-            button.title = ""
+            setStatusButtonTitle(button, to: "")
             button.imagePosition = .imageOnly
             button.toolTip = "MeterBar"
             applyParseHealthAppearance(to: button)
@@ -734,10 +735,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         shownStatusItemKey = selection.key
         let percent = percentLeft(for: selection.limit)
         button.imagePosition = .imageLeft
-        button.title = " \(percent)%"
+        setStatusButtonTitle(button, to: " \(percent)%")
         button.toolTip = "MeterBar: \(percent)% left on \(selection.displayName)"
         button.setAccessibilityLabel("MeterBar \(percent)% left on \(selection.displayName)")
         applyParseHealthAppearance(to: button)
+    }
+
+    /// Sets the status-button title, crossfading the change so the menu-bar
+    /// `NN%` doesn't snap on refresh. SwiftUI's `.contentTransition(.numericText())`
+    /// can't reach this AppKit `NSStatusBarButton`, so we fade its layer instead.
+    /// No-op fade when the title is unchanged or Reduce Motion is on.
+    @MainActor
+    private func setStatusButtonTitle(_ button: NSStatusBarButton, to newTitle: String) {
+        if button.title != newTitle,
+           !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            button.wantsLayer = true
+            let fade = CATransition()
+            fade.type = .fade
+            fade.duration = 0.22
+            button.layer?.add(fade, forKey: "titleFade")
+        }
+        button.title = newTitle
     }
 
     @MainActor

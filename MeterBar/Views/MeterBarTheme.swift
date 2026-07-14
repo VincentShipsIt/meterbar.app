@@ -92,6 +92,36 @@ enum MeterBarTheme {
   static func quotaStatusColor(percentLeft: Int) -> Color {
     QuotaBand.forPercentLeft(percentLeft).color
   }
+
+  // MARK: - Micro-motion (refresh-driven value/state changes)
+
+  /// Single source of truth for how numbers, bars, and icons move when a
+  /// refresh changes them. Keeping the curves here means every surface animates
+  /// with the same feel, and every helper collapses to `nil` under Reduce
+  /// Motion so callers can pass the result straight into `.animation(_:value:)`
+  /// and get an instant, motion-free update instead of a special-cased branch.
+  enum Motion {
+    /// Standard eased curve for numeric text and progress-bar fills reacting to
+    /// a refresh. Long enough to read as a sweep, short enough to feel live.
+    static let standardCurve = Animation.smooth(duration: 0.35)
+
+    /// Quicker curve for icon/state swaps (chevrons, symbol replace, spinner
+    /// crossfade) where a lingering transition would feel sluggish.
+    static let snappyCurve = Animation.smooth(duration: 0.22)
+
+    /// Standard refresh curve, or `nil` when Reduce Motion is on so the change
+    /// applies instantly. Reduce-motion is baked into the accessor so callers
+    /// can't accidentally animate through it — pass the result straight into
+    /// `.animation(_:value:)`.
+    static func standard(reduceMotion: Bool) -> Animation? {
+      reduceMotion ? nil : standardCurve
+    }
+
+    /// Quicker icon/state-swap curve, or `nil` under Reduce Motion.
+    static func snappy(reduceMotion: Bool) -> Animation? {
+      reduceMotion ? nil : snappyCurve
+    }
+  }
 }
 
 extension QuotaBand {
@@ -156,6 +186,16 @@ extension NSPanel {
 extension View {
   func meterBarCardSurface(cornerRadius: CGFloat = 12) -> some View {
     modifier(MeterBarCardSurfaceModifier(cornerRadius: cornerRadius))
+  }
+
+  /// Micro-motion for a numeric `Text` that changes on refresh: the digits roll
+  /// via `.numericText()` instead of snapping. `value` is what the caller wants
+  /// the transition to key off (usually the underlying number or its formatted
+  /// string); when it changes, the animation transaction drives the content
+  /// transition. Collapses to an instant update under Reduce Motion.
+  func numericRefreshTransition(value: some Equatable, reduceMotion: Bool) -> some View {
+    contentTransition(.numericText())
+      .animation(MeterBarTheme.Motion.standard(reduceMotion: reduceMotion), value: value)
   }
 }
 

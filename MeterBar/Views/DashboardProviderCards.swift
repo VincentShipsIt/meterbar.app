@@ -179,6 +179,9 @@ struct DashboardLimitRow: View {
   let limit: SnapshotLimit
   let accentColor: Color
 
+  @Environment(\.accessibilityReduceMotion)
+  private var reduceMotion
+
   private var isOut: Bool {
     limit.percentLeft <= 0
   }
@@ -200,6 +203,7 @@ struct DashboardLimitRow: View {
           .font(.subheadline)
           .bold()
           .foregroundColor(isOut ? MeterBarTheme.danger : .primary)
+          .numericRefreshTransition(value: trailingValue, reduceMotion: reduceMotion)
       }
 
       UsageBar(
@@ -213,6 +217,7 @@ struct DashboardLimitRow: View {
         Text(usedValue)
           .font(.caption)
           .foregroundColor(.secondary)
+          .numericRefreshTransition(value: usedValue, reduceMotion: reduceMotion)
         if !limit.usageLimit.isEstimated, let pace = limit.usageLimit.pace() {
           Text(pace.leftLabel)
             .font(.caption)
