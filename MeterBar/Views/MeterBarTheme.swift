@@ -141,6 +141,53 @@ enum MeterBarTheme {
   static func quotaStatusColor(percentLeft: Int) -> Color {
     QuotaBand.forPercentLeft(percentLeft).color
   }
+
+  // MARK: - Motion (shared animation vocabulary)
+
+  /// The one place MeterBar's animation curves are defined. Views should reach
+  /// for these tokens instead of hand-rolling `.snappy`/`.easeInOut` so the
+  /// app's motion stays consistent and Reduce Motion is honored in one spot.
+  enum Motion {
+    /// Row expand/collapse and other quick toggles. Preserves the snappy feel
+    /// the daily-usage and provider-status rows already used.
+    static let quick: Animation = .snappy(duration: 0.18)
+
+    /// Content swaps and status-text changes — a touch calmer than `quick`.
+    static let standard: Animation = .smooth(duration: 0.25)
+
+    /// Window resize / panel fade.
+    static let panel: Animation = .smooth(duration: 0.22)
+
+    /// Returns `base` unless Reduce Motion is on, in which case animation is
+    /// suppressed. Plugs directly into `withAnimation(_:)` (its `nil` overload
+    /// applies the change instantly) and `.animation(_:value:)`. Mirrors how
+    /// `CostScanLoadingChart` freezes its sweep when Reduce Motion is set.
+    ///
+    /// Read `accessibilityReduceMotion` from the environment at the call site
+    /// and pass it here, e.g.
+    /// `withAnimation(MeterBarTheme.Motion.resolve(.quick, reduceMotion: reduceMotion))`.
+    static func resolve(_ base: Animation, reduceMotion: Bool) -> Animation? {
+      reduceMotion ? nil : base
+    }
+  }
+}
+
+extension MeterBarTheme {
+  /// Animation tokens for state transitions. Centralizing them keeps the
+  /// Liquid Glass morphs (exhausted↔expanded card height swaps) and the
+  /// in-place disclosure expansions on one shared timing instead of scattering
+  /// `.smooth` / `.snappy` literals across the views.
+  enum Motion {
+    /// Smooth spring driving `glassEffectID` morphs inside a
+    /// `GlassEffectContainer` — the flagship exhausted/expanded provider-card
+    /// swap and its dashboard twin. Follows the SwiftUI Liquid Glass docs'
+    /// `.smooth` guidance for glass state changes.
+    static let standard: Animation = .smooth(duration: 0.32)
+
+    /// Snappier timing for the in-place status/day disclosure rows, preserving
+    /// the prior `.snappy(0.18)` feel now that it flows through a token.
+    static let disclosure: Animation = .snappy(duration: 0.18)
+  }
 }
 
 extension QuotaBand {
@@ -162,11 +209,20 @@ struct MeterBarDetailBackground: View {
   var body: some View {
     ZStack {
       if reduceTransparency {
+        // Opaque fallback fills the whole window, bar region included.
         MeterBarTheme.Surface.chromeOpaqueFallback
+          .ignoresSafeArea()
       } else {
+        // The material is the window backing and may bleed under the toolbar.
         Color.clear
           .background(.regularMaterial)
+          .ignoresSafeArea()
 
+        // Keep the accent tint inside the safe area so the macOS 26 automatic
+        // scroll-edge effect owns the toolbar region. Apple's guidance is to
+        // avoid custom darkening/tinting behind bar items; letting this gradient
+        // bleed under the bar (its densest corner is .topLeading) would compete
+        // with the system blur/fade that keeps toolbar controls legible.
         LinearGradient(
           colors: [
             MeterBarTheme.codexAccent.opacity(0.04),
