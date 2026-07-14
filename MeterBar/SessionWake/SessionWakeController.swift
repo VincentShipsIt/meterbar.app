@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import MeterBarShared
 
 /// The lifecycle abstraction the controller drives. `WakeCoordinator` is the
 /// production conformer; tests substitute a fake to assert start/stop without
