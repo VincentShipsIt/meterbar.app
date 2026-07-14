@@ -723,9 +723,6 @@ struct PopoverProviderStatusCard: View {
       }
       isConsumingResetCredit = false
     }
-    .accessibilityElement(children: .combine)
-    .accessibilityLabel(limit.accessibilityLabel)
-    .accessibilityValue(limit.accessibilityValue)
   }
 }
 
