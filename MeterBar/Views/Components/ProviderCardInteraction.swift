@@ -58,28 +58,20 @@ struct ProviderCardButtonStyle: ButtonStyle {
             let active = isHovering || configuration.isPressed
 
             configuration.label
-                .scaleEffect(configuration.isPressed ? 0.985 : (isHovering ? 1.006 : 1))
                 .overlay {
+                    // Hover/press feedback is a quiet neutral wash + a slightly
+                    // deeper hairline in the card's own tone — no scale (that
+                    // resampled the text and read as blur), no drop shadow, no
+                    // accent color. The card stays put; it just responds.
                     shape
                         .fill(Color.primary.opacity(configuration.isPressed ? 0.06 : (isHovering ? 0.03 : 0)))
                         .allowsHitTesting(false)
                 }
                 .overlay {
-                    // The affordance is the card *lifting*, not a colored outline
-                    // pasted on top. Deepen the card's own hairline in its own
-                    // neutral tone (matching `glassCardStroke`) — no system-accent
-                    // blue, so a tappable card reads as the same card, brought
-                    // forward, rather than a different-colored control.
                     shape
-                        .strokeBorder(Color.primary.opacity(active ? 0.14 : 0), lineWidth: 1)
+                        .strokeBorder(Color.primary.opacity(active ? 0.12 : 0), lineWidth: 1)
                         .allowsHitTesting(false)
                 }
-                .shadow(
-                    color: .black.opacity(active ? (configuration.isPressed ? 0.10 : 0.18) : 0),
-                    radius: active ? 10 : 0,
-                    x: 0,
-                    y: active ? 3 : 0
-                )
                 .animation(reduceMotion ? nil : providerCardHoverAnimation, value: isHovering)
                 .animation(reduceMotion ? nil : providerCardHoverAnimation, value: configuration.isPressed)
                 .onHover { isHovering = $0 }
