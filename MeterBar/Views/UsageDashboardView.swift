@@ -400,7 +400,7 @@ struct UsageDashboardView: View {
                     } label: {
                         Label("Refresh Status", systemImage: "arrow.clockwise")
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.glass)
                     .controlSize(.small)
                     .disabled(providerStatusMonitor.isRefreshing)
                 }
@@ -462,7 +462,7 @@ struct UsageDashboardView: View {
                         } label: {
                             Label("Scan 30 Days", systemImage: "magnifyingglass")
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.glassProminent)
                         .disabled(costTracker.isRefreshInProgress)
                     }
                     .frame(height: 220, alignment: .center)
@@ -483,7 +483,7 @@ struct UsageDashboardView: View {
                 } label: {
                     Label("Copy PNG", systemImage: "doc.on.doc")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
 
                 Button {
                     saveSocialCardImage()

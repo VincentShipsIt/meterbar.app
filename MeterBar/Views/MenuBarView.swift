@@ -246,6 +246,21 @@ struct PopoverOverviewPanel: View {
   @Environment(\.openSettings)
   private var openSettings
 
+  // Explicit initializer: the private `@State`/`@StateObject` storage would lower
+  // the synthesized memberwise initializer to file-private, so this keeps the
+  // panel constructible from the smoke-test target (and other modules).
+  init(
+    snapshots: [ProviderSnapshot],
+    openDashboard: @escaping () -> Void,
+    openStatusDetail: @escaping () -> Void,
+    openProviderOverview: @escaping (ProviderSnapshot) -> Void
+  ) {
+    self.snapshots = snapshots
+    self.openDashboard = openDashboard
+    self.openStatusDetail = openStatusDetail
+    self.openProviderOverview = openProviderOverview
+  }
+
   /// The enabled providers currently shown in the popover.
   private var enabledProviders: Set<ServiceType> {
     Set(snapshots.map(\.service))
@@ -284,7 +299,7 @@ struct PopoverOverviewPanel: View {
             }
 
             Button("Open Settings") { openSettings() }
-              .buttonStyle(.borderedProminent)
+              .buttonStyle(.glass)
               .controlSize(.small)
           }
         }
@@ -351,10 +366,10 @@ struct PopoverOverviewPanel: View {
 
         HStack(spacing: 8) {
           Button("Enable") { onboarding.chooseLaunchAtLogin(true) }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.glassProminent)
             .controlSize(.small)
           Button("Not Now") { onboarding.chooseLaunchAtLogin(false) }
-            .buttonStyle(.bordered)
+            .buttonStyle(.glass)
             .controlSize(.small)
         }
       }

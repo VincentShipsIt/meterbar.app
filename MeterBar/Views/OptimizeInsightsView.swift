@@ -197,7 +197,7 @@ struct OptimizeInsightsView: View {
         } label: {
           Label("Scan 30 Days", systemImage: "magnifyingglass")
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.glassProminent)
         .disabled(costTracker.isRefreshInProgress)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
