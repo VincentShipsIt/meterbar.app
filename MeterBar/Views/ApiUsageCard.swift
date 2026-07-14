@@ -166,6 +166,9 @@ struct ApiUsageCard: View {
             .monospacedDigit()
             .foregroundColor(accent)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(provider.displayName)
+        .accessibilityValue("Estimated \(UsageFormat.cost(usage?.estimatedCostUSD ?? 0))")
 
         if isLoading, usage == nil {
           Text("Loading usage…")
@@ -191,6 +194,11 @@ struct ApiUsageCard: View {
                 .foregroundColor(.secondary)
                 .monospacedDigit()
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(model.model)
+            .accessibilityValue(
+              "\(UsageFormat.tokens(model.totalTokens)) tokens, \(UsageFormat.cost(model.estimatedCostUSD))"
+            )
           }
         } else {
           Text("No API usage in this window.")

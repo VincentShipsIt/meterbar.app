@@ -10,6 +10,13 @@ struct CostOverviewStatusCard: View {
   let isRefreshingMissingDays: Bool
   let formattedTokens: String
 
+  // Headline sizes scale with Dynamic Type (from their default 34/28pt) instead
+  // of being frozen in pixels, so the cost figure grows for larger accessibility
+  // text sizes. `minimumScaleFactor` + `lineLimit(1)` below keep the tile from
+  // breaking when it does.
+  @ScaledMetric(relativeTo: .largeTitle) private var headlineSize: CGFloat = 34
+  @ScaledMetric(relativeTo: .title) private var scanningHeadlineSize: CGFloat = 28
+
   private var subtitle: String {
     if isScanning { return "Scanning local logs" }
     if isRefreshingMissingDays { return "Updating…" }
@@ -36,7 +43,7 @@ struct CostOverviewStatusCard: View {
 
         if let formattedTotalCost = summary?.formattedTotalCost {
           Text(formattedTotalCost)
-            .font(.system(size: 34, weight: .bold))
+            .font(.system(size: headlineSize, weight: .bold))
             .foregroundColor(.primary)
             .lineLimit(1)
             .minimumScaleFactor(0.75)
@@ -45,14 +52,14 @@ struct CostOverviewStatusCard: View {
             ProgressView()
               .controlSize(.small)
             Text("Scanning...")
-              .font(.system(size: 28, weight: .bold))
+              .font(.system(size: scanningHeadlineSize, weight: .bold))
               .foregroundColor(.primary)
               .lineLimit(1)
               .minimumScaleFactor(0.75)
           }
         } else {
           Text("Scan needed")
-            .font(.system(size: 34, weight: .bold))
+            .font(.system(size: headlineSize, weight: .bold))
             .foregroundColor(.primary)
             .lineLimit(1)
             .minimumScaleFactor(0.75)
@@ -308,6 +315,9 @@ struct CostMetric: View {
         .minimumScaleFactor(0.75)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(label)
+    .accessibilityValue(value)
   }
 }
 
@@ -318,7 +328,8 @@ struct UsageDetailMetric: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 1) {
       Text(label)
-        .font(.system(size: 9, weight: .medium))
+        .font(.caption2)
+        .fontWeight(.medium)
         .foregroundColor(.secondary)
       Text(value)
         .font(.caption)
@@ -327,5 +338,8 @@ struct UsageDetailMetric: View {
         .minimumScaleFactor(0.75)
     }
     .frame(width: 58, alignment: .leading)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(label)
+    .accessibilityValue(value)
   }
 }

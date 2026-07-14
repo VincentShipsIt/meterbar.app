@@ -146,18 +146,23 @@ struct MenuBarView: View {
           Button(action: openDashboard) {
             Image(systemName: MenuBarOverlayIcons.dashboard)
               .font(.system(size: 12, weight: .semibold))
+              .accessibilityHidden(true)
           }
           .meterBarGlassIconButton()
           .help("Open Usage Dashboard")
+          .accessibilityLabel("Open Dashboard")
 
           Button {
             Task { await dataManager.refreshAll() }
           } label: {
             RefreshingIcon(isRefreshing: dataManager.isLoading)
               .font(.system(size: 12, weight: .semibold))
+              .accessibilityHidden(true)
           }
           .meterBarGlassIconButton()
           .help(dataManager.isLoading ? "Refreshing usage" : "Refresh usage")
+          .accessibilityLabel("Refresh")
+          .accessibilityValue(dataManager.isLoading ? "Refreshing" : "")
           .disabled(dataManager.isLoading)
         }
       }
@@ -271,6 +276,7 @@ struct PopoverOverviewPanel: View {
                 .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(.secondary)
                 .frame(width: 34, height: 34)
+                .accessibilityHidden(true)
 
               VStack(alignment: .leading, spacing: 2) {
                 Text("No sources enabled")
@@ -391,9 +397,15 @@ private struct PopoverProviderStatusCard: View {
           cardContent
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(snapshot.accessibilityLabel)
+        .accessibilityValue(snapshot.accessibilityValue)
         .accessibilityHint("Open \(snapshot.title) provider details")
       } else {
         cardContent
+          .accessibilityElement(children: .combine)
+          .accessibilityLabel(snapshot.accessibilityLabel)
+          .accessibilityValue(snapshot.accessibilityValue)
       }
     }
   }
@@ -528,7 +540,8 @@ private struct PopoverLimitRow: View {
           .lineLimit(1)
         if limit.usageLimit.isEstimated {
           Text("Estimated")
-            .font(.system(size: 8, weight: .semibold))
+            .font(.caption2)
+            .fontWeight(.semibold)
             .foregroundColor(.secondary)
         }
         Spacer(minLength: 4)
@@ -556,6 +569,9 @@ private struct PopoverLimitRow: View {
         )
       }
     }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(limit.accessibilityLabel)
+    .accessibilityValue(limit.accessibilityValue)
   }
 }
 

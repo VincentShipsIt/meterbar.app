@@ -226,7 +226,8 @@ private struct MenuBarProviderLimitDetailRow: View {
           .fontWeight(.semibold)
         if limit.usageLimit.isEstimated {
           Text("Estimated")
-            .font(.system(size: 8, weight: .semibold))
+            .font(.caption2)
+            .fontWeight(.semibold)
             .foregroundColor(.secondary)
         }
         Spacer(minLength: 4)
@@ -269,6 +270,9 @@ private struct MenuBarProviderLimitDetailRow: View {
     }
     .padding(10)
     .meterBarCardSurface(cornerRadius: 10)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(limit.accessibilityLabel)
+    .accessibilityValue(limit.accessibilityValue)
   }
 
   private func paceLabelColor(_ pace: UsagePace) -> Color {
