@@ -6,13 +6,85 @@ private final class CardFrameBox {
   var frames: [String: CGRect] = [:]
 }
 
+struct MenuBarActionBar: View {
+  enum Action: CaseIterable, Hashable, Identifiable {
+    case dashboard
+    case refresh
+    case settings
+
+    var id: Self { self }
+  }
+
+  let isRefreshing: Bool
+  let openDashboard: () -> Void
+  let refreshUsage: () -> Void
+  let openSettings: () -> Void
+
+  var body: some View {
+    HStack(spacing: 10) {
+      ForEach(Action.allCases) { action in
+        control(for: action)
+      }
+    }
+    .padding(.horizontal, 14)
+    .padding(.vertical, 8)
+  }
+
+  @ViewBuilder
+  private func control(for action: Action) -> some View {
+    switch action {
+    case .dashboard:
+      Button(action: openDashboard) {
+        Image(nsImage: NSApp.applicationIconImage)
+          .resizable()
+          .interpolation(.high)
+          .frame(width: 22, height: 22)
+      }
+      .menuBarActionIconButton()
+      .help("Open MeterBar")
+      .accessibilityLabel("Open MeterBar")
+      .accessibilityIdentifier("menuBar.openDashboard")
+
+    case .refresh:
+      Button(action: refreshUsage) {
+        HStack(spacing: 6) {
+          RefreshingIcon(isRefreshing: isRefreshing)
+          Text(isRefreshing ? "Refreshing Usage" : "Refresh Usage")
+            .lineLimit(1)
+        }
+        .font(.subheadline)
+        .fontWeight(.semibold)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .frame(maxWidth: .infinity)
+      .help(isRefreshing ? "Refreshing usage" : "Refresh usage")
+      .disabled(isRefreshing)
+      .accessibilityIdentifier("menuBar.refreshUsage")
+
+    case .settings:
+      Button(action: openSettings) {
+        Image(systemName: "gearshape.fill")
+          .font(.system(size: 16, weight: .semibold))
+          .foregroundStyle(.secondary)
+      }
+      .menuBarActionIconButton()
+      .help("Open Settings")
+      .accessibilityLabel("Open Settings")
+      .accessibilityIdentifier("menuBar.openSettings")
+    }
+  }
+}
+
 struct MenuBarView: View {
   private let popoverWidth: CGFloat = 390
   private let minPopoverHeight: CGFloat = 180
-  private let chromeHeight: CGFloat = 41
+  private let actionBarHeight: CGFloat = 47
   private let screenPadding: CGFloat = 8
 
   let onContentSizeChange: (NSSize) -> Void
+  let onDismiss: () -> Void
 
   @StateObject private var dataManager = UsageDataManager.shared
   @StateObject private var claudeCodeService = ClaudeCodeLocalService.shared
@@ -24,13 +96,20 @@ struct MenuBarView: View {
   @StateObject private var providerVisibility = ProviderVisibilityStore.shared
   @StateObject private var sessionWakeStore = SessionWakeSettingsStore.shared
 
+  @Environment(\.openSettings)
+  private var openSettings
+
   @State private var contentHeight: CGFloat = 320
   @State private var expandedDetailID: String?
   @State private var cardFrameBox = CardFrameBox()
   @State private var menuWindow: NSWindow?
 
-  init(onContentSizeChange: @escaping (NSSize) -> Void = { _ in }) {
+  init(
+    onContentSizeChange: @escaping (NSSize) -> Void = { _ in },
+    onDismiss: @escaping () -> Void = {}
+  ) {
     self.onContentSizeChange = onContentSizeChange
+    self.onDismiss = onDismiss
   }
 
   var body: some View {
@@ -63,10 +142,6 @@ struct MenuBarView: View {
 
   private var mainColumn: some View {
     VStack(spacing: 0) {
-      popoverHeader
-
-      Divider()
-
       ScrollView {
         VStack(spacing: 10) {
           PopoverOverviewPanel(
@@ -110,15 +185,24 @@ struct MenuBarView: View {
       .scrollIndicators(.hidden)
       .scrollContentBackground(.hidden)
       .frame(height: scrollHeight)
+
+      Divider()
+
+      MenuBarActionBar(
+        isRefreshing: dataManager.isLoading,
+        openDashboard: openDashboard,
+        refreshUsage: refreshUsage,
+        openSettings: showSettings
+      )
     }
   }
 
   private var scrollHeight: CGFloat {
-    min(max(80, contentHeight), maximumPopoverHeight - chromeHeight)
+    min(max(80, contentHeight), maximumPopoverHeight - actionBarHeight)
   }
 
   private var popoverHeight: CGFloat {
-    min(max(chromeHeight + scrollHeight, minPopoverHeight), maximumPopoverHeight)
+    min(max(actionBarHeight + scrollHeight, minPopoverHeight), maximumPopoverHeight)
   }
 
   private var maximumPopoverHeight: CGFloat {
@@ -131,52 +215,29 @@ struct MenuBarView: View {
   private func notifyContentSize(height: CGFloat? = nil) {
     let measuredHeight = height ?? contentHeight
     let maxHeight = maximumPopoverHeight
-    let targetScrollHeight = min(max(80, measuredHeight), maxHeight - chromeHeight)
+    let targetScrollHeight = min(max(80, measuredHeight), maxHeight - actionBarHeight)
     let targetHeight = min(
-      max(chromeHeight + targetScrollHeight, minPopoverHeight), maxHeight)
+      max(actionBarHeight + targetScrollHeight, minPopoverHeight), maxHeight)
     onContentSizeChange(NSSize(width: popoverWidth, height: targetHeight))
   }
 
-  private var popoverHeader: some View {
-    HStack(spacing: 8) {
-      Spacer()
-
-      HStack(spacing: 0) {
-        Button(action: openDashboard) {
-          Image(systemName: MenuBarOverlayIcons.dashboard)
-            .font(.system(size: 12, weight: .semibold))
-            .frame(width: 34, height: 28)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Open Usage Dashboard")
-
-        Divider()
-          .frame(height: 16)
-
-        Button {
-          Task { await dataManager.refreshAll() }
-        } label: {
-          RefreshingIcon(isRefreshing: dataManager.isLoading)
-            .font(.system(size: 12, weight: .semibold))
-            .frame(width: 34, height: 28)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(dataManager.isLoading ? "Refreshing usage" : "Refresh usage")
-        .disabled(dataManager.isLoading)
-      }
-      .glassEffect(.regular.interactive(), in: .capsule)
-    }
-    .font(.body)
-    .padding(.horizontal, 14)
-    .padding(.vertical, 8)
+  private func refreshUsage() {
+    Task { await dataManager.refreshAll() }
   }
 
   private func openDashboard() {
     expandedDetailID = nil
     MeterBarMenuDetailPanel.shared.dismiss()
+    onDismiss()
     UsageDashboardWindowController.shared.show()
+  }
+
+  private func showSettings() {
+    expandedDetailID = nil
+    MeterBarMenuDetailPanel.shared.dismiss()
+    openSettings()
+    onDismiss()
+    NSApp.activate(ignoringOtherApps: true)
   }
 
   private func openStatusDetail() {
@@ -226,8 +287,12 @@ struct MenuBarView: View {
   }
 }
 
-private enum MenuBarOverlayIcons {
-  static let dashboard = "rectangle.split.2x1"
+private extension View {
+  func menuBarActionIconButton() -> some View {
+    frame(width: 30, height: 30)
+      .contentShape(Rectangle())
+      .buttonStyle(.plain)
+  }
 }
 
 // MARK: - Overview panel

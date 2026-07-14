@@ -1989,7 +1989,7 @@ private struct SettingsInputSurfaceModifier: ViewModifier {
             content
                 .padding(.horizontal, horizontalPadding)
                 .padding(.vertical, verticalPadding)
-                .frame(width: width)
+                .frame(width: width, alignment: .leading)
                 .background(.thinMaterial, in: roundedRectangle)
                 .overlay {
                     roundedRectangle.stroke(MeterBarTheme.glassCardStroke, lineWidth: 0.5)
@@ -1998,7 +1998,7 @@ private struct SettingsInputSurfaceModifier: ViewModifier {
             content
                 .padding(.horizontal, horizontalPadding)
                 .padding(.vertical, verticalPadding)
-                .frame(width: width)
+                .frame(width: width, alignment: .leading)
                 .background(.thinMaterial, in: Capsule())
                 .overlay {
                     Capsule().stroke(MeterBarTheme.glassCardStroke, lineWidth: 0.5)

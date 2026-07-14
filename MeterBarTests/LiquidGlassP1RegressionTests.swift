@@ -1,10 +1,30 @@
 import AppKit
 import MeterBarShared
+import SwiftUI
 import XCTest
 @testable import MeterBar
 
 @MainActor
 final class LiquidGlassP1RegressionTests: XCTestCase {
+    func testMenuBarActionBarKeepsDashboardRefreshAndSettingsReachable() {
+        XCTAssertEqual(MenuBarActionBar.Action.allCases, [.dashboard, .refresh, .settings])
+    }
+
+    func testMenuBarActionBarFitsTheCompanionPopover() {
+        let actionBar = MenuBarActionBar(
+            isRefreshing: false,
+            openDashboard: {},
+            refreshUsage: {},
+            openSettings: {}
+        )
+        let hostingView = NSHostingView(rootView: actionBar)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 390, height: 46)
+        hostingView.layoutSubtreeIfNeeded()
+
+        XCTAssertLessThanOrEqual(hostingView.fittingSize.width, 390)
+        XCTAssertGreaterThanOrEqual(hostingView.fittingSize.height, 40)
+    }
+
     func testMenuPanelCanBecomeKey() {
         let panel = KeyableMenuPanel(
             contentRect: .zero,
