@@ -97,7 +97,7 @@ struct MenuBarView: View {
             SessionWakeMenuControl()
           }
         }
-        .padding(10)
+        .padding(MeterBarTheme.Spacing.md)
         .background(
           GeometryReader { proxy in
             Color.clear.preference(
@@ -163,8 +163,8 @@ struct MenuBarView: View {
       }
     }
     .font(.body)
-    .padding(.horizontal, 14)
-    .padding(.vertical, 8)
+    .padding(.horizontal, MeterBarTheme.Spacing.lg)
+    .padding(.vertical, MeterBarTheme.Spacing.sm)
   }
 
   private func openDashboard() {
@@ -433,7 +433,7 @@ struct PopoverProviderStatusCard: View {
       reduceMotion ? nil : MeterBarTheme.Motion.standard,
       value: snapshot.hasExhaustedLimit
     )
-    .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    .contentShape(RoundedRectangle(cornerRadius: MeterBarTheme.Radius.card, style: .continuous))
   }
 
   private var compactExhaustedCard: some View {
