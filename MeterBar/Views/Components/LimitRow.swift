@@ -29,6 +29,14 @@ struct LimitRow: View {
 
     private var content: RowContent { RowContent(limit: limit) }
 
+    /// The combined VoiceOver label/value applied to the row's single
+    /// accessibility element. Sourced from the shared `SnapshotLimit` helpers and
+    /// deliberately density-independent — the popover, detail panel, and
+    /// dashboard must all speak an identical reading. Exposed so tests can assert
+    /// the wiring per density without a rendered-view accessibility harness.
+    var accessibilityLabelText: String { limit.accessibilityLabel }
+    var accessibilityValueText: String { limit.accessibilityValue }
+
     var body: some View {
         core
             .modifier(CardSurface(enabled: density.hasCardSurface))
@@ -48,8 +56,8 @@ struct LimitRow: View {
         // One combined VoiceOver element per limit row across all three
         // surfaces, via the shared SnapshotLimit accessibility helpers.
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(limit.accessibilityLabel)
-        .accessibilityValue(limit.accessibilityValue)
+        .accessibilityLabel(accessibilityLabelText)
+        .accessibilityValue(accessibilityValueText)
     }
 
     private var header: some View {
@@ -75,9 +83,10 @@ struct LimitRow: View {
         }
     }
 
-    /// The 8pt fixed-size tag is preserved on the terse surfaces for now; a
-    /// follow-up accessibility chip will replace the fixed size. Kept behind
-    /// the density so all three surfaces render it through one code path.
+    /// The "Estimated" tag scales with Dynamic Type on every surface (semantic
+    /// `caption2`, no fixed point size), so the smallest label still respects the
+    /// user's text-size setting. Kept behind the density so all three surfaces
+    /// render it through one code path.
     private var estimatedTag: some View {
         Text("Estimated")
             .font(density.estimatedFont)
@@ -259,13 +268,11 @@ private extension LimitRow.Density {
         }
     }
 
-    /// Fixed 8pt on the terse surfaces (preserved for now); the roomier
-    /// dashboard keeps its scalable caption2.
+    /// Semantic `caption2` on every surface so the "Estimated" tag scales with
+    /// Dynamic Type (previously a fixed 8pt on the terse surfaces, which ignored
+    /// the user's text-size setting).
     var estimatedFont: Font {
-        switch self {
-        case .compact, .detail: return .system(size: 8)
-        case .regular: return .caption2
-        }
+        .caption2
     }
 
     var trailingFont: Font {

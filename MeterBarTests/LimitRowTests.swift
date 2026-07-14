@@ -109,6 +109,43 @@ final class LimitRowTests: XCTestCase {
         }
     }
 
+    // MARK: - Accessibility wiring (unified across densities)
+
+    /// The unified row must apply the shared `SnapshotLimit` VoiceOver strings
+    /// identically on every surface — the density only changes typography, never
+    /// the spoken reading. #190 added these strings to the (now-deleted) separate
+    /// rows; this guards that the reconciliation kept them on the one component.
+    func testExposesCombinedAccessibilityPerDensity() {
+        let limit = quotaLimit(used: 40, resetTime: future)
+        for density in [LimitRow.Density.compact, .detail, .regular] {
+            let row = LimitRow(limit: limit, accentColor: .blue, density: density)
+            XCTAssertEqual(
+                row.accessibilityLabelText,
+                limit.accessibilityLabel,
+                "LimitRow(\(density)) should speak the shared limit label"
+            )
+            XCTAssertEqual(
+                row.accessibilityValueText,
+                "60% left, 40% used",
+                "LimitRow(\(density)) should speak left+used as one combined value"
+            )
+        }
+    }
+
+    /// Estimated limits append "estimated" to the label and never say a hard
+    /// "Out" — the row must surface that same reading on every density.
+    func testEstimatedAccessibilityReadingIsDensityIndependent() {
+        let limit = quotaLimit(used: 100, isEstimated: true)
+        for density in [LimitRow.Density.compact, .detail, .regular] {
+            let row = LimitRow(limit: limit, accentColor: .blue, density: density)
+            XCTAssertEqual(row.accessibilityLabelText, "Session, estimated")
+            XCTAssertFalse(
+                row.accessibilityValueText.hasPrefix("Out"),
+                "estimated exhaustion must not speak a hard Out (\(density))"
+            )
+        }
+    }
+
     func testCurrencyRowRendersInRegularDensity() {
         let row = LimitRow(
             limit: currencyLimit(used: 3, total: 10),
