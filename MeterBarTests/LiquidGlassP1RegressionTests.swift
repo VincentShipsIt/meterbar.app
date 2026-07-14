@@ -73,6 +73,7 @@ final class LiquidGlassP1RegressionTests: XCTestCase {
             backing: .buffered,
             defer: false
         )
+        window.isReleasedWhenClosed = false
         let button = NSStatusBarButton(frame: NSRect(x: 0, y: 0, width: 40, height: 22))
         window.contentView?.addSubview(button)
         return (window, button)

@@ -120,6 +120,9 @@ final class MeterBarMenuPanelController {
             backing: .buffered,
             defer: false
         )
+        // ARC owns this reused panel; without this, AppKit's release-on-close
+        // would double-free it (crashes XCTest's leak checker, and is unsafe).
+        panel.isReleasedWhenClosed = false
         panel.isFloatingPanel = true
         panel.isOpaque = false
         panel.backgroundColor = .clear
