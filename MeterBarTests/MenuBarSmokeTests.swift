@@ -16,7 +16,6 @@ import XCTest
 /// drive. See `.agents/docs/TESTING.md` for the manual UI/widget QA checklist.
 @MainActor
 final class MenuBarSmokeTests: XCTestCase {
-
     /// Controllable single-account provider (Codex / Cursor stand-in).
     private final class StubUsageProvider: SimpleUsageProviding, CodexUsageProviding {
         var hasAccess: Bool
@@ -71,8 +70,9 @@ final class MenuBarSmokeTests: XCTestCase {
         //    isolated stores (Claude Code hidden — no CLI creds in CI).
         let codex = StubUsageProvider(hasAccess: true, metrics: MetricsFixtures.codexCli())
         let cursor = StubUsageProvider(hasAccess: true, metrics: MetricsFixtures.cursor())
-        let cacheDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        let visibilityDefaults = try XCTUnwrap(UserDefaults(suiteName: "\(suiteName!)-vis"))
+        let baseSuite = try XCTUnwrap(suiteName)
+        let cacheDefaults = try XCTUnwrap(UserDefaults(suiteName: baseSuite))
+        let visibilityDefaults = try XCTUnwrap(UserDefaults(suiteName: "\(baseSuite)-vis"))
         let visibility = ProviderVisibilityStore(userDefaults: visibilityDefaults)
         visibility.set(.claudeCode, isEnabled: false)
         let sharedStore = SharedDataStore(directoryOverride: tempDirectory) {}
@@ -116,12 +116,13 @@ final class MenuBarSmokeTests: XCTestCase {
     func testRelaunchRestoresCachedMetricsFromSharedDefaults() async throws {
         // Simulate a previous run having cached metrics, then a fresh "launch":
         // the manager must render them immediately (no blank UI before first fetch).
-        let cacheDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let baseSuite = try XCTUnwrap(suiteName)
+        let cacheDefaults = try XCTUnwrap(UserDefaults(suiteName: baseSuite))
         let seeded = MetricsFixtures.allProviders()
         cacheDefaults.set(MetricsCodec.encode(seeded), forKey: StorageKeys.cachedUsageMetrics)
 
         let visibility = ProviderVisibilityStore(
-            userDefaults: try XCTUnwrap(UserDefaults(suiteName: "\(suiteName!)-vis"))
+            userDefaults: try XCTUnwrap(UserDefaults(suiteName: "\(baseSuite)-vis"))
         )
         let manager = UsageDataManager(
             codexCliService: StubUsageProvider(hasAccess: false, metrics: MetricsFixtures.codexCli()),
