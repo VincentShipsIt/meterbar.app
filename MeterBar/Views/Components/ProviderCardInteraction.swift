@@ -2,12 +2,12 @@ import AppKit
 import MeterBarShared
 import SwiftUI
 
-// Interaction affordances for the tappable provider cards shared by the popover
-// (`PopoverProviderStatusCard`) and the dashboard overview
-// (`ProviderOverviewStatusCard`). Previously those cards were clickable Buttons
-// with no hover/pressed styling — the only cue was an accessibilityHint sighted
-// users never see. These pieces make "clickable" visible and add a SwiftUI
-// context menu mirroring the hidden status-item NSMenu.
+// Interaction affordances for the tappable provider cards. `ProviderStatusCard`
+// is the single card shared by the popover, the dashboard Overview, and the
+// Limits page. Previously those cards were clickable Buttons with no
+// hover/pressed styling — the only cue was an accessibilityHint sighted users
+// never see. These pieces make "clickable" visible and add a SwiftUI context
+// menu mirroring the hidden status-item NSMenu.
 
 // MARK: - Keyboard shortcuts
 
@@ -58,15 +58,18 @@ struct ProviderCardButtonStyle: ButtonStyle {
             let active = isHovering || configuration.isPressed
 
             configuration.label
-                .scaleEffect(configuration.isPressed ? 0.985 : (isHovering ? 1.006 : 1))
                 .overlay {
+                    // Hover/press feedback is a quiet neutral wash + a slightly
+                    // deeper hairline in the card's own tone — no scale (that
+                    // resampled the text and read as blur), no drop shadow, no
+                    // accent color. The card stays put; it just responds.
                     shape
-                        .fill(Color.primary.opacity(configuration.isPressed ? 0.06 : (isHovering ? 0.035 : 0)))
+                        .fill(Color.primary.opacity(configuration.isPressed ? 0.06 : (isHovering ? 0.03 : 0)))
                         .allowsHitTesting(false)
                 }
                 .overlay {
                     shape
-                        .strokeBorder(MeterBarTheme.appAccent.opacity(active ? 0.35 : 0), lineWidth: 1)
+                        .strokeBorder(Color.primary.opacity(active ? 0.12 : 0), lineWidth: 1)
                         .allowsHitTesting(false)
                 }
                 .animation(reduceMotion ? nil : providerCardHoverAnimation, value: isHovering)

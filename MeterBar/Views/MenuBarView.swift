@@ -87,7 +87,8 @@ struct MenuBarView: View {
               )),
             openDashboard: openDashboard,
             openStatusDetail: openStatusDetail,
-            openProviderOverview: openProviderDetail
+            openProviderOverview: openProviderDetail,
+            hoverProviderOverview: hoverOpenProviderDetail
           )
 
           if SessionWakeMenuControl.shouldShow(
@@ -141,34 +142,45 @@ struct MenuBarView: View {
 
   private var popoverHeader: some View {
     HStack(spacing: 8) {
+      PopoverHeaderStatusDots(
+        openDetail: openStatusDetail,
+        hoverOpenDetail: hoverOpenStatusDetail
+      )
+
       Spacer()
 
-      GlassEffectContainer(spacing: 8) {
-        HStack(spacing: 8) {
-          Button(action: openDashboard) {
-            Image(systemName: MenuBarOverlayIcons.dashboard)
-              .font(.system(size: 12, weight: .semibold))
-              .accessibilityHidden(true)
-          }
-          .meterBarGlassIconButton()
-          .help("Open Usage Dashboard")
-          .accessibilityLabel("Open Dashboard")
-
-          Button {
-            Task { await dataManager.refreshAll() }
-          } label: {
-            RefreshingIcon(isRefreshing: dataManager.isLoading)
-              .font(.system(size: 12, weight: .semibold))
-              .accessibilityHidden(true)
-          }
-          .meterBarGlassIconButton()
-          .help(dataManager.isLoading ? "Refreshing usage" : "Refresh usage (⌘R)")
-          .accessibilityLabel("Refresh")
-          .accessibilityValue(dataManager.isLoading ? "Refreshing" : "")
-          .meterBarRefreshShortcut()
-          .disabled(dataManager.isLoading)
+      // Dashboard + Refresh fused into one glass capsule (were two separate glass
+      // circles) so the header actions read as a single pill, matching the
+      // status-dots pill on the left.
+      HStack(spacing: 2) {
+        Button(action: openDashboard) {
+          Image(systemName: MenuBarOverlayIcons.dashboard)
+            .font(.system(size: 12, weight: .semibold))
+            .frame(width: 32, height: 30)
+            .contentShape(Rectangle())
+            .accessibilityHidden(true)
         }
+        .buttonStyle(.plain)
+        .help("Open Usage Dashboard")
+        .accessibilityLabel("Open Dashboard")
+
+        Button {
+          Task { await dataManager.refreshAll() }
+        } label: {
+          RefreshingIcon(isRefreshing: dataManager.isLoading)
+            .font(.system(size: 12, weight: .semibold))
+            .frame(width: 32, height: 30)
+            .contentShape(Rectangle())
+            .accessibilityHidden(true)
+        }
+        .buttonStyle(.plain)
+        .help(dataManager.isLoading ? "Refreshing usage" : "Refresh usage (⌘R)")
+        .accessibilityLabel("Refresh")
+        .accessibilityValue(dataManager.isLoading ? "Refreshing" : "")
+        .meterBarRefreshShortcut()
+        .disabled(dataManager.isLoading)
       }
+      .glassEffect(.regular.interactive(), in: .capsule)
     }
     .font(.body)
     .padding(.horizontal, MeterBarTheme.Spacing.lg)
@@ -193,6 +205,21 @@ struct MenuBarView: View {
       id: snapshot.id,
       content: AnyView(MenuBarProviderDetailContent(snapshot: snapshot))
     )
+  }
+
+  /// Hover-driven open: show the provider's detail panel when the pointer enters
+  /// the card. Unlike a click it never toggles closed — moving off the card (or
+  /// onto another) leaves the panel up / swaps it, so scanning the list with the
+  /// mouse feels continuous rather than flickering the panel in and out.
+  private func hoverOpenProviderDetail(_ snapshot: ProviderSnapshot) {
+    guard expandedDetailID != snapshot.id else { return }
+    openProviderDetail(snapshot)
+  }
+
+  /// Hover-driven open for the header status cluster (same non-toggling rule).
+  private func hoverOpenStatusDetail() {
+    guard expandedDetailID != PopoverCardID.providerStatus else { return }
+    openStatusDetail()
   }
 
   /// Presents (or toggles off) the secondary detail card, top-aligned with the
@@ -228,17 +255,59 @@ struct MenuBarView: View {
   }
 }
 
-private extension View {
-  func meterBarGlassIconButton() -> some View {
-    frame(width: 30, height: 30)
-      .contentShape(Circle())
-      .glassEffect(.regular.interactive(), in: .circle)
-      .buttonStyle(.plain)
-  }
-}
-
 private enum MenuBarOverlayIcons {
   static let dashboard = "rectangle.split.2x1"
+}
+
+/// The provider-status indicator, promoted from a full popover card into the top
+/// bar: just the per-provider dots in a glass pill (matching the header's other
+/// glass controls). Tap — or hover — to open the status detail panel.
+private struct PopoverHeaderStatusDots: View {
+  @StateObject private var statusMonitor = ProviderStatusMonitor.shared
+  @Environment(\.accessibilityReduceMotion)
+  private var reduceMotion
+
+  let openDetail: () -> Void
+  var hoverOpenDetail: (() -> Void)?
+
+  private var summaryText: String {
+    let issues = ServiceType.allCases
+      .compactMap { statusMonitor.reports[$0] }
+      .filter(\.hasIssue)
+      .count
+    if issues == 0 { return "All provider pages operational" }
+    return issues == 1 ? "1 provider needs attention" : "\(issues) providers need attention"
+  }
+
+  var body: some View {
+    Button(action: openDetail) {
+      HStack(spacing: 5) {
+        ForEach(ServiceType.allCases) { service in
+          let indicator = statusMonitor.reports[service]?.summary.indicator ?? .unknown
+          Circle()
+            .fill(indicator.tint)
+            .frame(width: 7, height: 7)
+            .help(service.statusPageDisplayName)
+            .animation(
+              MeterBarTheme.Motion.snappy(reduceMotion: reduceMotion),
+              value: indicator
+            )
+        }
+      }
+      .padding(.horizontal, 10)
+      .frame(height: 30)
+      .contentShape(Capsule())
+    }
+    .buttonStyle(.plain)
+    .glassEffect(.regular.interactive(), in: .capsule)
+    .help("Provider status")
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel("Provider status")
+    .accessibilityValue(summaryText)
+    .accessibilityHint("Show provider status details")
+    .onHover { if $0 { hoverOpenDetail?() } }
+    .task { await statusMonitor.refreshAllIfNeeded() }
+  }
 }
 
 // MARK: - Overview panel
@@ -246,13 +315,16 @@ private enum MenuBarOverlayIcons {
 struct PopoverOverviewPanel: View {
   let snapshots: [ProviderSnapshot]
   let openDashboard: () -> Void
+  // Provider status now lives in the popover's top bar, so the panel no longer
+  // renders a status card; `openStatusDetail` is retained for source/test compat.
   let openStatusDetail: () -> Void
   let openProviderOverview: (ProviderSnapshot) -> Void
+  /// Hover-driven open for a provider card (opens its detail panel on pointer
+  /// enter). Optional so existing/test call sites stay valid.
+  var hoverProviderOverview: ((ProviderSnapshot) -> Void)?
 
   @State private var setupReports: [ProviderReadiness] = []
   @StateObject private var onboarding = FirstRunOnboardingStore.shared
-  @Environment(\.openSettings)
-  private var openSettings
   @Environment(\.accessibilityReduceMotion)
   private var reduceMotion
 
@@ -263,12 +335,14 @@ struct PopoverOverviewPanel: View {
     snapshots: [ProviderSnapshot],
     openDashboard: @escaping () -> Void,
     openStatusDetail: @escaping () -> Void,
-    openProviderOverview: @escaping (ProviderSnapshot) -> Void
+    openProviderOverview: @escaping (ProviderSnapshot) -> Void,
+    hoverProviderOverview: ((ProviderSnapshot) -> Void)? = nil
   ) {
     self.snapshots = snapshots
     self.openDashboard = openDashboard
     self.openStatusDetail = openStatusDetail
     self.openProviderOverview = openProviderOverview
+    self.hoverProviderOverview = hoverProviderOverview
   }
 
   /// The enabled providers currently shown in the popover.
@@ -277,9 +351,12 @@ struct PopoverOverviewPanel: View {
   }
 
   /// Enabled providers that still need setup — drives the first-run checklist.
-  /// The section collapses (renders nothing) once these are all healthy.
+  /// Keyed on `needsSetup` (a genuine install/auth/data failure), NOT `!isHealthy`:
+  /// a working provider whose only blemish is a transient refresh or format-health
+  /// *warning* must not keep "Finish setup" pinned open forever. The section
+  /// collapses (renders nothing) once no enabled provider has a real setup gap.
   private var providersNeedingSetup: [ProviderReadiness] {
-    setupReports.filter { enabledProviders.contains($0.provider) && !$0.isHealthy }
+    setupReports.filter { enabledProviders.contains($0.provider) && $0.needsSetup }
   }
 
   /// Captures *which* tiles the panel shows, not their values. The panel
@@ -332,7 +409,7 @@ struct PopoverOverviewPanel: View {
               Spacer(minLength: 0)
             }
 
-            Button("Open Settings") { openSettings() }
+            Button("Open Settings") { UsageDashboardWindowController.shared.showSettings(.providers) }
               .buttonStyle(.glass)
               .controlSize(.small)
           }
@@ -345,14 +422,13 @@ struct PopoverOverviewPanel: View {
           .transition(MeterBarTheme.Motion.popoverTile)
       }
 
-      PopoverProviderStatusSummaryCard(openStatusDetail: openStatusDetail)
-        .reportPopoverCardFrame(id: PopoverCardID.providerStatus)
-
       VStack(spacing: 8) {
         ForEach(snapshots) { snapshot in
-          PopoverProviderStatusCard(snapshot: snapshot) {
-            openProviderOverview(snapshot)
-          }
+          ProviderStatusCard(
+            snapshot: snapshot,
+            onHoverOpen: hoverProviderOverview.map { open in { open(snapshot) } },
+            onSelect: { openProviderOverview(snapshot) }
+          )
           .reportPopoverCardFrame(id: snapshot.id)
           .transition(MeterBarTheme.Motion.popoverTile)
         }
@@ -384,7 +460,7 @@ struct PopoverOverviewPanel: View {
       ReadinessChecklist(
         reports: providersNeedingSetup,
         compact: true,
-        recoveryAction: { openSettings() }
+        recoveryAction: { UsageDashboardWindowController.shared.showSettings(.providers) }
       )
     }
   }
@@ -430,9 +506,10 @@ struct PopoverOverviewPanel: View {
 
 // Non-private so the Liquid Glass morph wiring can be rendered in both states
 // by `LiquidGlassP1RegressionTests`.
-struct PopoverProviderStatusCard: View {
+struct ProviderStatusCard: View {
   let snapshot: ProviderSnapshot
   var onSelect: (() -> Void)?
+  var onHoverOpen: (() -> Void)?
 
   @ObservedObject private var menuBarDisplayPreferences = MenuBarDisplayPreferencesStore.shared
   @StateObject private var codexService = CodexCliLocalService.shared
@@ -453,8 +530,13 @@ struct PopoverProviderStatusCard: View {
 
   private static let cardGlassID = "provider-status-card"
 
-  init(snapshot: ProviderSnapshot, onSelect: (() -> Void)? = nil) {
+  init(
+    snapshot: ProviderSnapshot,
+    onHoverOpen: (() -> Void)? = nil,
+    onSelect: (() -> Void)? = nil
+  ) {
     self.snapshot = snapshot
+    self.onHoverOpen = onHoverOpen
     self.onSelect = onSelect
   }
 
@@ -464,6 +546,13 @@ struct PopoverProviderStatusCard: View {
 
   private var statusText: String {
     snapshot.band?.shortLabel ?? "Offline"
+  }
+
+  /// Exhausted cards are terminal summaries: their reset countdown is the only
+  /// actionable quota information, so no surface may open a redundant detail
+  /// view or show a disclosure affordance for them.
+  var allowsDetailNavigation: Bool {
+    onSelect != nil && !snapshot.hasExhaustedLimit
   }
 
   var body: some View {
@@ -505,12 +594,13 @@ struct PopoverProviderStatusCard: View {
   }
 
   @ViewBuilder private var selectableCard: some View {
-    if let onSelect {
+    if let onSelect, allowsDetailNavigation {
       Button(action: onSelect) {
         cardContent
       }
       .buttonStyle(ProviderCardButtonStyle())
       .accessibilityHint("Open \(snapshot.title) provider details")
+      .onHover { if $0 { onHoverOpen?() } }
     } else {
       cardContent
     }
@@ -519,7 +609,7 @@ struct PopoverProviderStatusCard: View {
   /// Chevron shown only when the card opens a detail panel, so "clickable" is
   /// visible instead of relying on an accessibilityHint alone.
   @ViewBuilder private var disclosureChevron: some View {
-    if onSelect != nil {
+    if allowsDetailNavigation {
       CardDisclosureChevron()
     }
   }
@@ -548,24 +638,15 @@ struct PopoverProviderStatusCard: View {
   }
 
   private var compactExhaustedCard: some View {
-    DashboardTile(padding: 11, minHeight: 58, alignment: .center, surface: .glass) {
+    DashboardTile(padding: 11, surface: .glass) {
       compactExhaustedContent
     }
   }
 
   private var compactExhaustedCardWithAction: some View {
-    DashboardTile(padding: 11, minHeight: 58, alignment: .center, surface: .glass) {
+    DashboardTile(padding: 11, surface: .glass) {
       VStack(alignment: .leading, spacing: 8) {
-        if let onSelect {
-          Button(action: onSelect) {
-            compactExhaustedContent
-              .contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-          .accessibilityHint("Open \(snapshot.title) provider details")
-        } else {
-          compactExhaustedContent
-        }
+        compactExhaustedContent
 
         Divider()
 
@@ -645,7 +726,6 @@ struct PopoverProviderStatusCard: View {
   private var expandedCard: some View {
     DashboardTile(
       padding: 11,
-      minHeight: 124,
       surface: .glass
     ) {
       VStack(alignment: .leading, spacing: 10) {
@@ -674,7 +754,7 @@ struct PopoverProviderStatusCard: View {
           Text(snapshot.emptyDetail)
             .font(.caption)
             .foregroundColor(.secondary)
-            .frame(maxWidth: .infinity, minHeight: 54, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         } else {
           VStack(alignment: .leading, spacing: 9) {
             ForEach(snapshot.limits) { limit in

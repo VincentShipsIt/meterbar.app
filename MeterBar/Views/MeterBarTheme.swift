@@ -172,10 +172,10 @@ enum MeterBarTheme {
   static let danger = Color(nsColor: .systemRed)
 
   static let glassCardStroke = Color.adaptive(
-    light: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.05),
-    dark: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.06),
-    lightHighContrast: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.14),
-    darkHighContrast: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.16)
+    light: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.08),
+    dark: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.10),
+    lightHighContrast: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.16),
+    darkHighContrast: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.20)
   )
 
   static func accent(for service: ServiceType) -> Color {
@@ -360,11 +360,18 @@ private struct MeterBarCardSurfaceModifier: ViewModifier {
   func body(content: Content) -> some View {
     let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
 
-    // Every flat content card funnels through here, so pointing this one
-    // modifier at `Surface.content` collapses all card fills onto a single
-    // source of truth (behavior-preserving — same semantic color).
+    // Every flat content card funnels through here — the single source of truth
+    // for card fills, so every card in every surface reads identically. One
+    // opaque `Surface.content` fill (Layer 2, never glass) plus a single hairline
+    // stroke to trace the edge. No drop shadow: the card's separation comes from
+    // the material it sits on (the glass popover shell, the dashboard's material
+    // background), not from lifting each card — shadows on a dense column read as
+    // noise. Uniform fill + uniform hairline, everywhere.
     content
       .background(MeterBarTheme.Surface.content, in: shape)
+      .overlay {
+        shape.strokeBorder(MeterBarTheme.glassCardStroke, lineWidth: 1)
+      }
   }
 }
 
