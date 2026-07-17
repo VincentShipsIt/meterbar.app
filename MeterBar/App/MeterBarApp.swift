@@ -885,9 +885,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         if providerVisibilityStore.isEnabled(.codexCli) {
-            for account in CodexAccountStore.shared.accounts {
+            let enabledAccounts = CodexAccountStore.shared.enabledAccounts
+            for account in enabledAccounts {
+                let fallbackMetrics = account.isDefault
+                    && enabledAccounts.count == 1
+                    && UsageDataManager.shared.codexAccountMetrics.isEmpty
+                    ? metrics[.codexCli]
+                    : nil
                 let accountMetrics = UsageDataManager.shared.codexAccountMetrics[account.id]
-                    ?? (account.isDefault ? metrics[.codexCli] : nil)
+                    ?? fallbackMetrics
                 guard let accountMetrics else { continue }
                 let homeDirectory = account.homeDirectory
                 let source = StatusLimitSource(
