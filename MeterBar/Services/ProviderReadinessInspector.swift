@@ -24,6 +24,7 @@ nonisolated public enum ProviderReadinessInspector {
         refreshErrors: [ServiceType: ServiceError] = [:],
         now: Date = Date(),
         claudeDefaultAccountEnabled: Bool = true,
+        claudeHasEnabledCustomAccount: Bool = false,
         claudeEnabledAccountMetrics: [UsageMetrics] = [],
         parseHealth: [ServiceType: ProviderParseHealthRecord]? = nil
     ) -> [ProviderReadiness] {
@@ -36,6 +37,7 @@ nonisolated public enum ProviderReadinessInspector {
                     refreshError: $0,
                     now: $1,
                     defaultAccountEnabled: claudeDefaultAccountEnabled,
+                    hasEnabledCustomAccount: claudeHasEnabledCustomAccount,
                     enabledAccountMetrics: claudeEnabledAccountMetrics
                 )
             },
@@ -99,6 +101,7 @@ nonisolated public enum ProviderReadinessInspector {
         now: Date = Date(),
         cachedMetrics: @autoclosure () -> UsageMetrics? = SharedDataStore.shared.loadMetrics()[.claudeCode],
         defaultAccountEnabled: Bool = true,
+        hasEnabledCustomAccount: Bool = false,
         enabledAccountMetrics: [UsageMetrics] = [],
         isCLIInstalled: Bool = CLIBinaryLocator.isAvailable(
             command: "claude",
@@ -112,7 +115,7 @@ nonisolated public enum ProviderReadinessInspector {
         let hasRecentUsageFetch = enabledAccountMetrics.contains {
             hasRecentClaudeUsageFetch(metrics: $0, now: now)
         } || (
-            defaultAccountEnabled
+            (defaultAccountEnabled || hasEnabledCustomAccount)
                 && hasRecentClaudeUsageFetch(metrics: cachedMetrics(), now: now)
         )
         let credentialsJSON: Data?

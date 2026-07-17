@@ -90,6 +90,9 @@ struct MenuBarView: View {
             openProviderOverview: openProviderDetail,
             hoverProviderOverview: hoverProviderDetailChanged,
             claudeDefaultAccountEnabled: claudeAccountStore.defaultAccountIsEnabled,
+            claudeEnabledCustomAccountIDs: claudeAccountStore.enabledAccounts
+              .filter { !$0.isDefault }
+              .map(\.id),
             claudeEnabledAccountMetrics: claudeAccountStore.enabledAccounts.compactMap {
               dataManager.claudeCodeAccountMetrics[$0.id]
             }
@@ -331,6 +334,7 @@ struct PopoverOverviewPanel: View {
   /// enter). Optional so existing/test call sites stay valid.
   var hoverProviderOverview: ((ProviderSnapshot, Bool) -> Void)?
   let claudeDefaultAccountEnabled: Bool
+  let claudeEnabledCustomAccountIDs: [UUID]
   let claudeEnabledAccountMetrics: [UsageMetrics]
 
   @State private var setupReports: [ProviderReadiness] = []
@@ -348,6 +352,7 @@ struct PopoverOverviewPanel: View {
     openProviderOverview: @escaping (ProviderSnapshot) -> Void,
     hoverProviderOverview: ((ProviderSnapshot, Bool) -> Void)? = nil,
     claudeDefaultAccountEnabled: Bool = true,
+    claudeEnabledCustomAccountIDs: [UUID] = [],
     claudeEnabledAccountMetrics: [UsageMetrics] = []
   ) {
     self.snapshots = snapshots
@@ -356,6 +361,7 @@ struct PopoverOverviewPanel: View {
     self.openProviderOverview = openProviderOverview
     self.hoverProviderOverview = hoverProviderOverview
     self.claudeDefaultAccountEnabled = claudeDefaultAccountEnabled
+    self.claudeEnabledCustomAccountIDs = claudeEnabledCustomAccountIDs
     self.claudeEnabledAccountMetrics = claudeEnabledAccountMetrics
   }
 
@@ -389,6 +395,7 @@ struct PopoverOverviewPanel: View {
   private struct ReadinessInputKey: Equatable {
     let providers: [ServiceType]
     let defaultClaudeAccountEnabled: Bool
+    let enabledClaudeCustomAccountIDs: [UUID]
     let claudeMetricFreshness: [Bool]
   }
 
@@ -406,6 +413,7 @@ struct PopoverOverviewPanel: View {
     return ReadinessInputKey(
       providers: ServiceType.allCases.filter { enabledProviders.contains($0) },
       defaultClaudeAccountEnabled: claudeDefaultAccountEnabled,
+      enabledClaudeCustomAccountIDs: claudeEnabledCustomAccountIDs,
       claudeMetricFreshness: claudeEnabledAccountMetrics.map {
         ProviderReadinessInspector.hasRecentClaudeUsageFetch(metrics: $0, now: now)
       }
@@ -529,11 +537,13 @@ struct PopoverOverviewPanel: View {
   private func loadSetupReports() async {
     let requestedProviders = enabledProviders
     let defaultAccountEnabled = claudeDefaultAccountEnabled
+    let hasEnabledCustomAccount = !claudeEnabledCustomAccountIDs.isEmpty
     let accountMetrics = claudeEnabledAccountMetrics
     let reports = await Task.detached(priority: .utility) {
       ProviderReadinessInspector.reports(
         providers: requestedProviders,
         claudeDefaultAccountEnabled: defaultAccountEnabled,
+        claudeHasEnabledCustomAccount: hasEnabledCustomAccount,
         claudeEnabledAccountMetrics: accountMetrics
       )
     }.value
