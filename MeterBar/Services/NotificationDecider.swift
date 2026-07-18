@@ -116,9 +116,11 @@ struct NotificationDecider {
         let criticalRank = Self.severityRank(preferences.criticalThreshold.band)
 
         for (limit, quotaKind) in limits {
-            let baseKey = [metrics.service.rawValue, accountKey, quotaKind.rawValue]
-                .compactMap { $0 }
-                .joined(separator: "-")
+            let baseKey = Self.notificationBaseKey(
+                service: metrics.service,
+                accountKey: accountKey,
+                quotaKind: quotaKind
+            )
             let warnKey = "\(baseKey)-warn"
             let criticalKey = "\(baseKey)-critical"
 
@@ -185,6 +187,33 @@ struct NotificationDecider {
         return NotificationEvaluation(notifications: fired, notifiedKeys: keys)
     }
 
+    /// Every warning/critical key the decider can emit for one provider
+    /// namespace. The account planner uses this same key contract to clear
+    /// inactive account and fallback state without duplicating key construction.
+    static func notificationKeys(
+        service: ServiceType,
+        accountKey: String? = nil
+    ) -> Set<String> {
+        Set(QuotaKind.allCases.flatMap { quotaKind in
+            let baseKey = notificationBaseKey(
+                service: service,
+                accountKey: accountKey,
+                quotaKind: quotaKind
+            )
+            return ["\(baseKey)-warn", "\(baseKey)-critical"]
+        })
+    }
+
+    private static func notificationBaseKey(
+        service: ServiceType,
+        accountKey: String?,
+        quotaKind: QuotaKind
+    ) -> String {
+        [service.rawValue, accountKey, quotaKind.rawValue]
+            .compactMap { $0 }
+            .joined(separator: "-")
+    }
+
     /// Orders the shared quota bands by severity so a user-selected threshold
     /// band can be compared against a limit's current band. This only ranks the
     /// existing `QuotaBand` cases — it is not a second threshold scheme.
@@ -199,7 +228,7 @@ struct NotificationDecider {
 
     /// Stable quota key plus provider-specific display copy. `codeReviewLimit`
     /// represents Sonnet-only usage for Claude and Code Review usage for Codex.
-    private enum QuotaKind: String, Equatable, Sendable {
+    private enum QuotaKind: String, CaseIterable, Equatable, Sendable {
         case session
         case weekly
         case codeReview
