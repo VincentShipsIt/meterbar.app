@@ -28,17 +28,20 @@ public enum SessionWakeAgent {
             lock.release()
         }
 
+        let hookDispatcher = WakeEventHookDispatcher()
         while !shouldCancel() {
             guard let configuration = stateStore.loadConfiguration(), configuration.canRun else {
                 return 0
             }
 
+            hookDispatcher.update(configuration: configuration.eventHooks)
             let runtime = makeRuntime(configuration: configuration)
             let coordinator = WakeCoordinator(
                 runner: runtime.makeRunner(),
                 bounds: configuration.bounds,
                 onState: { state in
                     stateStore.saveStatus(.init(state: state))
+                    hookDispatcher.observe(state, provider: configuration.provider)
                 }
             )
 
