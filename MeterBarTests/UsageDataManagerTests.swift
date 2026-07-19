@@ -7,10 +7,26 @@ import XCTest
 /// Orchestration coverage for `UsageDataManager.refreshAll` / `refresh(service:)`
 /// — merge, graceful degradation on fetch failure, disabled-provider handling —
 /// driven through the provider seam so no network or local credentials are
-/// touched. Claude Code is hidden in every scenario (its account-aware path is
-/// out of scope here), leaving Codex + Cursor as the single-account providers.
+/// touched. Most scenarios hide Claude Code; focused coverage injects its
+/// account-aware provider seam directly.
 @MainActor
 final class UsageDataManagerTests: XCTestCase {
+    private final class StubClaudeProvider: ClaudeCodeUsageProviding {
+        var hasAccess: Bool
+        var result: Result<UsageMetrics, Error>
+        private(set) var fetchCount = 0
+
+        init(hasAccess: Bool, result: Result<UsageMetrics, Error>) {
+            self.hasAccess = hasAccess
+            self.result = result
+        }
+
+        func fetchUsageMetrics(account: ClaudeCodeAccount) async throws -> UsageMetrics {
+            fetchCount += 1
+            return try result.get()
+        }
+    }
+
     /// Stub provider whose access flag and fetch result are fully controlled.
     private final class StubProvider: SimpleUsageProviding, CodexUsageProviding {
         var hasAccess: Bool
@@ -96,6 +112,8 @@ final class UsageDataManagerTests: XCTestCase {
     private func makeManager(
         codex: CodexUsageProviding,
         cursor: StubProvider,
+        claude: ClaudeCodeUsageProviding? = nil,
+        claudeCodeAccountStore: ClaudeCodeAccountStore? = nil,
         codexAccountStore: CodexAccountStore? = nil,
         hidden: Set<ServiceType> = [],
         preload: [ServiceType: UsageMetrics] = [:],
@@ -117,7 +135,8 @@ final class UsageDataManagerTests: XCTestCase {
         }
 
         let visibility = ProviderVisibilityStore(userDefaults: visibilityDefaults)
-        for service in hidden.union([.claudeCode]) {
+        let hiddenProviders = claude == nil ? hidden.union([.claudeCode]) : hidden
+        for service in hiddenProviders {
             visibility.set(service, isEnabled: false)
         }
 
@@ -126,6 +145,8 @@ final class UsageDataManagerTests: XCTestCase {
         let manager = UsageDataManager(
             codexCliService: codex,
             cursorService: cursor,
+            claudeCodeService: claude ?? ClaudeCodeLocalService.shared,
+            claudeCodeAccountStore: claudeCodeAccountStore,
             codexAccountStore: codexAccountStore,
             providerVisibilityStore: visibility,
             sharedStore: sharedStore,
@@ -169,6 +190,31 @@ final class UsageDataManagerTests: XCTestCase {
         // The merged snapshot is mirrored to the App Group file for the widget.
         sharedStore.flushPendingWrites()
         XCTAssertEqual(Set(sharedStore.loadMetrics().keys), [.codexCli, .cursor])
+    }
+
+    func testRefreshAllRetriesEnabledClaudeWhenPublishedAccessIsFalse() async throws {
+        let accountSuite = "UsageDataManagerTests-claude-accounts-\(UUID().uuidString)"
+        createdSuiteNames.append(accountSuite)
+        let accountDefaults = try XCTUnwrap(UserDefaults(suiteName: accountSuite))
+        let accountStore = ClaudeCodeAccountStore(userDefaults: accountDefaults)
+        let refreshed = MetricsFixtures.claudeCode(sessionUsedPercent: 7)
+        let claude = StubClaudeProvider(hasAccess: false, result: .success(refreshed))
+        let codex = StubProvider(hasAccess: false, result: .success(MetricsFixtures.codexCli()))
+        let cursor = StubProvider(hasAccess: false, result: .success(MetricsFixtures.cursor()))
+        let (manager, sharedStore) = makeManager(
+            codex: codex,
+            cursor: cursor,
+            claude: claude,
+            claudeCodeAccountStore: accountStore,
+            hidden: [.codexCli, .cursor, .openRouter, .grok]
+        )
+
+        await manager.refreshAll()
+
+        XCTAssertEqual(claude.fetchCount, 1)
+        XCTAssertEqual(manager.metrics[.claudeCode]?.sessionLimit?.used, 7)
+        sharedStore.flushPendingWrites()
+        XCTAssertEqual(sharedStore.loadMetrics()[.claudeCode]?.sessionLimit?.used, 7)
     }
 
     func testChangingRefreshIntervalPublishesToObservers() {

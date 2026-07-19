@@ -25,8 +25,10 @@ nonisolated public enum ProviderReadinessInspector {
         now: Date = Date(),
         claudeDefaultAccountEnabled: Bool = true,
         claudeEnabledAccountMetrics: [UsageMetrics] = [],
-        parseHealth: [ServiceType: ProviderParseHealthRecord]? = nil
+        parseHealth: [ServiceType: ProviderParseHealthRecord]? = nil,
+        cachedMetrics: [ServiceType: UsageMetrics]? = nil
     ) -> [ProviderReadiness] {
+        let metrics = cachedMetrics ?? SharedDataStore.shared.loadMetrics()
         let baseReports = reports(
             providers: providers,
             refreshErrors: refreshErrors,
@@ -35,6 +37,7 @@ nonisolated public enum ProviderReadinessInspector {
                 claudeReport(
                     refreshError: $0,
                     now: $1,
+                    cachedMetrics: metrics[.claudeCode],
                     defaultAccountEnabled: claudeDefaultAccountEnabled,
                     enabledAccountMetrics: claudeEnabledAccountMetrics
                 )
@@ -46,9 +49,15 @@ nonisolated public enum ProviderReadinessInspector {
         )
         let health = parseHealth ?? ProviderParseHealthStore.sharedRecords()
         return baseReports.map { report in
-            ProviderReadiness(
+            let record = health[report.provider]
+            let providerMetrics = metrics[report.provider]
+            return ProviderReadiness(
                 provider: report.provider,
-                checks: report.checks + [parseHealthCheck(health[report.provider], now: now)]
+                checks: reconciledRefreshChecks(
+                    report.checks,
+                    record: record,
+                    metrics: providerMetrics
+                ) + [parseHealthCheck(record, metrics: providerMetrics, now: now)]
             )
         }
     }
@@ -207,14 +216,24 @@ nonisolated public enum ProviderReadinessInspector {
 
     // MARK: - Helpers
 
-    private static func parseHealthCheck(_ record: ProviderParseHealthRecord?, now: Date) -> ReadinessCheck {
+    private static func parseHealthCheck(
+        _ record: ProviderParseHealthRecord?,
+        metrics: UsageMetrics?,
+        now: Date
+    ) -> ReadinessCheck {
         // Plain-English label. "Provider format health" was internal jargon; a
         // user reads this row to answer "is my usage current?", so the title
         // says exactly that and the detail carries the specifics.
         let title = "Usage data"
         let threshold = "Data is considered stale after 2 hours."
 
-        guard let record else {
+        let latestSuccess = [record?.lastSuccess, metrics?.lastUpdated].compactMap { $0 }.max()
+        let latestFailureIsCurrent = record.map {
+            $0.consecutiveFailures > 0
+                && $0.lastAttempt > (latestSuccess ?? .distantPast)
+        } ?? false
+
+        guard record != nil || latestSuccess != nil else {
             return ReadinessCheck(
                 id: ReadinessCheckID.parseHealth,
                 title: title,
@@ -225,7 +244,7 @@ nonisolated public enum ProviderReadinessInspector {
 
         // A genuine format drift is a real, immediate failure worth surfacing —
         // MeterBar reverse-engineers these feeds, so a shape change breaks reads.
-        if record.lastFailureWasShapeMismatch {
+        if latestFailureIsCurrent, record?.lastFailureWasShapeMismatch == true {
             return ReadinessCheck(
                 id: ReadinessCheckID.parseHealth,
                 title: title,
@@ -236,7 +255,9 @@ nonisolated public enum ProviderReadinessInspector {
             )
         }
         // Failures piling up mean the data on screen is genuinely going stale.
-        if record.consecutiveFailures >= ProviderParseHealthRecord.sustainedFailureCount {
+        if latestFailureIsCurrent,
+           let record,
+           record.consecutiveFailures >= ProviderParseHealthRecord.sustainedFailureCount {
             return ReadinessCheck(
                 id: ReadinessCheckID.parseHealth,
                 title: title,
@@ -251,7 +272,7 @@ nonisolated public enum ProviderReadinessInspector {
         // screen is invisible to the user and not worth a warning. (Warning on
         // it is exactly what made this row light up "all the time".)
         let hasRecentSuccess: Bool = {
-            guard let lastSuccess = record.lastSuccess else { return false }
+            guard let lastSuccess = latestSuccess else { return false }
             return now.timeIntervalSince(lastSuccess) <= ProviderParseHealthRecord.staleAfter
         }()
 
@@ -265,7 +286,7 @@ nonisolated public enum ProviderReadinessInspector {
         }
 
         // No recent success to fall back on: now the failure (or the age) matters.
-        if record.consecutiveFailures > 0 {
+        if latestFailureIsCurrent {
             return ReadinessCheck(
                 id: ReadinessCheckID.parseHealth,
                 title: title,
@@ -281,6 +302,32 @@ nonisolated public enum ProviderReadinessInspector {
             detail: "Usage data is older than the 2-hour freshness window.",
             recovery: "Refresh the provider and review any new error."
         )
+    }
+
+    private static func reconciledRefreshChecks(
+        _ checks: [ReadinessCheck],
+        record: ProviderParseHealthRecord?,
+        metrics: UsageMetrics?
+    ) -> [ReadinessCheck] {
+        guard let record,
+              record.consecutiveFailures > 0,
+              record.lastAttempt > (metrics?.lastUpdated ?? record.lastSuccess ?? .distantPast),
+              checks.first(where: { $0.id == ReadinessCheckID.refresh })?.level == .pass else {
+            return checks
+        }
+
+        let level: ReadinessLevel = record.lastFailureWasShapeMismatch
+            || record.consecutiveFailures >= ProviderParseHealthRecord.sustainedFailureCount
+            ? .fail
+            : .warn
+        let replacement = ReadinessCheck(
+            id: ReadinessCheckID.refresh,
+            title: "Last refresh",
+            level: level,
+            detail: "The latest recorded refresh failed; cached usage was preserved.",
+            recovery: "Refresh in MeterBar and review the Usage data check."
+        )
+        return checks.map { $0.id == ReadinessCheckID.refresh ? replacement : $0 }
     }
 
     private static func cursorAppPresent() -> Bool {

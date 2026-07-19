@@ -17,6 +17,13 @@ extension CursorLocalService: SimpleUsageProviding {}
 extension OpenRouterService: SimpleUsageProviding {}
 extension GrokCLIUsageService: SimpleUsageProviding {}
 
+protocol ClaudeCodeUsageProviding: AnyObject {
+    var hasAccess: Bool { get }
+    func fetchUsageMetrics(account: ClaudeCodeAccount) async throws -> UsageMetrics
+}
+
+extension ClaudeCodeLocalService: ClaudeCodeUsageProviding {}
+
 protocol CodexUsageProviding: AnyObject {
     func canAccess(account: CodexAccount) async -> Bool
     func fetchUsageMetrics(account: CodexAccount) async throws -> UsageMetrics
@@ -48,7 +55,7 @@ class UsageDataManager: ObservableObject {
         }
     }
 
-    private let claudeCodeService: ClaudeCodeLocalService
+    private let claudeCodeService: ClaudeCodeUsageProviding
     private let cursorService: SimpleUsageProviding
     private let codexCliService: CodexUsageProviding
     private let openRouterService: SimpleUsageProviding
@@ -76,7 +83,7 @@ class UsageDataManager: ObservableObject {
         cursorService: SimpleUsageProviding = CursorLocalService.shared,
         openRouterService: SimpleUsageProviding = OpenRouterService.shared,
         grokService: SimpleUsageProviding = GrokCLIUsageService.shared,
-        claudeCodeService: ClaudeCodeLocalService = .shared,
+        claudeCodeService: ClaudeCodeUsageProviding = ClaudeCodeLocalService.shared,
         claudeCodeAccountStore: ClaudeCodeAccountStore? = nil,
         codexAccountStore: CodexAccountStore? = nil,
         providerVisibilityStore: ProviderVisibilityStore? = nil,
@@ -116,7 +123,7 @@ class UsageDataManager: ObservableObject {
 
         // Fetch Claude Code metrics (local files)
         let hasEnabledClaudeAccount = !claudeCodeAccountStore.enabledAccounts.isEmpty
-        if providerVisibilityStore.isEnabled(.claudeCode), hasEnabledClaudeAccount, claudeCodeService.hasAccess {
+        if providerVisibilityStore.isEnabled(.claudeCode), hasEnabledClaudeAccount {
             let accountMetrics = await fetchClaudeCodeAccountMetrics()
             claudeCodeAccountMetrics = accountMetrics
 
@@ -261,7 +268,6 @@ class UsageDataManager: ObservableObject {
     private func refreshedMetrics(for service: ServiceType) async throws -> UsageMetrics {
         switch service {
         case .claudeCode:
-            guard claudeCodeService.hasAccess else { throw ServiceError.notAuthenticated }
             let accountMetrics = await fetchClaudeCodeAccountMetrics()
             claudeCodeAccountMetrics = accountMetrics
             if let representative = representativeClaudeCodeMetrics(from: accountMetrics) { return representative }

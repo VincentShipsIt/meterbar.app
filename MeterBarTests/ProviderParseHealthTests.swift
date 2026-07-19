@@ -5,14 +5,21 @@ import XCTest
 final class ProviderParseHealthTests: XCTestCase {
     private var suiteName: String!
     private var defaults: UserDefaults!
+    private var tempDirectory: URL!
 
     override func setUpWithError() throws {
         suiteName = "ProviderParseHealthTests-\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)
+        tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ProviderParseHealthTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
     }
 
     override func tearDownWithError() throws {
         defaults.removePersistentDomain(forName: suiteName)
+        if let tempDirectory {
+            try? FileManager.default.removeItem(at: tempDirectory)
+        }
     }
 
     func testParseMismatchNeedsAttentionOnlyAfterConsecutiveMismatchesAndPersists() {
@@ -90,5 +97,31 @@ final class ProviderParseHealthTests: XCTestCase {
         XCTAssertFalse(record.needsAttention(now: now + ProviderParseHealthRecord.staleAfter - 1))
         XCTAssertTrue(record.needsAttention(now: now + ProviderParseHealthRecord.staleAfter + 1))
         XCTAssertEqual(ProviderParseHealthRecord.staleAfter, 2 * 60 * 60)
+    }
+
+    func testSharedFileWinsOverDivergentCLIPreferenceDomain() throws {
+        let now = Date(timeIntervalSince1970: 40_000)
+        let staleSuite = "ProviderParseHealthTests-stale-\(UUID().uuidString)"
+        let staleDefaults = try XCTUnwrap(UserDefaults(suiteName: staleSuite))
+        defer { staleDefaults.removePersistentDomain(forName: staleSuite) }
+
+        let staleStore = ProviderParseHealthStore(userDefaults: staleDefaults)
+        staleStore.recordSuccess(.codexCli, at: now.addingTimeInterval(-10_000))
+
+        let appStore = ProviderParseHealthStore(
+            userDefaults: defaults,
+            sharedDirectoryOverride: tempDirectory
+        )
+        appStore.recordSuccess(.codexCli, at: now)
+        appStore.flushPendingWrites()
+
+        let sharedFileURL = tempDirectory
+            .appendingPathComponent("\(SharedMetricsStore.parseHealthKey).json")
+        let records = ProviderParseHealthStore.sharedRecords(
+            fileURL: sharedFileURL,
+            fallbackUserDefaults: staleDefaults
+        )
+
+        XCTAssertEqual(records[.codexCli]?.lastSuccess, now)
     }
 }
