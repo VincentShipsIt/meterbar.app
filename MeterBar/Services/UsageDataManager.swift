@@ -240,7 +240,7 @@ class UsageDataManager: ObservableObject {
     /// enabled source has no data or its oldest successful snapshot is at least
     /// ten minutes old. Manual-only mode remains fully manual.
     func refreshAfterWakeIfNeeded(now: Date = Date()) async {
-        guard refreshInterval != .manual, shouldCatchUpAfterWake(now: now) else { return }
+        guard refreshInterval != .manual, await shouldCatchUpAfterWake(now: now) else { return }
         await refreshAll()
     }
 
@@ -353,7 +353,7 @@ class UsageDataManager: ObservableObject {
         return RefreshInterval(rawValue: rawValue) ?? .defaultInterval
     }
 
-    private func shouldCatchUpAfterWake(now: Date) -> Bool {
+    private func shouldCatchUpAfterWake(now: Date) async -> Bool {
         var lastUpdatedDates: [Date] = []
         var hasEnabledSource = false
         var hasMissingData = false
@@ -378,6 +378,7 @@ class UsageDataManager: ObservableObject {
         if providerVisibilityStore.isEnabled(.codexCli),
            !codexAccountStore.enabledAccounts.isEmpty {
             for account in codexAccountStore.enabledAccounts {
+                guard await codexCliService.canAccess(account: account) else { continue }
                 collect(codexAccountMetrics[account.id])
             }
         }

@@ -306,6 +306,26 @@ final class UsageDataManagerTests: XCTestCase {
         XCTAssertEqual(cursor.fetchCount, 0)
     }
 
+    func testWakeIgnoresMissingMetricsForInaccessibleCodexAccounts() async {
+        let now = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        let freshMetrics = UsageMetrics(
+            service: .cursor,
+            weeklyLimit: UsageLimit(used: 1, total: 10, resetTime: now),
+            lastUpdated: now
+        )
+        let codex = StubProvider(hasAccess: false, result: .success(MetricsFixtures.codexCli()))
+        let cursor = StubProvider(hasAccess: true, result: .success(MetricsFixtures.cursor()))
+        let (manager, _) = makeManager(
+            codex: codex,
+            cursor: cursor,
+            preload: [.cursor: freshMetrics]
+        )
+
+        await manager.refreshAfterWakeIfNeeded(now: now)
+
+        XCTAssertEqual(cursor.fetchCount, 0)
+    }
+
     func testRefreshAllPreservesCachedMetricsWhenProviderFails() async {
         // Cursor previously cached a distinctive value; this refresh it throws.
         let cachedCursor = MetricsFixtures.cursor(planUsed: 999)

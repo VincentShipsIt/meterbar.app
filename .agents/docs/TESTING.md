@@ -162,7 +162,8 @@ Once basic functionality is verified:
 1. Test with real credentials (if available)
 2. Test widget functionality (requires Xcode project setup)
 3. Test notification alerts
-4. Test auto-refresh (wait 10 minutes, then sleep/wake with stale data)
+4. Test auto-refresh (verify a refresh after 10 minutes, then sleep for at
+   least 10 minutes and wake to verify stale-data catch-up)
 5. Test usage limit monitoring (wait 5 minutes)
 
 ## Common Issues
