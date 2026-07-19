@@ -38,6 +38,8 @@ nonisolated enum StorageKeys {
     static let claudeCodeCustomAccounts = "ClaudeCodeCustomAccounts"
     /// User-chosen display name for the default Claude Code CLI profile.
     static let claudeCodeDefaultAccountName = "ClaudeCodeDefaultAccountName"
+    /// User-chosen config directory for the default Claude Code CLI profile.
+    static let claudeCodeDefaultConfigDirectory = "ClaudeCodeDefaultConfigDirectory"
     /// Whether the synthesized default Claude Code CLI profile participates in tracking.
     static let claudeCodeDefaultAccountEnabled = "ClaudeCodeDefaultAccountEnabled"
     /// Persisted account display order (array of UUID strings).
@@ -86,4 +88,6 @@ nonisolated enum StorageKeys {
     static let sessionWakeMaxSessionsPerRun = "SessionWakeMaxSessionsPerRun"
     /// Per-session max agent turns (Int).
     static let sessionWakeMaxTurns = "SessionWakeMaxTurns"
+    /// JSON-encoded `WakeEventHookConfiguration`; missing means no configured or enabled hooks.
+    static let sessionWakeEventHooks = "SessionWakeEventHooks"
 }
