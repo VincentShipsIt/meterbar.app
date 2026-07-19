@@ -71,6 +71,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Keep Dock visibility in sync with the user's preference.
         observeDockVisibility()
+        observeSystemWake()
 
         // Create menu bar item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -419,6 +420,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
     }
 
+    /// A repeating timer may be delayed while macOS sleeps. Forward one wake
+    /// event to the usage manager, which owns cadence, freshness, and overlap
+    /// policy and only refreshes when enabled data is stale.
+    private func observeSystemWake() {
+        NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.didWakeNotification)
+            .sink { _ in
+                Task { @MainActor in
+                    await UsageDataManager.shared.refreshAfterWakeIfNeeded()
+                }
+            }
+            .store(in: &cancellables)
+    }
+
     /// Shows or hides the Dock icon by switching the app's activation policy.
     /// The menu bar status item is unaffected and always remains visible.
     private func applyActivationPolicy(showInDock: Bool) {
@@ -487,9 +502,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Evaluates every tracked service's metrics against the user's notification
-    /// preferences and posts any warning/critical crossings. All decision logic
-    /// lives in the pure, unit-tested `NotificationDecider`; this method only
-    /// threads the dedup key set and turns fired decisions into banners.
+    /// preferences and posts any warning/critical crossings. Threshold decisions
+    /// live in `NotificationDecider`; account/fallback orchestration lives in
+    /// `AccountNotificationPlanner`.
     private func checkAndNotify() {
         let decider = NotificationDecider(preferences: notificationPreferences.preferences)
         let now = Date()
@@ -513,77 +528,42 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        keys = evaluateAccountNotifications(
-            AccountNotificationInput(
-                service: .claudeCode,
-                accounts: ClaudeCodeAccountStore.shared.accounts.map { ($0.id, $0.name) },
-                accountMetrics: UsageDataManager.shared.claudeCodeAccountMetrics,
-                fallbackMetrics: currentMetrics[.claudeCode]
-            ),
-            decider: decider,
-            keys: keys,
+        let accountPlan = AccountNotificationPlanner(decider: decider).plan(
+            inputs: [
+                AccountNotificationPlanInput(
+                    service: .claudeCode,
+                    providerEnabled: providerVisibilityStore.isEnabled(.claudeCode),
+                    accounts: ClaudeCodeAccountStore.shared.accounts.map {
+                        AccountNotificationIdentity(
+                            id: $0.id,
+                            name: $0.name,
+                            isEnabled: $0.isEnabled
+                        )
+                    },
+                    accountMetrics: UsageDataManager.shared.claudeCodeAccountMetrics,
+                    fallbackMetrics: currentMetrics[.claudeCode]
+                ),
+                AccountNotificationPlanInput(
+                    service: .codexCli,
+                    providerEnabled: providerVisibilityStore.isEnabled(.codexCli),
+                    accounts: CodexAccountStore.shared.accounts.map {
+                        AccountNotificationIdentity(
+                            id: $0.id,
+                            name: $0.name,
+                            isEnabled: $0.isEnabled
+                        )
+                    },
+                    accountMetrics: UsageDataManager.shared.codexAccountMetrics,
+                    fallbackMetrics: currentMetrics[.codexCli]
+                )
+            ],
+            alreadyNotified: keys,
             now: now
         )
-        keys = evaluateAccountNotifications(
-            AccountNotificationInput(
-                service: .codexCli,
-                accounts: CodexAccountStore.shared.accounts.map { ($0.id, $0.name) },
-                accountMetrics: UsageDataManager.shared.codexAccountMetrics,
-                fallbackMetrics: currentMetrics[.codexCli]
-            ),
-            decider: decider,
-            keys: keys,
-            now: now
-        )
+        keys = accountPlan.notifiedKeys
+        accountPlan.notifications.forEach(postNotification)
 
         notifiedLimitKeys = keys
-    }
-
-    private struct AccountNotificationInput {
-        let service: ServiceType
-        let accounts: [(id: UUID, name: String)]
-        let accountMetrics: [UUID: UsageMetrics]
-        let fallbackMetrics: UsageMetrics?
-    }
-
-    private func evaluateAccountNotifications(
-        _ input: AccountNotificationInput,
-        decider: NotificationDecider,
-        keys: Set<String>,
-        now: Date
-    ) -> Set<String> {
-        var updatedKeys = keys
-        let available = input.accounts.compactMap { account -> (UUID, String, UsageMetrics)? in
-            guard let metrics = input.accountMetrics[account.id] else { return nil }
-            return (account.id, account.name, metrics)
-        }
-
-        if available.isEmpty {
-            let metrics = input.fallbackMetrics ?? UsageMetrics(service: input.service, lastUpdated: now)
-            let evaluation = decider.evaluate(
-                metrics: metrics,
-                providerEnabled: providerVisibilityStore.isEnabled(input.service),
-                alreadyNotified: updatedKeys,
-                now: now
-            )
-            updatedKeys = evaluation.notifiedKeys
-            evaluation.notifications.forEach(postNotification)
-            return updatedKeys
-        }
-
-        for (id, name, metrics) in available {
-            let evaluation = decider.evaluate(
-                metrics: metrics,
-                providerEnabled: providerVisibilityStore.isEnabled(input.service),
-                alreadyNotified: updatedKeys,
-                accountKey: id.uuidString,
-                serviceDisplayName: "\(name) (\(input.service.displayName))",
-                now: now
-            )
-            updatedKeys = evaluation.notifiedKeys
-            evaluation.notifications.forEach(postNotification)
-        }
-        return updatedKeys
     }
 
     private func postNotification(_ fired: FiredNotification) {
@@ -664,8 +644,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        Publishers.Merge(
+        Publishers.Merge3(
             ClaudeCodeAccountStore.shared.$customAccounts.map { _ in () },
+            ClaudeCodeAccountStore.shared.$defaultAccountConfigDirectory.map { _ in () },
             ClaudeCodeAccountStore.shared.$defaultAccountIsEnabled.map { _ in () }
         )
             .sink { [weak self] _ in
