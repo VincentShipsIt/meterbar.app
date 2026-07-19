@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import MeterBarShared
+import os
 
 /// Persisted fetch/parse health for one reverse-engineered provider integration.
 nonisolated public struct ProviderParseHealthRecord: Codable, Equatable, Sendable {
@@ -68,8 +69,9 @@ nonisolated public struct ProviderParseHealthRecord: Codable, Equatable, Sendabl
     }
 }
 
-/// Records provider outcomes in the app-group domain so the GUI and bundled
-/// `meterbar doctor` process read the same diagnostic state.
+/// Records provider outcomes in preferences for app observers and mirrors them
+/// to an explicit App Group file so the bundled `meterbar doctor` process reads
+/// the same diagnostic state.
 final class ProviderParseHealthStore: ObservableObject {
     static let shared = ProviderParseHealthStore()
     nonisolated static let storageKey = "ProviderParseHealthV1"
@@ -77,13 +79,32 @@ final class ProviderParseHealthStore: ObservableObject {
     @Published private(set) var records: [ServiceType: ProviderParseHealthRecord]
 
     private let userDefaults: UserDefaults
+    private let sharedFileURL: URL?
+    private let ioQueue = DispatchQueue(label: "dev.meterbar.app.ProviderParseHealthStore.io", qos: .utility)
 
-    init(userDefaults: UserDefaults? = nil) {
+    init(userDefaults: UserDefaults? = nil, sharedDirectoryOverride: URL? = nil) {
+        let usesProductionStore = userDefaults == nil && sharedDirectoryOverride == nil
         let resolved = userDefaults
             ?? UserDefaults(suiteName: SharedMetricsStore.appGroupIdentifier)
             ?? .standard
         self.userDefaults = resolved
-        records = Self.persistedRecords(from: resolved)
+        if let sharedDirectoryOverride {
+            sharedFileURL = sharedDirectoryOverride
+                .appendingPathComponent("\(SharedMetricsStore.parseHealthKey).json")
+        } else {
+            sharedFileURL = usesProductionStore ? SharedMetricsStore.parseHealthFileURL : nil
+        }
+
+        let sharedRecords = Self.loadRecords(from: sharedFileURL)
+        records = sharedRecords ?? Self.persistedRecords(from: resolved)
+
+        // Migrate the App Group preference-domain record to an explicit shared
+        // file. An unentitled bundled CLI can read the App Group container but
+        // `UserDefaults(suiteName:)` resolves its ordinary preferences domain,
+        // so the file is the only cross-process source that both targets share.
+        if sharedRecords == nil, !records.isEmpty {
+            persistSharedFile(records)
+        }
     }
 
     func recordSuccess(_ provider: ServiceType, at date: Date = Date()) {
@@ -116,13 +137,67 @@ final class ProviderParseHealthStore: ObservableObject {
     }
 
     nonisolated static func sharedRecords() -> [ServiceType: ProviderParseHealthRecord] {
-        guard let defaults = UserDefaults(suiteName: SharedMetricsStore.appGroupIdentifier) else { return [:] }
-        return persistedRecords(from: defaults)
+        sharedRecords(
+            fileURL: SharedMetricsStore.parseHealthFileURL,
+            fallbackUserDefaults: UserDefaults(suiteName: SharedMetricsStore.appGroupIdentifier)
+        )
+    }
+
+    nonisolated static func sharedRecords(
+        fileURL: URL?,
+        fallbackUserDefaults: UserDefaults?
+    ) -> [ServiceType: ProviderParseHealthRecord] {
+        if let records = loadRecords(from: fileURL) {
+            return records
+        }
+        guard let fallbackUserDefaults else { return [:] }
+        return persistedRecords(from: fallbackUserDefaults)
     }
 
     private func persist() {
-        guard let data = try? JSONEncoder().encode(Array(records.values)) else { return }
+        guard let data = Self.encodedRecords(records) else { return }
         userDefaults.set(data, forKey: Self.storageKey)
+        persistSharedData(data)
+    }
+
+    func flushPendingWrites() {
+        ioQueue.sync {}
+    }
+
+    nonisolated private static func loadRecords(
+        from fileURL: URL?
+    ) -> [ServiceType: ProviderParseHealthRecord]? {
+        guard let fileURL,
+              let data = try? Data(contentsOf: fileURL),
+              let decoded = try? JSONDecoder().decode([ProviderParseHealthRecord].self, from: data) else {
+            return nil
+        }
+        return Dictionary(uniqueKeysWithValues: decoded.map { ($0.provider, $0) })
+    }
+
+    nonisolated private static func encodedRecords(
+        _ records: [ServiceType: ProviderParseHealthRecord]
+    ) -> Data? {
+        let ordered = records.values.sorted { $0.provider.sortOrder < $1.provider.sortOrder }
+        return try? JSONEncoder().encode(ordered)
+    }
+
+    private func persistSharedFile(_ records: [ServiceType: ProviderParseHealthRecord]) {
+        guard let data = Self.encodedRecords(records) else { return }
+        persistSharedData(data)
+    }
+
+    private func persistSharedData(_ data: Data) {
+        guard let sharedFileURL else { return }
+        ioQueue.async {
+            do {
+                try data.write(to: sharedFileURL, options: [.atomic])
+            } catch {
+                AppLog.storage.error(
+                    "Failed to save provider health: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
     }
 
     nonisolated private static func isShapeMismatch(_ error: Error) -> Bool {

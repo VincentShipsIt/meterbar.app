@@ -99,7 +99,10 @@ final class ProviderReadinessInspectorTests: XCTestCase {
     }
 
     func testSafeNetworkMessagesPassThrough() {
-        XCTAssertEqual(ProviderReadinessInspector.sanitize(.apiError("No internet connection")), "No internet connection")
+        XCTAssertEqual(
+            ProviderReadinessInspector.sanitize(.apiError("No internet connection")),
+            "No internet connection"
+        )
         XCTAssertEqual(ProviderReadinessInspector.sanitize(.apiError("Request timed out")), "Request timed out")
         XCTAssertEqual(
             ProviderReadinessInspector.sanitize(.apiError("Secure connection failed")),
@@ -133,6 +136,53 @@ final class ProviderReadinessInspectorTests: XCTestCase {
         XCTAssertEqual(check?.level, .fail)
         XCTAssertTrue(check?.detail.contains("format") ?? false)
         XCTAssertTrue(check?.detail.contains("2 hours") ?? false)
+    }
+
+    func testFreshPayloadSupersedesOlderParseHealthTimestamp() {
+        let now = Date(timeIntervalSince1970: 50_000)
+        let record = ProviderParseHealthRecord.success(
+            provider: .codexCli,
+            at: now.addingTimeInterval(-ProviderParseHealthRecord.staleAfter - 1)
+        )
+        let metrics = UsageMetrics(
+            service: .codexCli,
+            lastUpdated: now.addingTimeInterval(-60)
+        )
+
+        let reports = ProviderReadinessInspector.reports(
+            providers: [.codexCli],
+            now: now,
+            parseHealth: [.codexCli: record],
+            cachedMetrics: [.codexCli: metrics]
+        )
+
+        XCTAssertEqual(reports.first?.check(ReadinessCheckID.parseHealth)?.level, .pass)
+    }
+
+    func testPersistedFailureReplacesContradictoryNoErrorRefreshCheck() {
+        let now = Date(timeIntervalSince1970: 60_000)
+        let metrics = UsageMetrics(
+            service: .claudeCode,
+            lastUpdated: now.addingTimeInterval(-ProviderParseHealthRecord.staleAfter - 60)
+        )
+        let record = ProviderParseHealthRecord(
+            provider: .claudeCode,
+            lastSuccess: metrics.lastUpdated,
+            lastAttempt: now.addingTimeInterval(-60),
+            consecutiveFailures: 1,
+            lastFailureWasShapeMismatch: false
+        )
+
+        let reports = ProviderReadinessInspector.reports(
+            providers: [.claudeCode],
+            now: now,
+            parseHealth: [.claudeCode: record],
+            cachedMetrics: [.claudeCode: metrics]
+        )
+        let refresh = reports.first?.check(ReadinessCheckID.refresh)
+
+        XCTAssertEqual(refresh?.level, .warn)
+        XCTAssertTrue(refresh?.detail.contains("latest recorded refresh failed") ?? false)
     }
 
     func testHttpStatusExtraction() {

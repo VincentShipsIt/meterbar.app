@@ -19,6 +19,7 @@ public enum SharedMetricsStore {
     /// in-process UserDefaults cache key (see `StorageKeys.cachedUsageMetrics`).
     public static let metricsKey = "cached_usage_metrics"
     public static let accountMetricsKey = "cached_usage_account_metrics"
+    public static let parseHealthKey = "provider_parse_health_v1"
 
     /// The shared App Group container, or `nil` when App Groups aren't
     /// provisioned for the running target.
@@ -33,6 +34,10 @@ public enum SharedMetricsStore {
 
     public static var accountMetricsFileURL: URL? {
         containerURL?.appendingPathComponent("\(accountMetricsKey).json")
+    }
+
+    public static var parseHealthFileURL: URL? {
+        containerURL?.appendingPathComponent("\(parseHealthKey).json")
     }
 
     /// Decode the cached metrics, tolerating a missing file or malformed entries
