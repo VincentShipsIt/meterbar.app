@@ -186,6 +186,25 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
+enum EnabledQuotaSourceCounter {
+    static func count(
+        enabledServices: Set<ServiceType>,
+        codexAccountCount: Int,
+        claudeAccountCount: Int
+    ) -> Int {
+        enabledServices.reduce(into: 0) { count, service in
+            switch service {
+            case .codexCli:
+                count += codexAccountCount
+            case .claudeCode:
+                count += claudeAccountCount
+            case .cursor, .openRouter, .grok:
+                count += 1
+            }
+        }
+    }
+}
+
 @MainActor
 final class DashboardNavigationStore: ObservableObject {
     static let shared = DashboardNavigationStore()
@@ -821,17 +840,11 @@ struct UsageDashboardView: View {
     }
 
     private var enabledQuotaSourceCount: Int {
-        var count = 0
-        if providerVisibility.isEnabled(.codexCli) {
-            count += 1
-        }
-        if providerVisibility.isEnabled(.claudeCode) {
-            count += claudeAccountStore.enabledAccounts.count
-        }
-        if providerVisibility.isEnabled(.cursor) {
-            count += 1
-        }
-        return count
+        EnabledQuotaSourceCounter.count(
+            enabledServices: providerVisibility.enabledServices,
+            codexAccountCount: codexAccountStore.enabledAccounts.count,
+            claudeAccountCount: claudeAccountStore.enabledAccounts.count
+        )
     }
 
     private var tightestLimit: SnapshotLimit? {
@@ -877,11 +890,27 @@ struct UsageDashboardView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .task {
-            if readinessReports.isEmpty {
-                await runDiagnostics()
-            }
+        .task(id: diagnosticsInputKey) {
+            let reports = await inspectReadiness()
+            guard !Task.isCancelled else { return }
+            readinessReports = reports
         }
+    }
+
+    private struct DiagnosticsInputKey: Equatable {
+        let providers: [ServiceType]
+        let defaultClaudeAccountEnabled: Bool
+        let enabledClaudeCustomAccountIDs: [UUID]
+    }
+
+    private var diagnosticsInputKey: DiagnosticsInputKey {
+        DiagnosticsInputKey(
+            providers: ServiceType.allCases.filter { providerVisibility.enabledServices.contains($0) },
+            defaultClaudeAccountEnabled: claudeAccountStore.defaultAccountIsEnabled,
+            enabledClaudeCustomAccountIDs: claudeAccountStore.enabledAccounts
+                .filter { !$0.isDefault }
+                .map(\.id)
+        )
     }
 
     private var diagnosticsSummary: String? {
@@ -897,22 +926,37 @@ struct UsageDashboardView: View {
         isRunningDiagnostics = true
         defer { isRunningDiagnostics = false }
 
+        let reports = await inspectReadiness()
+        guard !Task.isCancelled else { return }
+        readinessReports = reports
+    }
+
+    private func inspectReadiness() async -> [ProviderReadiness] {
         let enabledProviders = providerVisibility.enabledServices
         let errors = currentRefreshErrors()
-        let reports = await Task.detached(priority: .userInitiated) {
+        let defaultClaudeAccountEnabled = claudeAccountStore.defaultAccountIsEnabled
+        let enabledClaudeAccounts = claudeAccountStore.enabledAccounts
+        let claudeMetrics = enabledClaudeAccounts.compactMap {
+            dataManager.claudeCodeAccountMetrics[$0.id]
+        }
+        return await Task.detached(priority: .userInitiated) {
             ProviderReadinessInspector.reports(
                 providers: enabledProviders,
-                refreshErrors: errors
+                refreshErrors: errors,
+                claudeDefaultAccountEnabled: defaultClaudeAccountEnabled,
+                claudeEnabledAccountMetrics: claudeMetrics
             )
         }.value
-        readinessReports = reports
     }
 
     /// Each provider's live last-refresh error, fed into the readiness core so the
     /// "Last refresh" check reflects the app's actual runtime state.
     private func currentRefreshErrors() -> [ServiceType: ServiceError] {
         var result: [ServiceType: ServiceError] = [:]
-        if let error = claudeCodeService.lastError { result[.claudeCode] = error }
+        if claudeAccountStore.defaultAccountIsEnabled,
+           let error = claudeCodeService.lastError {
+            result[.claudeCode] = error
+        }
         if let error = codexCliService.lastError { result[.codexCli] = error }
         if let error = cursorService.lastError { result[.cursor] = error }
         if let error = openRouterService.lastError { result[.openRouter] = error }

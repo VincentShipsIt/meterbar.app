@@ -34,16 +34,14 @@ class UsageDataManager: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var lastError: Error?
 
-    @Published private var refreshIntervalRaw: Int =
-        UserDefaults.standard.object(forKey: StorageKeys.refreshInterval) as? Int
-        ?? RefreshInterval.fifteenMinutes.rawValue {
+    @Published private var refreshIntervalRaw: Int {
         didSet {
-            UserDefaults.standard.set(refreshIntervalRaw, forKey: StorageKeys.refreshInterval)
+            preferences.set(refreshIntervalRaw, forKey: StorageKeys.refreshInterval)
         }
     }
 
     var refreshInterval: RefreshInterval {
-        get { RefreshInterval(rawValue: refreshIntervalRaw) ?? .fifteenMinutes }
+        get { RefreshInterval(rawValue: refreshIntervalRaw) ?? .defaultInterval }
         set {
             refreshIntervalRaw = newValue.rawValue
             setupAutoRefresh()
@@ -61,8 +59,10 @@ class UsageDataManager: ObservableObject {
     private let parseHealthStore: ProviderParseHealthStore
 
     private var refreshTimer: Timer?
+    private(set) var scheduledRefreshInterval: TimeInterval?
     private let cacheKey = StorageKeys.cachedUsageMetrics
     private let sharedStore: SharedDataStore
+    private let preferences: UserDefaults
     private let cacheDefaults: UserDefaults
 
     /// Defaults wire the production singletons so `shared` behaves exactly as
@@ -81,6 +81,7 @@ class UsageDataManager: ObservableObject {
         codexAccountStore: CodexAccountStore? = nil,
         providerVisibilityStore: ProviderVisibilityStore? = nil,
         sharedStore: SharedDataStore = .shared,
+        preferences: UserDefaults = .standard,
         cacheDefaults: UserDefaults = .standard,
         parseHealthStore: ProviderParseHealthStore? = nil,
         schedulesAutoRefresh: Bool = true
@@ -94,8 +95,10 @@ class UsageDataManager: ObservableObject {
         self.codexAccountStore = codexAccountStore ?? .shared
         self.providerVisibilityStore = providerVisibilityStore ?? .shared
         self.sharedStore = sharedStore
+        self.preferences = preferences
         self.cacheDefaults = cacheDefaults
         self.parseHealthStore = parseHealthStore ?? .shared
+        refreshIntervalRaw = Self.savedRefreshInterval(in: preferences).rawValue
         loadCachedData()
         loadCachedCodexAccountMetrics()
         if schedulesAutoRefresh {
@@ -104,7 +107,9 @@ class UsageDataManager: ObservableObject {
     }
 
     func refreshAll() async {
+        guard !isLoading else { return }
         isLoading = true
+        defer { isLoading = false }
         lastError = nil
 
         var newMetrics: [ServiceType: UsageMetrics] = [:]
@@ -124,13 +129,12 @@ class UsageDataManager: ObservableObject {
             claudeCodeAccountMetrics = [:]
         }
 
-        if providerVisibilityStore.isEnabled(.codexCli) {
+        let hasEnabledCodexAccount = !codexAccountStore.enabledAccounts.isEmpty
+        if providerVisibilityStore.isEnabled(.codexCli), hasEnabledCodexAccount {
             let accountMetrics = await fetchCodexAccountMetrics()
             codexAccountMetrics = accountMetrics
             if let representative = representativeCodexMetrics(from: accountMetrics) {
                 newMetrics[.codexCli] = representative
-            } else if let cachedMetrics = self.metrics[.codexCli] {
-                newMetrics[.codexCli] = cachedMetrics
             }
         } else {
             codexAccountMetrics = [:]
@@ -153,6 +157,8 @@ class UsageDataManager: ObservableObject {
         // Merge new metrics with existing cached metrics for services that failed to fetch
         for service in ServiceType.allCases where providerVisibilityStore.isEnabled(service) {
             if service == .claudeCode, !hasEnabledClaudeAccount { continue }
+            // Codex cache entries are account-scoped and merged during account refresh.
+            if service == .codexCli { continue }
             if newMetrics[service] == nil, let cachedMetric = self.metrics[service] {
                 newMetrics[service] = cachedMetric
             }
@@ -162,11 +168,12 @@ class UsageDataManager: ObservableObject {
         saveCachedData()
         saveCachedCodexAccountMetrics()
         saveSharedData(newMetrics)
-        isLoading = false
     }
 
     func refresh(service: ServiceType) async {
+        guard !isLoading else { return }
         isLoading = true
+        defer { isLoading = false }
         lastError = nil
 
         guard providerVisibilityStore.isEnabled(service) else {
@@ -179,7 +186,6 @@ class UsageDataManager: ObservableObject {
             saveCachedData()
             saveCachedCodexAccountMetrics()
             saveSharedData(metrics)
-            isLoading = false
             return
         }
 
@@ -188,7 +194,15 @@ class UsageDataManager: ObservableObject {
             metrics.removeValue(forKey: service)
             saveCachedData()
             saveSharedData(metrics)
-            isLoading = false
+            return
+        }
+
+        if service == .codexCli, codexAccountStore.enabledAccounts.isEmpty {
+            codexAccountMetrics = [:]
+            metrics.removeValue(forKey: service)
+            saveCachedData()
+            saveCachedCodexAccountMetrics()
+            saveSharedData(metrics)
             return
         }
 
@@ -203,15 +217,31 @@ class UsageDataManager: ObservableObject {
             if lastError == nil {
                 lastError = error
             }
-            // Preserve existing cached metrics for this service on error
-            if metrics[service] == nil {
+            if service == .codexCli {
+                // Codex aggregate metrics carry no account identity. Scoped
+                // per-account caches are restored inside fetchCodexAccountMetrics;
+                // if none exist, showing no data is safer than relabeling a
+                // different profile's stale quota.
+                metrics.removeValue(forKey: service)
+                saveCachedData()
+                saveCachedCodexAccountMetrics()
+                saveSharedData(metrics)
+            } else if metrics[service] == nil {
+                // Preserve existing cached metrics for single-account services.
                 if let cachedData = loadCachedMetricsFromDisk()[service] {
                     metrics[service] = cachedData
                 }
             }
         }
+    }
 
-        isLoading = false
+    /// A delayed repeating timer does not replay missed ticks after sleep. The
+    /// workspace wake hook calls this method once; it catches up only when an
+    /// enabled source has no data or its oldest successful snapshot is at least
+    /// ten minutes old. Manual-only mode remains fully manual.
+    func refreshAfterWakeIfNeeded(now: Date = Date()) async {
+        guard refreshInterval != .manual, await shouldCatchUpAfterWake(now: now) else { return }
+        await refreshAll()
     }
 
     /// Installs the post-redemption Codex usage response into the same caches
@@ -239,6 +269,7 @@ class UsageDataManager: ObservableObject {
             let accountMetrics = await fetchCodexAccountMetrics()
             codexAccountMetrics = accountMetrics
             if let representative = representativeCodexMetrics(from: accountMetrics) { return representative }
+            throw ServiceError.notAuthenticated
         case .cursor, .openRouter, .grok:
             guard hasProviderAccess(service) else { throw ServiceError.notAuthenticated }
             do {
@@ -290,7 +321,7 @@ class UsageDataManager: ObservableObject {
 
     private func saveSharedData(_ metrics: [ServiceType: UsageMetrics]) {
         sharedStore.saveMetrics(metrics)
-        let accountSnapshots = codexAccountStore.accounts.compactMap { account -> AccountUsageSnapshot? in
+        let accountSnapshots = codexAccountStore.enabledAccounts.compactMap { account -> AccountUsageSnapshot? in
             guard let metrics = codexAccountMetrics[account.id] else { return nil }
             return AccountUsageSnapshot(id: account.id, name: account.name, metrics: metrics)
         }
@@ -298,18 +329,69 @@ class UsageDataManager: ObservableObject {
     }
 
     private func setupAutoRefresh() {
-        // Cancel existing timer
         refreshTimer?.invalidate()
         refreshTimer = nil
+        scheduledRefreshInterval = nil
 
-        // Don't schedule if manual refresh only
         guard refreshInterval != .manual else { return }
 
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: refreshInterval.seconds, repeats: true) { [weak self] _ in
+        let interval = refreshInterval.seconds
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.refreshAll()
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        refreshTimer = timer
+        scheduledRefreshInterval = interval
+    }
+
+    private static func savedRefreshInterval(in preferences: UserDefaults) -> RefreshInterval {
+        guard let rawValue = preferences.object(forKey: StorageKeys.refreshInterval) as? Int else {
+            return .defaultInterval
+        }
+        return RefreshInterval(rawValue: rawValue) ?? .defaultInterval
+    }
+
+    private func shouldCatchUpAfterWake(now: Date) async -> Bool {
+        var lastUpdatedDates: [Date] = []
+        var hasEnabledSource = false
+        var hasMissingData = false
+
+        func collect(_ metric: UsageMetrics?) {
+            hasEnabledSource = true
+            guard let metric else {
+                hasMissingData = true
+                return
+            }
+            lastUpdatedDates.append(metric.lastUpdated)
+        }
+
+        if providerVisibilityStore.isEnabled(.claudeCode),
+           claudeCodeService.hasAccess,
+           !claudeCodeAccountStore.enabledAccounts.isEmpty {
+            for account in claudeCodeAccountStore.enabledAccounts {
+                collect(claudeCodeAccountMetrics[account.id])
+            }
+        }
+
+        if providerVisibilityStore.isEnabled(.codexCli),
+           !codexAccountStore.enabledAccounts.isEmpty {
+            for account in codexAccountStore.enabledAccounts {
+                guard await codexCliService.canAccess(account: account) else { continue }
+                collect(codexAccountMetrics[account.id])
+            }
+        }
+
+        for service in [ServiceType.cursor, .openRouter, .grok]
+        where providerVisibilityStore.isEnabled(service) && hasProviderAccess(service) {
+            collect(metrics[service])
+        }
+
+        guard hasEnabledSource else { return false }
+        if hasMissingData { return true }
+        guard let oldestUpdate = lastUpdatedDates.min() else { return true }
+        return now.timeIntervalSince(oldestUpdate) >= RefreshInterval.tenMinutes.seconds
     }
 
     private func fetchClaudeCodeAccountMetrics() async -> [UUID: UsageMetrics] {
@@ -355,7 +437,7 @@ class UsageDataManager: ObservableObject {
         var firstFailure: Error?
         var successCount = 0
 
-        for account in codexAccountStore.accounts {
+        for account in codexAccountStore.enabledAccounts {
             guard await codexCliService.canAccess(account: account) else { continue }
             do {
                 refreshedMetrics[account.id] = try await codexCliService.fetchUsageMetrics(account: account)
@@ -379,8 +461,11 @@ class UsageDataManager: ObservableObject {
     }
 
     private func representativeCodexMetrics(from accountMetrics: [UUID: UsageMetrics]) -> UsageMetrics? {
-        accountMetrics[CodexAccount.defaultID]
-            ?? codexAccountStore.accounts.lazy.compactMap { accountMetrics[$0.id] }.first
+        if codexAccountStore.defaultAccountIsEnabled,
+           let defaultMetrics = accountMetrics[CodexAccount.defaultID] {
+            return defaultMetrics
+        }
+        return codexAccountStore.enabledAccounts.lazy.compactMap { accountMetrics[$0.id] }.first
     }
 
     // MARK: - Provider strategy
