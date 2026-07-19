@@ -110,7 +110,7 @@ final class SessionWakeAgentTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(agentState.loadConfiguration()).isArmed)
     }
 
-    func testExecutionChangesRestartButNotificationOnlyChangeDoesNot() {
+    func testExecutionChangesRestartButNotificationAndHookChangesDoNot() {
         let baseline = SessionWakeAgentConfiguration(
             featureEnabled: true,
             isArmed: true,
@@ -167,7 +167,7 @@ final class SessionWakeAgentTests: XCTestCase {
 
         XCTAssertFalse(notificationOnly.requiresRuntimeRestart(comparedTo: baseline))
         XCTAssertTrue(saferPermission.requiresRuntimeRestart(comparedTo: baseline))
-        XCTAssertTrue(hookChange.requiresRuntimeRestart(comparedTo: baseline))
+        XCTAssertFalse(hookChange.requiresRuntimeRestart(comparedTo: baseline))
     }
 
     func testStatusRoundTripsEveryAssociatedValue() throws {

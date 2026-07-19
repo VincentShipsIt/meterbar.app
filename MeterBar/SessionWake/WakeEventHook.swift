@@ -83,7 +83,6 @@ nonisolated struct WakeEventHookTransitionTracker: Sendable {
             quotaBlocked = false
             return .wakeComplete
         case .off:
-            quotaBlocked = false
             return nil
         case .idle, .scanning, .quotaUnknown, .stopping, .failed:
             return nil

@@ -87,7 +87,6 @@ nonisolated struct SessionWakeAgentConfiguration: Codable, Equatable, Sendable {
             || prompt != other.prompt
             || maxSessionsPerRun != other.maxSessionsPerRun
             || maxTurns != other.maxTurns
-            || eventHooks != other.eventHooks
     }
 
     private enum CodingKeys: String, CodingKey {

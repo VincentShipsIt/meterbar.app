@@ -68,6 +68,8 @@ final class WakeEventHookTests: XCTestCase {
 
         XCTAssertEqual(tracker.event(for: .waiting(until: nil)), .quotaExhausted)
         XCTAssertNil(tracker.event(for: .waiting(until: nil)))
+        XCTAssertNil(tracker.event(for: .off))
+        XCTAssertNil(tracker.event(for: .waiting(until: nil)))
         XCTAssertNil(tracker.event(for: .quotaUnknown(reason: "retry")))
         XCTAssertNil(tracker.event(for: .scanning))
         XCTAssertNil(tracker.event(for: .waiting(until: Date())))
