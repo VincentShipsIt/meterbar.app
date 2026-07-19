@@ -50,6 +50,33 @@ final class ClaudeCodeAccountStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.accounts.first?.configDirectory, "/tmp/claude-genfeedai")
     }
 
+    func testDefaultProfileConfigDirectoryCanBeClearedAndRestoresOAuth() throws {
+        let store = ClaudeCodeAccountStore(userDefaults: defaults)
+        store.updateAccount(
+            id: ClaudeCodeAccount.defaultID,
+            name: "genfeedai",
+            configDirectory: "/tmp/claude-genfeedai"
+        )
+
+        store.updateAccount(
+            id: ClaudeCodeAccount.defaultID,
+            name: "genfeedai",
+            configDirectory: "   "
+        )
+
+        XCTAssertNil(store.accounts.first?.configDirectory)
+        XCTAssertNil(defaults.object(forKey: StorageKeys.claudeCodeDefaultConfigDirectory))
+
+        let reloaded = ClaudeCodeAccountStore(userDefaults: defaults)
+        let defaultAccount = try XCTUnwrap(reloaded.accounts.first)
+        XCTAssertNil(defaultAccount.configDirectory)
+        XCTAssertTrue(ClaudeCodeLocalService.prefersOAuth(
+            account: defaultAccount,
+            oauthEnabled: true,
+            environment: [:]
+        ))
+    }
+
     func testDefaultConfigDirectoryFallsBackToClaudeUnderRealHome() {
         XCTAssertEqual(
             ClaudeCodeAccount.defaultConfigDirectory(environment: [:], realHomeDirectory: "/Users/tester"),

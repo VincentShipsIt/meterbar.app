@@ -123,6 +123,24 @@ final class ClaudeCodeAccountStore: ObservableObject {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
 
+        if id == ClaudeCodeAccount.defaultID {
+            if trimmedName != defaultAccountName {
+                defaultAccountName = trimmedName
+                saveDefaultAccountName()
+            }
+            if let configDirectory {
+                let trimmedDirectory = configDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+                let updatedDirectory = trimmedDirectory.isEmpty
+                    ? nil
+                    : (trimmedDirectory as NSString).standardizingPath
+                if updatedDirectory != defaultAccountConfigDirectory {
+                    defaultAccountConfigDirectory = updatedDirectory
+                    saveDefaultAccountConfigDirectory()
+                }
+            }
+            return
+        }
+
         let standardizedDirectory: String?
         if let configDirectory {
             let trimmedDirectory = configDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -130,18 +148,6 @@ final class ClaudeCodeAccountStore: ObservableObject {
             standardizedDirectory = (trimmedDirectory as NSString).standardizingPath
         } else {
             standardizedDirectory = nil
-        }
-
-        if id == ClaudeCodeAccount.defaultID {
-            if trimmedName != defaultAccountName {
-                defaultAccountName = trimmedName
-                saveDefaultAccountName()
-            }
-            if let standardizedDirectory, standardizedDirectory != defaultAccountConfigDirectory {
-                defaultAccountConfigDirectory = standardizedDirectory
-                saveDefaultAccountConfigDirectory()
-            }
-            return
         }
 
         guard let index = customAccounts.firstIndex(where: { $0.id == id }) else { return }

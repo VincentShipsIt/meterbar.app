@@ -84,7 +84,7 @@ struct AccountProfileRow: View {
                 }
 
                 if account.isDefault {
-                    Text("Defaults to ~/.claude or $CLAUDE_CONFIG_DIR; a saved path overrides it in MeterBar.")
+                    Text("Defaults to ~/.claude or $CLAUDE_CONFIG_DIR; clear the field to restore that default.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .padding(.leading, AccountProfileRowMetrics.labelWidth + 8)
@@ -165,7 +165,7 @@ struct AccountProfileRow: View {
     }
 
     private var canSave: Bool {
-        !trimmedName.isEmpty && !trimmedConfigDirectory.isEmpty
+        !trimmedName.isEmpty && (account.isDefault || !trimmedConfigDirectory.isEmpty)
     }
 
     private func saveChanges() {
