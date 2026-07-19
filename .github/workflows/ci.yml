@@ -55,6 +55,12 @@ jobs:
       - name: Verify signed-release workflow contract
         run: scripts/verify-release-workflow-contract.sh
 
+      - name: Test Homebrew cask update
+        run: scripts/test-update-homebrew-cask.sh
+
+      - name: Verify canonical repository URLs
+        run: scripts/verify-canonical-repository-urls.sh
+
       - name: Build library (SwiftPM)
         run: swift build
 
