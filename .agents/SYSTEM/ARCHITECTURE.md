@@ -1,7 +1,7 @@
 # Architecture - MeterBar
 
 **Purpose:** Document what IS implemented (not what WILL BE).
-**Last Updated:** 2026-07-14 (rewritten from a full-repo audit; see `docs/audits/00-repo-map.md`)
+**Last Updated:** 2026-07-17 (rewritten from a full-repo audit; see `docs/audits/00-repo-map.md`)
 
 ---
 
@@ -13,7 +13,7 @@ Providers tracked:
 
 | Provider | `ServiceType` case | Data source |
 |---|---|---|
-| Claude Code | `.claudeCode` | Default account: calls the authenticated `https://api.anthropic.com/api/oauth/usage` endpoint with the `Claude Code-credentials` Keychain OAuth token (primary; on by default via the `ClaudeCodeEnableOAuthFallback` flag). Falls back to shelling out to `claude /usage` and regex-parsing terminal output when no token is available. Custom (`CLAUDE_CONFIG_DIR`) accounts use the CLI, since `claude /usage` no longer renders in a headless spawn |
+| Claude Code | `.claudeCode` | Unscoped default account: calls the authenticated `https://api.anthropic.com/api/oauth/usage` endpoint with the global `Claude Code-credentials` Keychain OAuth token (primary; on by default via the `ClaudeCodeEnableOAuthFallback` flag). Falls back to shelling out to `claude /usage` and regex-parsing terminal output when no token is available. Any account with an explicit `CLAUDE_CONFIG_DIR`, including the editable default row, uses the CLI so credentials cannot cross-contaminate profiles. |
 | OpenAI Codex CLI | `.codexCli` | Reads `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`), calls `https://chatgpt.com/backend-api/wham/usage`; exhausted accounts can consume a banked reset credit through the authenticated reset-credit endpoints after explicit confirmation |
 | Cursor | `.cursor` | Reads session JWT from Cursor's `state.vscdb` SQLite, calls `https://cursor.com/api/usage-summary` |
 | OpenRouter | `.openRouter` | User-provided API key in Keychain; calls documented `/api/v1/credits` and `/api/v1/key` endpoints |
@@ -66,7 +66,7 @@ meterbar/
 
 ## Services (all `.shared` singletons)
 
-- **UsageDataManager** (`@MainActor`, ObservableObject) — orchestrates refresh across providers, caches to UserDefaults (`cached_usage_metrics`), mirrors to the app group via SharedDataStore, records per-provider refresh outcomes in `ProviderParseHealthStore`, and drives a `Timer` auto-refresh (default 15 min; `RefreshInterval` supports 1/2/5/15/30 min + manual).
+- **UsageDataManager** (`@MainActor`, ObservableObject) — orchestrates refresh across providers, caches to UserDefaults (`cached_usage_metrics`), mirrors to the app group via SharedDataStore, records per-provider refresh outcomes in `ProviderParseHealthStore`, and drives a non-overlapping `Timer` auto-refresh (default 10 min; `RefreshInterval` supports 1/2/5/10/15/30 min + manual). The app forwards system wake events so stale enabled data catches up once without replaying missed ticks.
 - **ClaudeCodeCLIUsageService** — fallback source. Resolves the `claude` binary (`CLAUDE_CLI_PATH`, `$PATH`, 7 fallback paths), runs `claude /usage` (12 s timeout, dedicated GCD queue bridged to async), parses output with `ClaudeCodeCLIUsageParser`. `/usage` no longer renders in a headless spawn (it prints a session cost summary), so the parser detects that shape and throws a legible error. Multi-account via `CLAUDE_CONFIG_DIR` env injection.
 - **ClaudeCodeLocalService** — OAuth-primary wrapper. For the default account it reads `api.anthropic.com/api/oauth/usage` with the Keychain token (`metrics(from:)` maps windows + extra-usage), falling back to the CLI parser only when no token is available; custom accounts use the CLI. `prefersOAuth`/`isOAuthUsageEnabled` are the pure source-selection helpers.
 - **CodexCliLocalService** — Codex auth file + wham/usage endpoint; maps credits/spend to `ExtraUsageStatus` (safety-biased: never false "Off"). It also lists and consumes banked rate-limit resets with an idempotency key, then immediately refreshes usage. The exhausted popover card and `meterbar reset-credit --yes` are the two explicit-confirmation entry points.
