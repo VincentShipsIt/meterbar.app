@@ -100,7 +100,7 @@ final class WakeEventHookTests: XCTestCase {
 
         XCTAssertTrue(result.succeeded)
         XCTAssertEqual(
-            String(decoding: result.stdoutCapture, as: UTF8.self),
+            try XCTUnwrap(String(bytes: result.stdoutCapture, encoding: .utf8)),
             "<value with spaces>\n<\(literal)>\n<; echo injected>\n"
         )
         XCTAssertFalse(FileManager.default.fileExists(atPath: sentinel.path))
