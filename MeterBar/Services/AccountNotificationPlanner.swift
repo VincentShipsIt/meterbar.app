@@ -102,15 +102,23 @@ struct AccountNotificationPlanner {
         }
 
         guard !availableAccounts.isEmpty else {
-            let changedNamespace = clearAccountState(service: input.service, keys: &keys)
+            let accountState = clearAccountState(service: input.service, keys: &keys)
             guard let fallbackMetrics = input.fallbackMetrics else {
                 clearFallbackState(service: input.service, keys: &keys)
                 return
             }
+            for account in enabledAccounts {
+                keys.formUnion(translatedKeys(
+                    accountState,
+                    service: input.service,
+                    fromAccountKey: account.id.uuidString,
+                    toAccountKey: nil
+                ))
+            }
 
             let evaluation = decider.evaluate(
                 metrics: fallbackMetrics,
-                providerEnabled: !changedNamespace,
+                providerEnabled: true,
                 alreadyNotified: keys,
                 now: now
             )
@@ -119,11 +127,19 @@ struct AccountNotificationPlanner {
             return
         }
 
-        let changedNamespace = clearFallbackState(service: input.service, keys: &keys)
+        let fallbackState = clearFallbackState(service: input.service, keys: &keys)
+        for available in availableAccounts {
+            keys.formUnion(translatedKeys(
+                fallbackState,
+                service: input.service,
+                fromAccountKey: nil,
+                toAccountKey: available.identity.id.uuidString
+            ))
+        }
         for available in availableAccounts {
             let evaluation = decider.evaluate(
                 metrics: available.metrics,
-                providerEnabled: !changedNamespace,
+                providerEnabled: true,
                 alreadyNotified: keys,
                 accountKey: available.identity.id.uuidString,
                 serviceDisplayName: "\(available.identity.name) (\(input.service.displayName))",
@@ -138,9 +154,9 @@ struct AccountNotificationPlanner {
     private func clearFallbackState(
         service: ServiceType,
         keys: inout Set<String>
-    ) -> Bool {
+    ) -> Set<String> {
         let fallbackKeys = NotificationDecider.notificationKeys(service: service)
-        let removedState = !keys.isDisjoint(with: fallbackKeys)
+        let removedState = keys.intersection(fallbackKeys)
         keys.subtract(fallbackKeys)
         return removedState
     }
@@ -149,14 +165,32 @@ struct AccountNotificationPlanner {
     private func clearAccountState(
         service: ServiceType,
         keys: inout Set<String>
-    ) -> Bool {
+    ) -> Set<String> {
         let fallbackKeys = NotificationDecider.notificationKeys(service: service)
         let servicePrefix = "\(service.rawValue)-"
-        let accountKeys = keys.filter {
+        let accountKeys = Set(keys.filter {
             $0.hasPrefix(servicePrefix) && !fallbackKeys.contains($0)
-        }
+        })
         keys.subtract(accountKeys)
-        return !accountKeys.isEmpty
+        return accountKeys
+    }
+
+    private func translatedKeys(
+        _ keys: Set<String>,
+        service: ServiceType,
+        fromAccountKey: String?,
+        toAccountKey: String?
+    ) -> Set<String> {
+        let sourcePrefix = [service.rawValue, fromAccountKey]
+            .compactMap { $0 }
+            .joined(separator: "-") + "-"
+        let destinationPrefix = [service.rawValue, toAccountKey]
+            .compactMap { $0 }
+            .joined(separator: "-") + "-"
+        return Set(keys.compactMap { key in
+            guard key.hasPrefix(sourcePrefix) else { return nil }
+            return destinationPrefix + String(key.dropFirst(sourcePrefix.count))
+        })
     }
 
     private func clearProviderState(

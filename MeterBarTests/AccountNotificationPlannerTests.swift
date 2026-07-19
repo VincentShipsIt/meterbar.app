@@ -23,11 +23,13 @@ final class AccountNotificationPlannerTests: XCTestCase {
     private func metrics(
         service: ServiceType,
         used: Double,
+        weeklyUsed: Double? = nil,
         lastUpdated: Date? = nil
     ) -> UsageMetrics {
         UsageMetrics(
             service: service,
             sessionLimit: UsageLimit(used: used, total: 100, resetTime: nil),
+            weeklyLimit: weeklyUsed.map { UsageLimit(used: $0, total: 100, resetTime: nil) },
             lastUpdated: lastUpdated ?? now
         )
     }
@@ -126,6 +128,43 @@ final class AccountNotificationPlannerTests: XCTestCase {
             accountResult.notifiedKeys.contains(
                 "Claude Code-\(claudeAccountID.uuidString)-session-critical"
             )
+        )
+    }
+
+    func testFallbackToAccountTransitionStillDeliversEscalationsAndNewQuotaKinds() {
+        let fallbackResult = planner.plan(
+            inputs: [
+                input(
+                    accounts: [account(id: claudeAccountID, name: "Work")],
+                    fallbackMetrics: metrics(service: .claudeCode, used: 90)
+                )
+            ],
+            alreadyNotified: [],
+            now: now
+        )
+        XCTAssertEqual(fallbackResult.notifications.map(\.level), [.warning])
+
+        let accountResult = planner.plan(
+            inputs: [
+                input(
+                    accounts: [account(id: claudeAccountID, name: "Work")],
+                    accountMetrics: [
+                        claudeAccountID: metrics(
+                            service: .claudeCode,
+                            used: 100,
+                            weeklyUsed: 100
+                        )
+                    ]
+                )
+            ],
+            alreadyNotified: fallbackResult.notifiedKeys,
+            now: now
+        )
+
+        XCTAssertEqual(accountResult.notifications.map(\.level), [.critical, .critical])
+        XCTAssertEqual(
+            accountResult.notifications.map(\.quotaDisplayName),
+            ["5-hour limit", "Weekly limit"]
         )
     }
 
