@@ -218,8 +218,107 @@ final class AccountNotificationPlannerTests: XCTestCase {
         XCTAssertTrue(fallbackResult.notifications.isEmpty)
         XCTAssertEqual(
             fallbackResult.notifiedKeys,
-            Set(["Claude Code-session-warn", "Claude Code-session-critical"])
+            Set([
+                "Claude Code-\(claudeAccountID.uuidString)-session-warn",
+                "Claude Code-\(claudeAccountID.uuidString)-session-critical",
+                "Claude Code-session-warn",
+                "Claude Code-session-critical"
+            ])
         )
+    }
+
+    func testCachedHealthyFallbackDoesNotLoseExhaustedAccountDedupState() {
+        let accounts = [
+            account(id: claudeAccountID, name: "Healthy"),
+            account(id: secondClaudeAccountID, name: "Exhausted")
+        ]
+        let available = input(
+            accounts: accounts,
+            accountMetrics: [
+                claudeAccountID: metrics(service: .claudeCode, used: 0),
+                secondClaudeAccountID: metrics(service: .claudeCode, used: 100)
+            ]
+        )
+        let first = planner.plan(inputs: [available], alreadyNotified: [], now: now)
+        XCTAssertEqual(first.notifications.map(\.key), [
+            "Claude Code-\(secondClaudeAccountID.uuidString)-session-critical"
+        ])
+
+        let unavailable = planner.plan(
+            inputs: [
+                input(
+                    accounts: accounts,
+                    fallbackMetrics: metrics(service: .claudeCode, used: 0)
+                )
+            ],
+            alreadyNotified: first.notifiedKeys,
+            now: now
+        )
+        let recovered = planner.plan(
+            inputs: [available],
+            alreadyNotified: unavailable.notifiedKeys,
+            now: now
+        )
+
+        XCTAssertTrue(unavailable.notifications.isEmpty)
+        XCTAssertTrue(recovered.notifications.isEmpty)
+        XCTAssertTrue(
+            recovered.notifiedKeys.contains(
+                "Claude Code-\(secondClaudeAccountID.uuidString)-session-critical"
+            )
+        )
+    }
+
+    func testCachedExhaustedFallbackDoesNotMaskAnotherAccountsFirstCrossing() {
+        let accounts = [
+            account(id: claudeAccountID, name: "Exhausted"),
+            account(id: secondClaudeAccountID, name: "Healthy")
+        ]
+        let first = planner.plan(
+            inputs: [
+                input(
+                    accounts: accounts,
+                    accountMetrics: [
+                        claudeAccountID: metrics(service: .claudeCode, used: 100),
+                        secondClaudeAccountID: metrics(service: .claudeCode, used: 0)
+                    ]
+                )
+            ],
+            alreadyNotified: [],
+            now: now
+        )
+        XCTAssertEqual(first.notifications.map(\.key), [
+            "Claude Code-\(claudeAccountID.uuidString)-session-critical"
+        ])
+
+        let unavailable = planner.plan(
+            inputs: [
+                input(
+                    accounts: accounts,
+                    fallbackMetrics: metrics(service: .claudeCode, used: 100)
+                )
+            ],
+            alreadyNotified: first.notifiedKeys,
+            now: now
+        )
+        let recovered = planner.plan(
+            inputs: [
+                input(
+                    accounts: accounts,
+                    accountMetrics: [
+                        claudeAccountID: metrics(service: .claudeCode, used: 100),
+                        secondClaudeAccountID: metrics(service: .claudeCode, used: 100)
+                    ]
+                )
+            ],
+            alreadyNotified: unavailable.notifiedKeys,
+            now: now
+        )
+
+        XCTAssertTrue(unavailable.notifications.isEmpty)
+        XCTAssertEqual(recovered.notifications.map(\.key), [
+            "Claude Code-\(secondClaudeAccountID.uuidString)-session-critical"
+        ])
     }
 
     func testDisabledAccountCleanupRearmsLaterCrossing() {

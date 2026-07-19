@@ -102,15 +102,17 @@ struct AccountNotificationPlanner {
         }
 
         guard !availableAccounts.isEmpty else {
-            let accountState = clearAccountState(service: input.service, keys: &keys)
             guard let fallbackMetrics = input.fallbackMetrics else {
-                keys.formUnion(accountState)
                 clearFallbackState(service: input.service, keys: &keys)
                 return
             }
             for account in enabledAccounts {
                 keys.formUnion(translatedKeys(
-                    accountState,
+                    notificationState(
+                        service: input.service,
+                        accountKey: account.id.uuidString,
+                        keys: keys
+                    ),
                     service: input.service,
                     fromAccountKey: account.id.uuidString,
                     toAccountKey: nil
@@ -130,23 +132,37 @@ struct AccountNotificationPlanner {
 
         let fallbackState = clearFallbackState(service: input.service, keys: &keys)
         for available in availableAccounts {
-            keys.formUnion(translatedKeys(
-                fallbackState,
+            let accountKey = available.identity.id.uuidString
+            guard !hasObservedAccountState(
                 service: input.service,
-                fromAccountKey: nil,
-                toAccountKey: available.identity.id.uuidString
-            ))
+                accountKey: accountKey,
+                keys: keys
+            ) else { continue }
+            keys.formUnion(
+                translatedKeys(
+                    fallbackState,
+                    service: input.service,
+                    fromAccountKey: nil,
+                    toAccountKey: accountKey
+                )
+            )
         }
         for available in availableAccounts {
+            let accountKey = available.identity.id.uuidString
             let evaluation = decider.evaluate(
                 metrics: available.metrics,
                 providerEnabled: true,
                 alreadyNotified: keys,
-                accountKey: available.identity.id.uuidString,
+                accountKey: accountKey,
                 serviceDisplayName: "\(available.identity.name) (\(input.service.displayName))",
                 now: now
             )
             keys = evaluation.notifiedKeys
+            recordObservedAccountState(
+                service: input.service,
+                accountKey: accountKey,
+                keys: &keys
+            )
             notifications.append(contentsOf: evaluation.notifications)
         }
     }
@@ -174,6 +190,45 @@ struct AccountNotificationPlanner {
         })
         keys.subtract(accountKeys)
         return accountKeys
+    }
+
+    private func notificationState(
+        service: ServiceType,
+        accountKey: String,
+        keys: Set<String>
+    ) -> Set<String> {
+        keys.intersection(
+            NotificationDecider.notificationKeys(
+                service: service,
+                accountKey: accountKey
+            )
+        )
+    }
+
+    private func hasObservedAccountState(
+        service: ServiceType,
+        accountKey: String,
+        keys: Set<String>
+    ) -> Bool {
+        keys.contains(observedAccountKey(service: service, accountKey: accountKey))
+            || !notificationState(service: service, accountKey: accountKey, keys: keys).isEmpty
+    }
+
+    private func recordObservedAccountState(
+        service: ServiceType,
+        accountKey: String,
+        keys: inout Set<String>
+    ) {
+        let observedKey = observedAccountKey(service: service, accountKey: accountKey)
+        if notificationState(service: service, accountKey: accountKey, keys: keys).isEmpty {
+            keys.insert(observedKey)
+        } else {
+            keys.remove(observedKey)
+        }
+    }
+
+    private func observedAccountKey(service: ServiceType, accountKey: String) -> String {
+        "\(service.rawValue)-\(accountKey)-namespace-observed"
     }
 
     private func translatedKeys(
