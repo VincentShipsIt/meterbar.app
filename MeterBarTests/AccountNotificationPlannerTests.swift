@@ -164,8 +164,31 @@ final class AccountNotificationPlannerTests: XCTestCase {
         XCTAssertEqual(accountResult.notifications.map(\.level), [.critical, .critical])
         XCTAssertEqual(
             accountResult.notifications.map(\.quotaDisplayName),
-            ["5-hour limit", "Weekly limit"]
+            ["Session", "Weekly"]
         )
+    }
+
+    func testTemporaryFullDataGapPreservesAccountDedupState() {
+        let available = input(
+            accounts: [account(id: claudeAccountID, name: "Work")],
+            accountMetrics: [claudeAccountID: metrics(service: .claudeCode, used: 100)]
+        )
+        let first = planner.plan(inputs: [available], alreadyNotified: [], now: now)
+        XCTAssertEqual(first.notifications.count, 1)
+
+        let unavailable = planner.plan(
+            inputs: [input(accounts: [account(id: claudeAccountID, name: "Work")])],
+            alreadyNotified: first.notifiedKeys,
+            now: now
+        )
+        let recovered = planner.plan(
+            inputs: [available],
+            alreadyNotified: unavailable.notifiedKeys,
+            now: now
+        )
+
+        XCTAssertEqual(unavailable.notifiedKeys, first.notifiedKeys)
+        XCTAssertTrue(recovered.notifications.isEmpty)
     }
 
     func testAccountToFallbackTransitionPrimesNewNamespaceWithoutDuplicate() {

@@ -104,6 +104,7 @@ struct AccountNotificationPlanner {
         guard !availableAccounts.isEmpty else {
             let accountState = clearAccountState(service: input.service, keys: &keys)
             guard let fallbackMetrics = input.fallbackMetrics else {
+                keys.formUnion(accountState)
                 clearFallbackState(service: input.service, keys: &keys)
                 return
             }
