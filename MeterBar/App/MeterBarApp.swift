@@ -71,6 +71,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Keep Dock visibility in sync with the user's preference.
         observeDockVisibility()
+        observeSystemWake()
 
         // Create menu bar item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -419,6 +420,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
     }
 
+    /// A repeating timer may be delayed while macOS sleeps. Forward one wake
+    /// event to the usage manager, which owns cadence, freshness, and overlap
+    /// policy and only refreshes when enabled data is stale.
+    private func observeSystemWake() {
+        NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.didWakeNotification)
+            .sink { _ in
+                Task { @MainActor in
+                    await UsageDataManager.shared.refreshAfterWakeIfNeeded()
+                }
+            }
+            .store(in: &cancellables)
+    }
+
     /// Shows or hides the Dock icon by switching the app's activation policy.
     /// The menu bar status item is unaffected and always remains visible.
     private func applyActivationPolicy(showInDock: Bool) {
@@ -664,8 +679,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        Publishers.Merge(
+        Publishers.Merge3(
             ClaudeCodeAccountStore.shared.$customAccounts.map { _ in () },
+            ClaudeCodeAccountStore.shared.$defaultAccountConfigDirectory.map { _ in () },
             ClaudeCodeAccountStore.shared.$defaultAccountIsEnabled.map { _ in () }
         )
             .sink { [weak self] _ in
