@@ -98,6 +98,22 @@ final class AccountNotificationPlannerTests: XCTestCase {
         XCTAssertTrue(result.notifiedKeys.contains("Claude Code-session-critical"))
     }
 
+    func testUsesProviderFallbackWhenNoAccountsAreConfigured() {
+        let result = planner.plan(
+            inputs: [
+                input(
+                    accounts: [],
+                    fallbackMetrics: metrics(service: .claudeCode, used: 100)
+                )
+            ],
+            alreadyNotified: [],
+            now: now
+        )
+
+        XCTAssertEqual(result.notifications.map(\.key), ["Claude Code-session-critical"])
+        XCTAssertTrue(result.notifiedKeys.contains("Claude Code-session-critical"))
+    }
+
     func testFallbackToAccountTransitionPrimesNewNamespaceWithoutDuplicate() {
         let fallbackResult = planner.plan(
             inputs: [
@@ -319,6 +335,56 @@ final class AccountNotificationPlannerTests: XCTestCase {
         XCTAssertEqual(recovered.notifications.map(\.key), [
             "Claude Code-\(secondClaudeAccountID.uuidString)-session-critical"
         ])
+    }
+
+    func testFallbackRearmsDuringExtendedAccountDataGap() {
+        let accounts = [account(id: claudeAccountID, name: "Work")]
+        let first = planner.plan(
+            inputs: [
+                input(
+                    accounts: accounts,
+                    accountMetrics: [claudeAccountID: metrics(service: .claudeCode, used: 100)]
+                )
+            ],
+            alreadyNotified: [],
+            now: now
+        )
+        XCTAssertEqual(first.notifications.count, 1)
+
+        let initialFallback = planner.plan(
+            inputs: [
+                input(
+                    accounts: accounts,
+                    fallbackMetrics: metrics(service: .claudeCode, used: 100)
+                )
+            ],
+            alreadyNotified: first.notifiedKeys,
+            now: now
+        )
+        let resetFallback = planner.plan(
+            inputs: [
+                input(
+                    accounts: accounts,
+                    fallbackMetrics: metrics(service: .claudeCode, used: 0)
+                )
+            ],
+            alreadyNotified: initialFallback.notifiedKeys,
+            now: now
+        )
+        let crossedFallback = planner.plan(
+            inputs: [
+                input(
+                    accounts: accounts,
+                    fallbackMetrics: metrics(service: .claudeCode, used: 100)
+                )
+            ],
+            alreadyNotified: resetFallback.notifiedKeys,
+            now: now
+        )
+
+        XCTAssertTrue(initialFallback.notifications.isEmpty)
+        XCTAssertTrue(resetFallback.notifications.isEmpty)
+        XCTAssertEqual(crossedFallback.notifications.map(\.key), ["Claude Code-session-critical"])
     }
 
     func testDisabledAccountCleanupRearmsLaterCrossing() {

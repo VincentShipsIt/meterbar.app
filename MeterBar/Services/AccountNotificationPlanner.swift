@@ -82,14 +82,24 @@ struct AccountNotificationPlanner {
         now: Date
     ) {
         let enabledAccounts = input.accounts.filter(\.isEnabled)
-        guard input.providerEnabled, !enabledAccounts.isEmpty else {
+        guard input.providerEnabled else {
             clearProviderState(service: input.service, keys: &keys)
             return
+        }
+
+        if enabledAccounts.isEmpty {
+            clearAccountState(service: input.service, keys: &keys)
         }
 
         for account in input.accounts where !account.isEnabled {
             keys.subtract(
                 NotificationDecider.notificationKeys(
+                    service: input.service,
+                    accountKey: account.id.uuidString
+                )
+            )
+            keys.remove(
+                observedAccountKey(
                     service: input.service,
                     accountKey: account.id.uuidString
                 )
@@ -106,17 +116,19 @@ struct AccountNotificationPlanner {
                 clearFallbackState(service: input.service, keys: &keys)
                 return
             }
-            for account in enabledAccounts {
-                keys.formUnion(translatedKeys(
-                    notificationState(
+            if !hasObservedFallbackState(service: input.service, keys: keys) {
+                for account in enabledAccounts {
+                    keys.formUnion(translatedKeys(
+                        notificationState(
+                            service: input.service,
+                            accountKey: account.id.uuidString,
+                            keys: keys
+                        ),
                         service: input.service,
-                        accountKey: account.id.uuidString,
-                        keys: keys
-                    ),
-                    service: input.service,
-                    fromAccountKey: account.id.uuidString,
-                    toAccountKey: nil
-                ))
+                        fromAccountKey: account.id.uuidString,
+                        toAccountKey: nil
+                    ))
+                }
             }
 
             let evaluation = decider.evaluate(
@@ -126,6 +138,7 @@ struct AccountNotificationPlanner {
                 now: now
             )
             keys = evaluation.notifiedKeys
+            recordObservedFallbackState(service: input.service, keys: &keys)
             notifications.append(contentsOf: evaluation.notifications)
             return
         }
@@ -175,6 +188,7 @@ struct AccountNotificationPlanner {
         let fallbackKeys = NotificationDecider.notificationKeys(service: service)
         let removedState = keys.intersection(fallbackKeys)
         keys.subtract(fallbackKeys)
+        keys.remove(observedFallbackKey(service: service))
         return removedState
     }
 
@@ -184,9 +198,10 @@ struct AccountNotificationPlanner {
         keys: inout Set<String>
     ) -> Set<String> {
         let fallbackKeys = NotificationDecider.notificationKeys(service: service)
+        let fallbackStateKeys = fallbackKeys.union([observedFallbackKey(service: service)])
         let servicePrefix = "\(service.rawValue)-"
         let accountKeys = Set(keys.filter {
-            $0.hasPrefix(servicePrefix) && !fallbackKeys.contains($0)
+            $0.hasPrefix(servicePrefix) && !fallbackStateKeys.contains($0)
         })
         keys.subtract(accountKeys)
         return accountKeys
@@ -229,6 +244,30 @@ struct AccountNotificationPlanner {
 
     private func observedAccountKey(service: ServiceType, accountKey: String) -> String {
         "\(service.rawValue)-\(accountKey)-namespace-observed"
+    }
+
+    private func hasObservedFallbackState(
+        service: ServiceType,
+        keys: Set<String>
+    ) -> Bool {
+        keys.contains(observedFallbackKey(service: service))
+            || !keys.isDisjoint(with: NotificationDecider.notificationKeys(service: service))
+    }
+
+    private func recordObservedFallbackState(
+        service: ServiceType,
+        keys: inout Set<String>
+    ) {
+        let observedKey = observedFallbackKey(service: service)
+        if keys.isDisjoint(with: NotificationDecider.notificationKeys(service: service)) {
+            keys.insert(observedKey)
+        } else {
+            keys.remove(observedKey)
+        }
+    }
+
+    private func observedFallbackKey(service: ServiceType) -> String {
+        "\(service.rawValue)-namespace-observed"
     }
 
     private func translatedKeys(
