@@ -169,11 +169,13 @@ final class UsageDataManagerTests: XCTestCase {
         let cursor = StubProvider(hasAccess: true, result: .failure(ServiceError.parsingError))
         let (manager, _) = makeManager(codex: codex, cursor: cursor, parseHealthStore: health)
 
-        await manager.refreshAll()
+        let report = await manager.refreshAll()
 
         XCTAssertEqual(health.records[.codexCli]?.consecutiveFailures, 0)
         XCTAssertEqual(health.records[.cursor]?.consecutiveFailures, 1)
         XCTAssertTrue(health.records[.cursor]?.lastFailureWasShapeMismatch ?? false)
+        XCTAssertEqual(report.outcome(for: .codexCli)?.state, .refreshed)
+        XCTAssertEqual(report.outcome(for: .cursor)?.state, .failed)
     }
 
     func testRefreshAllMergesBothEnabledProviders() async {
@@ -383,12 +385,16 @@ final class UsageDataManagerTests: XCTestCase {
             preload: [.codexCli: MetricsFixtures.codexCli(), .cursor: cachedCursor]
         )
 
-        await manager.refreshAll()
+        let report = await manager.refreshAll()
 
         // Codex refreshed; Cursor degraded gracefully to its cached value.
         XCTAssertEqual(Set(manager.metrics.keys), [.codexCli, .cursor])
         XCTAssertEqual(manager.metrics[.cursor]?.weeklyLimit?.used, 999)
         XCTAssertNotNil(manager.lastError)
+        XCTAssertEqual(report.outcome(for: .codexCli)?.state, .refreshed)
+        XCTAssertEqual(report.outcome(for: .cursor)?.state, .failed)
+        XCTAssertEqual(report.outcome(for: .cursor)?.servedFromCache, true)
+        XCTAssertEqual(report.outcome(for: .cursor)?.lastUpdated, cachedCursor.lastUpdated)
     }
 
     func testRefreshAllSkipsDisabledProvider() async {

@@ -113,53 +113,81 @@ class UsageDataManager: ObservableObject {
         }
     }
 
-    func refreshAll() async {
-        guard !isLoading else { return }
+    /// Refresh every enabled provider, preserving each provider's last-known-good
+    /// metrics when its fetch fails.
+    ///
+    /// Returns a per-provider report. UI call sites can ignore it; `meterbar
+    /// refresh` uses it to report refreshed/failed/skipped state without
+    /// re-deriving truth from `lastError`, which only holds the last failure.
+    @discardableResult
+    func refreshAll() async -> UsageRefreshReport {
+        let startedAt = Date()
+        guard !isLoading else {
+            return UsageRefreshReport(
+                startedAt: startedAt,
+                finishedAt: Date(),
+                outcomes: ServiceType.allCases.map {
+                    ProviderRefreshOutcome(
+                        provider: $0,
+                        state: .skipped,
+                        reason: providerVisibilityStore.isEnabled($0)
+                            ? "Another refresh is already running."
+                            : Self.disabledReason,
+                        servedFromCache: metrics[$0] != nil,
+                        lastUpdated: metrics[$0]?.lastUpdated
+                    )
+                }
+            )
+        }
         isLoading = true
         defer { isLoading = false }
         lastError = nil
 
         var newMetrics: [ServiceType: UsageMetrics] = [:]
+        var states: [ServiceType: (state: ProviderRefreshState, reason: String?)] = [:]
 
         // Fetch Claude Code metrics (local files)
         let hasEnabledClaudeAccount = !claudeCodeAccountStore.enabledAccounts.isEmpty
         if providerVisibilityStore.isEnabled(.claudeCode), hasEnabledClaudeAccount {
-            let accountMetrics = await fetchClaudeCodeAccountMetrics()
-            claudeCodeAccountMetrics = accountMetrics
+            let fetch = await fetchClaudeCodeAccountMetrics()
+            claudeCodeAccountMetrics = fetch.metrics
 
-            if let representativeMetrics = representativeClaudeCodeMetrics(from: accountMetrics) {
+            if let representativeMetrics = representativeClaudeCodeMetrics(from: fetch.metrics) {
                 newMetrics[.claudeCode] = representativeMetrics
             } else if let cachedMetrics = self.metrics[.claudeCode] {
                 newMetrics[.claudeCode] = cachedMetrics
             }
-        } else if !providerVisibilityStore.isEnabled(.claudeCode) || !hasEnabledClaudeAccount {
-            claudeCodeAccountMetrics = [:]
+            states[.claudeCode] = accountFetchState(fetch)
+        } else {
+            if !providerVisibilityStore.isEnabled(.claudeCode) || !hasEnabledClaudeAccount {
+                claudeCodeAccountMetrics = [:]
+            }
+            states[.claudeCode] = (.skipped, claudeCodeSkipReason(hasEnabledAccount: hasEnabledClaudeAccount))
         }
 
         let hasEnabledCodexAccount = !codexAccountStore.enabledAccounts.isEmpty
         if providerVisibilityStore.isEnabled(.codexCli), hasEnabledCodexAccount {
-            let accountMetrics = await fetchCodexAccountMetrics()
-            codexAccountMetrics = accountMetrics
-            if let representative = representativeCodexMetrics(from: accountMetrics) {
+            let fetch = await fetchCodexAccountMetrics()
+            codexAccountMetrics = fetch.metrics
+            if let representative = representativeCodexMetrics(from: fetch.metrics) {
                 newMetrics[.codexCli] = representative
+            } else if let cachedMetrics = self.metrics[.codexCli] {
+                newMetrics[.codexCli] = cachedMetrics
             }
+            states[.codexCli] = accountFetchState(fetch)
         } else {
             codexAccountMetrics = [:]
+            states[.codexCli] = (
+                .skipped,
+                providerVisibilityStore.isEnabled(.codexCli) ? Self.noEnabledAccountsReason : Self.disabledReason
+            )
         }
 
         // Fetch the simple (single-account) providers. On failure the final
         // merge loop below preserves any cached metrics (graceful degradation).
-        for service in [ServiceType.cursor, .openRouter, .grok]
-        where providerVisibilityStore.isEnabled(service) && hasProviderAccess(service) {
-            do {
-                newMetrics[service] = try await fetchSimpleProviderMetrics(service)
-            } catch {
-                lastError = error
-                let safeMessage = ServiceSupport.safeErrorMessage(for: error)
-                let detail = "Failed to fetch \(service.rawValue) metrics: \(safeMessage)"
-                AppLog.usage.error("\(detail, privacy: .public)")
-            }
-        }
+        let simpleResults = await refreshSimpleProviders()
+        newMetrics.merge(simpleResults.metrics) { _, refreshed in refreshed }
+        states.merge(simpleResults.states) { _, refreshed in refreshed }
 
         // Merge new metrics with existing cached metrics for services that failed to fetch
         for service in ServiceType.allCases where providerVisibilityStore.isEnabled(service) {
@@ -175,6 +203,72 @@ class UsageDataManager: ObservableObject {
         saveCachedData()
         saveCachedCodexAccountMetrics()
         saveSharedData(newMetrics)
+
+        return UsageRefreshReport(
+            startedAt: startedAt,
+            finishedAt: Date(),
+            outcomes: states.map { service, state in
+                ProviderRefreshOutcome(
+                    provider: service,
+                    state: state.state,
+                    reason: state.reason,
+                    servedFromCache: state.state != .refreshed && newMetrics[service] != nil,
+                    lastUpdated: newMetrics[service]?.lastUpdated
+                )
+            }
+        )
+    }
+
+    private static let disabledReason = "Provider is turned off in MeterBar."
+    private static let notSignedInReason = "No readable credentials for this provider."
+    private static let noEnabledAccountsReason = "No enabled accounts for this provider."
+
+    private func claudeCodeSkipReason(hasEnabledAccount: Bool) -> String {
+        if !providerVisibilityStore.isEnabled(.claudeCode) { return Self.disabledReason }
+        if !hasEnabledAccount { return "No enabled Claude Code accounts." }
+        return Self.notSignedInReason
+    }
+
+    /// Map a multi-account fetch onto one provider-level state. Any successful
+    /// account means the provider refreshed; otherwise a recorded failure wins
+    /// over an unreachable/no-account skip.
+    private func accountFetchState(_ fetch: AccountFetchResult) -> (ProviderRefreshState, String?) {
+        if fetch.successCount > 0 { return (.refreshed, nil) }
+        if let failure = fetch.firstFailure {
+            return (.failed, ServiceSupport.safeErrorMessage(for: failure))
+        }
+        return (.skipped, Self.notSignedInReason)
+    }
+
+    private func refreshSimpleProviders() async -> (
+        metrics: [ServiceType: UsageMetrics],
+        states: [ServiceType: (state: ProviderRefreshState, reason: String?)]
+    ) {
+        var metrics: [ServiceType: UsageMetrics] = [:]
+        var states: [ServiceType: (state: ProviderRefreshState, reason: String?)] = [:]
+
+        for service in [ServiceType.cursor, .openRouter, .grok] {
+            guard providerVisibilityStore.isEnabled(service) else {
+                states[service] = (.skipped, Self.disabledReason)
+                continue
+            }
+            guard hasProviderAccess(service) else {
+                states[service] = (.skipped, Self.notSignedInReason)
+                continue
+            }
+            do {
+                metrics[service] = try await fetchSimpleProviderMetrics(service)
+                states[service] = (.refreshed, nil)
+            } catch {
+                lastError = error
+                let safeMessage = ServiceSupport.safeErrorMessage(for: error)
+                let detail = "Failed to fetch \(service.rawValue) metrics: \(safeMessage)"
+                AppLog.usage.error("\(detail, privacy: .public)")
+                states[service] = (.failed, safeMessage)
+            }
+        }
+
+        return (metrics, states)
     }
 
     func refresh(service: ServiceType) async {
@@ -268,11 +362,11 @@ class UsageDataManager: ObservableObject {
     private func refreshedMetrics(for service: ServiceType) async throws -> UsageMetrics {
         switch service {
         case .claudeCode:
-            let accountMetrics = await fetchClaudeCodeAccountMetrics()
+            let accountMetrics = await fetchClaudeCodeAccountMetrics().metrics
             claudeCodeAccountMetrics = accountMetrics
             if let representative = representativeClaudeCodeMetrics(from: accountMetrics) { return representative }
         case .codexCli:
-            let accountMetrics = await fetchCodexAccountMetrics()
+            let accountMetrics = await fetchCodexAccountMetrics().metrics
             codexAccountMetrics = accountMetrics
             if let representative = representativeCodexMetrics(from: accountMetrics) { return representative }
             throw ServiceError.notAuthenticated
@@ -297,6 +391,14 @@ class UsageDataManager: ObservableObject {
         let decoded = loadCachedMetricsFromDisk()
         if !decoded.isEmpty {
             metrics = decoded
+            return
+        }
+        // A bundled CLI process has a different defaults domain than the app.
+        // Fall back to the app-group snapshot so failures preserve the same
+        // last-known-good values `meterbar usage` already exposes.
+        let shared = sharedStore.loadMetrics()
+        if !shared.isEmpty {
+            metrics = shared
         }
     }
 
@@ -400,7 +502,13 @@ class UsageDataManager: ObservableObject {
         return now.timeIntervalSince(oldestUpdate) >= RefreshInterval.tenMinutes.seconds
     }
 
-    private func fetchClaudeCodeAccountMetrics() async -> [UUID: UsageMetrics] {
+    private struct AccountFetchResult {
+        let metrics: [UUID: UsageMetrics]
+        let successCount: Int
+        let firstFailure: Error?
+    }
+
+    private func fetchClaudeCodeAccountMetrics() async -> AccountFetchResult {
         var refreshedMetrics: [UUID: UsageMetrics] = [:]
         var firstFailure: Error?
         var successCount = 0
@@ -427,7 +535,11 @@ class UsageDataManager: ObservableObject {
             parseHealthStore.recordFailure(.claudeCode, error: firstFailure)
         }
 
-        return refreshedMetrics
+        return AccountFetchResult(
+            metrics: refreshedMetrics,
+            successCount: successCount,
+            firstFailure: firstFailure
+        )
     }
 
     private func representativeClaudeCodeMetrics(from accountMetrics: [UUID: UsageMetrics]) -> UsageMetrics? {
@@ -438,7 +550,7 @@ class UsageDataManager: ObservableObject {
         return claudeCodeAccountStore.enabledAccounts.lazy.compactMap { accountMetrics[$0.id] }.first
     }
 
-    private func fetchCodexAccountMetrics() async -> [UUID: UsageMetrics] {
+    private func fetchCodexAccountMetrics() async -> AccountFetchResult {
         var refreshedMetrics: [UUID: UsageMetrics] = [:]
         var firstFailure: Error?
         var successCount = 0
@@ -463,7 +575,11 @@ class UsageDataManager: ObservableObject {
             parseHealthStore.recordFailure(.codexCli, error: firstFailure)
         }
 
-        return refreshedMetrics
+        return AccountFetchResult(
+            metrics: refreshedMetrics,
+            successCount: successCount,
+            firstFailure: firstFailure
+        )
     }
 
     private func representativeCodexMetrics(from accountMetrics: [UUID: UsageMetrics]) -> UsageMetrics? {
