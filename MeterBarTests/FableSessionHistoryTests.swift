@@ -52,6 +52,25 @@ final class FableSessionHistoryTests: XCTestCase {
         XCTAssertEqual(model.recent.first?.state, .completed)
     }
 
+    func testModelDemotesStaleActiveSessionWithoutWaitingForAnotherScan() {
+        let stale = session(
+            "stale",
+            accountID: accountA,
+            accountName: "Ship",
+            state: .active,
+            offset: -ClaudeFableSessionPolicy.activeWindow - 1
+        )
+
+        let model = FableSessionHistoryModel(
+            sessions: [stale],
+            diagnostics: [:],
+            now: now
+        )
+
+        XCTAssertTrue(model.active.isEmpty)
+        XCTAssertEqual(model.recent.first?.state, .unknown)
+    }
+
     func testHumanOutputCoversEmptyAndPopulatedSnapshots() {
         XCTAssertEqual(
             FableSessionsTextFormatter.format([]),

@@ -8,9 +8,24 @@ struct FableSessionHistoryModel: Equatable {
 
     init(
         sessions: [ClaudeFableSession],
-        diagnostics: [UUID: ClaudeFableProfileDiagnostic]
+        diagnostics: [UUID: ClaudeFableProfileDiagnostic],
+        now: Date = Date()
     ) {
-        let normalized = ClaudeFableSessionPresentation.normalized(sessions)
+        let normalized = ClaudeFableSessionPresentation.normalized(sessions).map { session in
+            guard session.state == .active,
+                  now.timeIntervalSince(session.lastObservedAt) > ClaudeFableSessionPolicy.activeWindow else {
+                return session
+            }
+            return ClaudeFableSession(
+                sourceSessionID: session.sourceSessionID,
+                accountID: session.accountID,
+                accountName: session.accountName,
+                model: session.model,
+                firstObservedAt: session.firstObservedAt,
+                lastObservedAt: session.lastObservedAt,
+                state: .unknown
+            )
+        }
         active = normalized.filter { $0.state == .active }
         recent = normalized.filter { $0.state != .active }
         unavailableProfileCount = diagnostics.values.filter { $0.status == .unavailable }.count
@@ -19,16 +34,30 @@ struct FableSessionHistoryModel: Equatable {
 }
 
 struct FableSessionHistoryView: View {
-    let model: FableSessionHistoryModel
+    let sessions: [ClaudeFableSession]
+    let diagnostics: [UUID: ClaudeFableProfileDiagnostic]
 
     init(
         sessions: [ClaudeFableSession],
         diagnostics: [UUID: ClaudeFableProfileDiagnostic] = [:]
     ) {
-        model = FableSessionHistoryModel(sessions: sessions, diagnostics: diagnostics)
+        self.sessions = sessions
+        self.diagnostics = diagnostics
     }
 
     var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            content(
+                model: FableSessionHistoryModel(
+                    sessions: sessions,
+                    diagnostics: diagnostics,
+                    now: context.date
+                )
+            )
+        }
+    }
+
+    private func content(model: FableSessionHistoryModel) -> some View {
         SettingsPanelSection(
             title: "Fable 5 Sessions",
             systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90",

@@ -501,15 +501,7 @@ nonisolated public final class ClaudeFableSessionStore {
         _ existing: ClaudeFableSession,
         _ observed: ClaudeFableSession
     ) -> ClaudeFableSession {
-        ClaudeFableSession(
-            sourceSessionID: observed.sourceSessionID,
-            accountID: observed.accountID,
-            accountName: observed.accountName,
-            model: observed.lastObservedAt >= existing.lastObservedAt ? observed.model : existing.model,
-            firstObservedAt: min(existing.firstObservedAt, observed.firstObservedAt),
-            lastObservedAt: max(existing.lastObservedAt, observed.lastObservedAt),
-            state: observed.lastObservedAt >= existing.lastObservedAt ? observed.state : existing.state
-        )
+        ClaudeFableSessionPresentation.merged(existing, observed)
     }
 
     private func aged(_ session: ClaudeFableSession, now: Date) -> ClaudeFableSession {

@@ -8,17 +8,7 @@ nonisolated enum ClaudeFableSessionPresentation {
                 byID[session.id] = session
                 continue
             }
-
-            let latest = session.lastObservedAt >= existing.lastObservedAt ? session : existing
-            byID[session.id] = ClaudeFableSession(
-                sourceSessionID: latest.sourceSessionID,
-                accountID: latest.accountID,
-                accountName: latest.accountName,
-                model: latest.model,
-                firstObservedAt: min(existing.firstObservedAt, session.firstObservedAt),
-                lastObservedAt: max(existing.lastObservedAt, session.lastObservedAt),
-                state: latest.state
-            )
+            byID[session.id] = merged(existing, session)
         }
 
         return byID.values.sorted {
@@ -27,6 +17,22 @@ nonisolated enum ClaudeFableSessionPresentation {
             }
             return $0.id < $1.id
         }
+    }
+
+    static func merged(
+        _ existing: ClaudeFableSession,
+        _ observed: ClaudeFableSession
+    ) -> ClaudeFableSession {
+        let latest = observed.lastObservedAt >= existing.lastObservedAt ? observed : existing
+        return ClaudeFableSession(
+            sourceSessionID: latest.sourceSessionID,
+            accountID: latest.accountID,
+            accountName: latest.accountName,
+            model: latest.model,
+            firstObservedAt: min(existing.firstObservedAt, observed.firstObservedAt),
+            lastObservedAt: max(existing.lastObservedAt, observed.lastObservedAt),
+            state: latest.state
+        )
     }
 }
 

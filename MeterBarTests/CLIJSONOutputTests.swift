@@ -130,16 +130,25 @@ final class CLIJSONOutputTests: XCTestCase {
             lastObservedAt: referenceDate,
             state: .completed
         )
+        let unknown = ClaudeFableSession(
+            sourceSessionID: "session-2",
+            accountID: accountID,
+            accountName: "Ship",
+            model: "claude-fable-5",
+            firstObservedAt: referenceDate.addingTimeInterval(-240),
+            lastObservedAt: referenceDate.addingTimeInterval(-180),
+            state: .unknown
+        )
 
         let object = try XCTUnwrap(
             JSONSerialization.jsonObject(
-                with: FableSessionsCLIJSONResponse(sessions: [earlier, later]).jsonData()
+                with: FableSessionsCLIJSONResponse(sessions: [unknown, earlier, later]).jsonData()
             ) as? [String: Any]
         )
 
         XCTAssertEqual(object["schemaVersion"] as? Int, 1)
         let sessions = try XCTUnwrap(object["sessions"] as? [[String: Any]])
-        XCTAssertEqual(sessions.count, 1)
+        XCTAssertEqual(sessions.count, 2)
         let session = try XCTUnwrap(sessions.first)
         XCTAssertEqual(
             Set(session.keys),
@@ -155,6 +164,7 @@ final class CLIJSONOutputTests: XCTestCase {
         let profile = try XCTUnwrap(session["profile"] as? [String: Any])
         XCTAssertEqual(Set(profile.keys), ["id", "name"])
         XCTAssertEqual(profile["name"] as? String, "Ship")
+        XCTAssertEqual(sessions.last?["state"] as? String, "unknown")
     }
 
     func testFableSessionsResponseEncodesHonestEmptySnapshot() throws {
