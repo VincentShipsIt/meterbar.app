@@ -107,7 +107,7 @@ class UsageDataManager: ObservableObject {
         self.parseHealthStore = parseHealthStore ?? .shared
         refreshIntervalRaw = Self.savedRefreshInterval(in: preferences).rawValue
         loadCachedData()
-        loadCachedCodexAccountMetrics()
+        loadCachedAccountMetrics()
         if schedulesAutoRefresh {
             setupAutoRefresh()
         }
@@ -201,7 +201,7 @@ class UsageDataManager: ObservableObject {
 
         metrics = newMetrics
         saveCachedData()
-        saveCachedCodexAccountMetrics()
+        saveCachedAccountMetrics()
         saveSharedData(newMetrics)
 
         return UsageRefreshReport(
@@ -285,7 +285,7 @@ class UsageDataManager: ObservableObject {
                 codexAccountMetrics = [:]
             }
             saveCachedData()
-            saveCachedCodexAccountMetrics()
+            saveCachedAccountMetrics()
             saveSharedData(metrics)
             return
         }
@@ -294,6 +294,7 @@ class UsageDataManager: ObservableObject {
             claudeCodeAccountMetrics = [:]
             metrics.removeValue(forKey: service)
             saveCachedData()
+            saveCachedAccountMetrics()
             saveSharedData(metrics)
             return
         }
@@ -302,7 +303,7 @@ class UsageDataManager: ObservableObject {
             codexAccountMetrics = [:]
             metrics.removeValue(forKey: service)
             saveCachedData()
-            saveCachedCodexAccountMetrics()
+            saveCachedAccountMetrics()
             saveSharedData(metrics)
             return
         }
@@ -312,7 +313,7 @@ class UsageDataManager: ObservableObject {
 
             metrics[service] = newMetrics
             saveCachedData()
-            saveCachedCodexAccountMetrics()
+            saveCachedAccountMetrics()
             saveSharedData(metrics)
         } catch {
             if lastError == nil {
@@ -325,7 +326,7 @@ class UsageDataManager: ObservableObject {
                 // different profile's stale quota.
                 metrics.removeValue(forKey: service)
                 saveCachedData()
-                saveCachedCodexAccountMetrics()
+                saveCachedAccountMetrics()
                 saveSharedData(metrics)
             } else if metrics[service] == nil {
                 // Preserve existing cached metrics for single-account services.
@@ -355,7 +356,7 @@ class UsageDataManager: ObservableObject {
         }
         lastError = nil
         saveCachedData()
-        saveCachedCodexAccountMetrics()
+        saveCachedAccountMetrics()
         saveSharedData(metrics)
     }
 
@@ -416,23 +417,37 @@ class UsageDataManager: ObservableObject {
         }
     }
 
-    private func loadCachedCodexAccountMetrics() {
-        guard let data = cacheDefaults.data(forKey: StorageKeys.cachedCodexAccountMetrics),
-              let decoded = try? JSONDecoder().decode([UUID: UsageMetrics].self, from: data) else { return }
-        codexAccountMetrics = decoded
+    private func loadCachedAccountMetrics() {
+        if let data = cacheDefaults.data(forKey: StorageKeys.cachedClaudeCodeAccountMetrics),
+           let decoded = try? JSONDecoder().decode([UUID: UsageMetrics].self, from: data) {
+            claudeCodeAccountMetrics = decoded
+        }
+        if let data = cacheDefaults.data(forKey: StorageKeys.cachedCodexAccountMetrics),
+           let decoded = try? JSONDecoder().decode([UUID: UsageMetrics].self, from: data) {
+            codexAccountMetrics = decoded
+        }
     }
 
-    private func saveCachedCodexAccountMetrics() {
-        guard let data = try? JSONEncoder().encode(codexAccountMetrics) else { return }
-        cacheDefaults.set(data, forKey: StorageKeys.cachedCodexAccountMetrics)
+    private func saveCachedAccountMetrics() {
+        if let data = try? JSONEncoder().encode(claudeCodeAccountMetrics) {
+            cacheDefaults.set(data, forKey: StorageKeys.cachedClaudeCodeAccountMetrics)
+        }
+        if let data = try? JSONEncoder().encode(codexAccountMetrics) {
+            cacheDefaults.set(data, forKey: StorageKeys.cachedCodexAccountMetrics)
+        }
     }
 
     private func saveSharedData(_ metrics: [ServiceType: UsageMetrics]) {
         sharedStore.saveMetrics(metrics)
-        let accountSnapshots = codexAccountStore.enabledAccounts.compactMap { account -> AccountUsageSnapshot? in
+        let claudeSnapshots = claudeCodeAccountStore.enabledAccounts.compactMap { account -> AccountUsageSnapshot? in
+            guard let metrics = claudeCodeAccountMetrics[account.id] else { return nil }
+            return AccountUsageSnapshot(id: account.id, name: account.name, metrics: metrics)
+        }
+        let codexSnapshots = codexAccountStore.enabledAccounts.compactMap { account -> AccountUsageSnapshot? in
             guard let metrics = codexAccountMetrics[account.id] else { return nil }
             return AccountUsageSnapshot(id: account.id, name: account.name, metrics: metrics)
         }
+        let accountSnapshots = claudeSnapshots + codexSnapshots
         sharedStore.saveAccountMetrics(accountSnapshots)
     }
 
