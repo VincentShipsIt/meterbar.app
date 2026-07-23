@@ -243,6 +243,7 @@ enum ProviderSnapshotBuilder {
         if input.enabledServices.contains(.claudeCode) {
             let enabledAccounts = input.claudeAccounts.filter(\.isEnabled)
             let accountMetrics = input.claudeAccountMetrics
+            let fableActivityByAccount = FableSessionCardActivity.byAccount(sessions: input.fableSessions)
             if !enabledAccounts.isEmpty {
                 for account in enabledAccounts {
                     let title = account.isDefault && enabledAccounts.count == 1 ? "Claude" : account.name
@@ -255,10 +256,8 @@ enum ProviderSnapshotBuilder {
                         metrics: accountMetrics[account.id] ?? (account.isDefault ? input.metrics[.claudeCode] : nil),
                         emptyDetail: emptyDetail,
                         accountID: account.id,
-                        fableActivity: FableSessionCardActivity.make(
-                            accountID: account.id,
-                            sessions: input.fableSessions
-                        )
+                        fableActivity: fableActivityByAccount[account.id]
+                            ?? FableSessionCardActivity(session: nil)
                     ))
                 }
             }

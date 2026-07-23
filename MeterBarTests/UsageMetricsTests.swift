@@ -104,4 +104,17 @@ final class UsageMetricsTests: XCTestCase {
             return XCTFail("Session exhaustion must keep the provider critical.")
         }
     }
+
+    func testOverallStatusAlsoKeepsCodexCodeReviewScoped() {
+        let metrics = UsageMetrics(
+            service: .codexCli,
+            sessionLimit: UsageLimit(used: 10, total: 100, resetTime: nil),
+            weeklyLimit: UsageLimit(used: 20, total: 100, resetTime: nil),
+            codeReviewLimit: UsageLimit(used: 100, total: 100, resetTime: nil)
+        )
+
+        guard case .good = metrics.overallStatus else {
+            return XCTFail("Code Review exhaustion must stay scoped to Code Review.")
+        }
+    }
 }

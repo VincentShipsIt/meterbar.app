@@ -58,6 +58,21 @@ nonisolated struct FableSessionCardActivity: Equatable, Sendable {
     ) -> FableSessionCardActivity {
         let accountSessions = ClaudeFableSessionPresentation.normalized(sessions)
             .filter { $0.accountID == accountID }
+        return make(normalizedAccountSessions: accountSessions, now: now)
+    }
+
+    static func byAccount(
+        sessions: [ClaudeFableSession],
+        now: Date = Date()
+    ) -> [UUID: FableSessionCardActivity] {
+        Dictionary(grouping: ClaudeFableSessionPresentation.normalized(sessions), by: \.accountID)
+            .mapValues { make(normalizedAccountSessions: $0, now: now) }
+    }
+
+    private static func make(
+        normalizedAccountSessions accountSessions: [ClaudeFableSession],
+        now: Date
+    ) -> FableSessionCardActivity {
         let active = accountSessions.first {
             $0.state == .active
                 && now.timeIntervalSince($0.lastObservedAt) <= ClaudeFableSessionPolicy.activeWindow

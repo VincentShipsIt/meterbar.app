@@ -51,6 +51,24 @@ final class ClaudeCodeOAuthUsageTests: XCTestCase {
         XCTAssertNil(metrics.modelLimitLabel)
     }
 
+    func testMetricsMapsFableWindowWithoutRelabelingItAsSonnet() throws {
+        let response = try decodeUsage(#"""
+        {
+          "five_hour": {"utilization": 16.0, "resets_at": "2026-07-02T14:00:00Z"},
+          "seven_day": {"utilization": 71.0, "resets_at": "2026-07-08T00:00:00Z"},
+          "seven_day_fable": {"utilization": 100.0, "resets_at": "2026-07-08T00:00:00Z"}
+        }
+        """#)
+
+        let metrics = ClaudeCodeLocalService.metrics(from: response)
+
+        XCTAssertEqual(metrics.codeReviewLimit?.percentage, 100.0)
+        XCTAssertEqual(metrics.modelLimitLabel, "Fable")
+        guard case .good = metrics.overallStatus else {
+            return XCTFail("A Fable-only exhaustion must not mark Claude unavailable.")
+        }
+    }
+
     // MARK: - Source-selection policy
 
     func testPrefersOAuthOnlyForDefaultAccountWhenEnabled() {

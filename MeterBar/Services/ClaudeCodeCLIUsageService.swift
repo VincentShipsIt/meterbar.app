@@ -134,14 +134,9 @@ nonisolated enum ClaudeCodeCLIUsageParser {
             now: now)
         // The CLI's model-specific window label has changed over time
         // ("Sonnet only" → "Fable", observed claude 2.1.205); match all knowns.
-        let modelLimit = parseLimit(
-            from: lines,
-            labelPrefixes: ["current week (sonnet only)", "current week (fable)", "sonnet", "fable"],
-            windowMinutes: 7 * 24 * 60,
-            now: now)
-        let modelLimitLabel = modelLimit == nil ? nil : parseModelLimitLabel(from: lines)
+        let modelWindow = parseModelLimit(from: lines, now: now)
 
-        guard sessionLimit != nil || weeklyLimit != nil || modelLimit != nil else {
+        guard sessionLimit != nil || weeklyLimit != nil || modelWindow != nil else {
             // A headless (non-TTY) spawn of `claude /usage` renders a session
             // cost summary instead of the usage screen, so no windows parse.
             // Surface that specifically — the OAuth endpoint is the fix.
@@ -158,18 +153,26 @@ nonisolated enum ClaudeCodeCLIUsageParser {
             service: .claudeCode,
             sessionLimit: sessionLimit,
             weeklyLimit: weeklyLimit,
-            codeReviewLimit: modelLimit,
-            modelLimitLabel: modelLimitLabel)
+            codeReviewLimit: modelWindow?.limit,
+            modelLimitLabel: modelWindow?.label)
     }
 
-    private static func parseModelLimitLabel(from lines: [String]) -> String? {
-        for line in lines {
-            let normalized = line.lowercased()
-            if normalized.hasPrefix("current week (fable)") || normalized.hasPrefix("fable") {
-                return "Fable"
-            }
-            if normalized.hasPrefix("current week (sonnet only)") || normalized.hasPrefix("sonnet") {
-                return "Sonnet"
+    private static func parseModelLimit(
+        from lines: [String],
+        now: Date
+    ) -> (limit: UsageLimit, label: String)? {
+        let definitions = [
+            (label: "Fable", prefixes: ["current week (fable)", "fable"]),
+            (label: "Sonnet", prefixes: ["current week (sonnet only)", "sonnet"]),
+        ]
+        for definition in definitions {
+            if let limit = parseLimit(
+                from: lines,
+                labelPrefixes: definition.prefixes,
+                windowMinutes: 7 * 24 * 60,
+                now: now
+            ) {
+                return (limit, definition.label)
             }
         }
         return nil

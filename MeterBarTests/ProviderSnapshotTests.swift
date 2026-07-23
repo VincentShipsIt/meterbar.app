@@ -121,6 +121,15 @@ final class ProviderSnapshotTests: XCTestCase {
             ],
             fableSessions: [
                 ClaudeFableSession(
+                    sourceSessionID: "default-session",
+                    accountID: ClaudeCodeAccount.defaultID,
+                    accountName: ClaudeCodeAccount.defaultName,
+                    model: "claude-fable-5",
+                    firstObservedAt: now.addingTimeInterval(-180),
+                    lastObservedAt: now.addingTimeInterval(-60),
+                    state: .completed
+                ),
+                ClaudeFableSession(
                     sourceSessionID: "work-session",
                     accountID: work.id,
                     accountName: work.name,
@@ -134,7 +143,7 @@ final class ProviderSnapshotTests: XCTestCase {
         ))
 
         XCTAssertEqual(snapshots.count, 2)
-        XCTAssertNil(snapshots[0].fableActivity?.session)
+        XCTAssertEqual(snapshots[0].fableActivity?.session?.sourceSessionID, "default-session")
         XCTAssertEqual(snapshots[1].fableActivity?.session?.sourceSessionID, "work-session")
     }
 
