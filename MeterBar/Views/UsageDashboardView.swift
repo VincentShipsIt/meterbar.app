@@ -422,8 +422,12 @@ struct UsageDashboardView: View {
         .disabled(isRefreshButtonDisabled)
     }
 
+    private var showsDetailScrollIndicators: Bool {
+        navigation.isShowingSettings || activeSection != .share
+    }
+
     private var detailContent: some View {
-        ScrollView {
+        ScrollView(showsIndicators: showsDetailScrollIndicators) {
             VStack(alignment: .leading, spacing: 16) {
                 if navigation.isShowingSettings {
                     settingsSectionContent
