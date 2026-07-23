@@ -198,6 +198,8 @@ final class DashboardNavigationStore: ObservableObject {
 }
 
 struct UsageDashboardView: View {
+    private static let detailHorizontalPadding = MeterBarTheme.Spacing.xxl
+
     @StateObject private var dataManager = UsageDataManager.shared
     @StateObject private var costTracker = CostTracker.shared
     @StateObject private var claudeAccountStore = ClaudeCodeAccountStore.shared
@@ -384,7 +386,7 @@ struct UsageDashboardView: View {
                         monitoringSectionContent(viewportWidth: viewport.size.width)
                     }
                 }
-                .padding(.horizontal, MeterBarTheme.Spacing.xxl)
+                .padding(.horizontal, Self.detailHorizontalPadding)
                 .padding(.top, MeterBarTheme.Spacing.md)
                 .padding(.bottom, MeterBarTheme.Spacing.xxl)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -399,7 +401,6 @@ struct UsageDashboardView: View {
             }
             .navigationTitle("")
             .navigationSubtitle("")
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -644,10 +645,10 @@ struct UsageDashboardView: View {
     private func shareContent(viewportWidth: CGFloat) -> some View {
         let previewSize = SocialShareCardLayout.previewSize(
             viewportWidth: viewportWidth,
-            horizontalInsets: MeterBarTheme.Spacing.xxl * 2
+            horizontalInsets: Self.detailHorizontalPadding * 2
         )
 
-        VStack(alignment: .leading, spacing: 14) {
+        return VStack(alignment: .leading, spacing: 14) {
             SocialShareCardPreview(
                 content: socialShareCardContent,
                 size: previewSize

@@ -25,6 +25,11 @@ final class SocialShareCardContentTests: XCTestCase {
         )
 
         XCTAssertEqual(size.width, SocialShareCardLayout.maximumPreviewWidth)
+        XCTAssertEqual(
+            size.height,
+            SocialShareCardLayout.maximumPreviewWidth / SocialShareCardLayout.aspectRatio,
+            accuracy: 0.0001
+        )
     }
 
     func testPreviewSizeNeverBecomesNegative() {

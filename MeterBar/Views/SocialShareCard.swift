@@ -9,6 +9,10 @@ enum SocialShareCardLayout {
     static let exportSize = CGSize(width: 1_200, height: 675)
     static let aspectRatio: CGFloat = exportSize.width / exportSize.height
     static let maximumPreviewWidth: CGFloat = 860
+    static let reservedVerticalScrollerWidth = NSScroller.scrollerWidth(
+        for: .regular,
+        scrollerStyle: .legacy
+    )
 
     /// Derives preview geometry from the dashboard viewport, which does not
     /// change when the nested scroll view shows or hides its vertical scroller.
@@ -17,10 +21,7 @@ enum SocialShareCardLayout {
     static func previewSize(
         viewportWidth: CGFloat,
         horizontalInsets: CGFloat,
-        verticalScrollerWidth: CGFloat = NSScroller.scrollerWidth(
-            for: .regular,
-            scrollerStyle: .legacy
-        )
+        verticalScrollerWidth: CGFloat = reservedVerticalScrollerWidth
     ) -> CGSize {
         let availableWidth = max(
             0,
