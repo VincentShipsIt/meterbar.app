@@ -163,7 +163,7 @@ struct DashboardMetricTile: View {
   let value: String
   let caption: String
   let systemImage: String
-  let indicatorTint: Color
+  var indicatorTint: Color = .secondary
   var style: Style = .regular
 
   var body: some View {
@@ -175,6 +175,8 @@ struct DashboardMetricTile: View {
         } icon: {
           Image(systemName: systemImage)
             .foregroundStyle(indicatorTint)
+            .imageScale(.medium)
+            .symbolRenderingMode(.hierarchical)
         }
           .font(style.titleFont)
           .fontWeight(style.titleWeight)

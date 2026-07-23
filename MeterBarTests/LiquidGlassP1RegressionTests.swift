@@ -8,22 +8,28 @@ import XCTest
 final class LiquidGlassP1RegressionTests: XCTestCase {
     // MARK: - Surface vocabulary invariants
 
-    /// Content layers use neutral semantic AppKit colors rather than a
-    /// product-colored wash, so they adapt with the active system appearance.
-    func testContentSurfaceTokensUseNeutralSystemColors() {
-        assertMatchesSystemColor(
+    /// Content uses a neutral, opaque fill that genuinely adapts between the
+    /// system's light and dark appearances rather than a product-colored wash.
+    func testContentSurfaceIsNeutralOpaqueAndAppearanceAdaptive() {
+        let aqua = resolvedSRGB(
             MeterBarTheme.Surface.content,
-            systemColor: .controlBackgroundColor
+            appearanceName: .aqua
         )
-        assertMatchesSystemColor(
-            MeterBarTheme.Surface.inset,
-            systemColor: .windowBackgroundColor
+        let darkAqua = resolvedSRGB(
+            MeterBarTheme.Surface.content,
+            appearanceName: .darkAqua
         )
-    }
 
-    /// Reduce Transparency still has an opaque semantic card fill.
-    func testContentReduceTransparencyFallbackIsOpaque() {
-        assertOpaque(MeterBarTheme.Surface.contentOpaqueFallback)
+        for color in [aqua, darkAqua] {
+            XCTAssertEqual(color.alphaComponent, 1, accuracy: 0.0001)
+            let channels = [color.redComponent, color.greenComponent, color.blueComponent]
+            XCTAssertLessThan(
+                (channels.max() ?? 1) - (channels.min() ?? 0),
+                0.02
+            )
+        }
+
+        XCTAssertNotEqual(aqua, darkAqua)
     }
 
     /// Chrome glass collapses to this fill under Reduce Transparency; the whole
@@ -60,23 +66,27 @@ final class LiquidGlassP1RegressionTests: XCTestCase {
         }
     }
 
-    private func assertMatchesSystemColor(
+    private func resolvedSRGB(
         _ color: Color,
-        systemColor: NSColor,
+        appearanceName: NSAppearance.Name,
         file: StaticString = #filePath,
         line: UInt = #line
-    ) {
-        let appearances = [NSAppearance(named: .aqua), NSAppearance(named: .darkAqua)]
-            .compactMap { $0 }
-        for appearance in appearances {
-            var actual: NSColor?
-            var expected: NSColor?
-            appearance.performAsCurrentDrawingAppearance {
-                actual = NSColor(color).usingColorSpace(.sRGB)
-                expected = systemColor.usingColorSpace(.sRGB)
-            }
-            XCTAssertEqual(actual, expected, file: file, line: line)
+    ) -> NSColor {
+        guard let appearance = NSAppearance(named: appearanceName) else {
+            XCTFail("Missing \(appearanceName) appearance", file: file, line: line)
+            return .clear
         }
+
+        var resolved: NSColor?
+        appearance.performAsCurrentDrawingAppearance {
+            resolved = NSColor(color).usingColorSpace(.sRGB)
+        }
+
+        guard let resolved else {
+            XCTFail("Could not resolve color in sRGB", file: file, line: line)
+            return .clear
+        }
+        return resolved
     }
 
     func testMenuPanelCanBecomeKey() {

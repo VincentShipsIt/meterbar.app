@@ -1150,7 +1150,6 @@ private struct OverviewSummaryStrip: View {
                 value: estimatedCost ?? "Scan needed",
                 caption: "\(formattedTokens) tokens",
                 systemImage: "chart.bar.xaxis",
-                indicatorTint: .secondary,
                 style: .compact
             )
 
@@ -1159,7 +1158,6 @@ private struct OverviewSummaryStrip: View {
                 value: "\(sourceCount)",
                 caption: sourceCaption,
                 systemImage: "checklist.checked",
-                indicatorTint: .secondary,
                 style: .compact
             )
         }

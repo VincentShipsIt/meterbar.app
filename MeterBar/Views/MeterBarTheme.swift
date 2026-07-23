@@ -109,18 +109,11 @@ enum MeterBarTheme {
     /// consumed by ``MeterBarDetailBackground``.
     static let chromeOpaqueFallback = Color(nsColor: .windowBackgroundColor)
 
-    /// **Layer 2 — content.** The single content-card fill. Every card sits on
-    /// this neutral, appearance-adaptive system color. Applied via
-    /// ``SwiftUI/View/meterBarCardSurface(cornerRadius:)`` — the one source of
-    /// truth for card fills.
+    /// **Layer 2 — content.** The single opaque content-card fill in every
+    /// transparency mode. This neutral, appearance-adaptive system color is
+    /// applied via ``SwiftUI/View/meterBarCardSurface(cornerRadius:)`` — the
+    /// one source of truth for card fills.
     static let content = Color(nsColor: .controlBackgroundColor)
-
-    /// Opaque accessibility fallback used only when Reduce Transparency is on.
-    static let contentOpaqueFallback = Color(nsColor: .controlBackgroundColor)
-
-    /// **Layer 2 — inset.** A row nested inside a ``content`` card, one step
-    /// recessed. Use for grouped rows *within* a card, not for the card itself.
-    static let inset = Color(nsColor: .windowBackgroundColor)
   }
 
   // MARK: - Brand accents (semantic indicators only; adapt to light/dark)
@@ -359,8 +352,6 @@ extension View {
 
 private struct MeterBarCardSurfaceModifier: ViewModifier {
   let cornerRadius: CGFloat
-  @Environment(\.accessibilityReduceTransparency)
-  private var reduceTransparency
 
   func body(content: Content) -> some View {
     let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -370,12 +361,7 @@ private struct MeterBarCardSurfaceModifier: ViewModifier {
     // wash. A hairline provides the boundary without shadows or a second glass
     // layer.
     content
-      .background(
-        reduceTransparency
-          ? MeterBarTheme.Surface.contentOpaqueFallback
-          : MeterBarTheme.Surface.content,
-        in: shape
-      )
+      .background(MeterBarTheme.Surface.content, in: shape)
       .overlay {
         shape.strokeBorder(MeterBarTheme.glassCardStroke, lineWidth: 1)
       }

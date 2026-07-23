@@ -120,15 +120,13 @@ struct OptimizeInsightsView: View {
         title: "Input : output",
         value: insights.formattedInputOutputRatio,
         caption: "context sent vs generated",
-        systemImage: "text.append",
-        indicatorTint: .secondary
+        systemImage: "text.append"
       )
       DashboardMetricTile(
         title: "Last 7 days",
         value: UsageFormat.tokens(insights.tokens7Day),
         caption: "\(UsageFormat.tokens(insights.tokens30Day)) over 30 days",
-        systemImage: "calendar",
-        indicatorTint: .secondary
+        systemImage: "calendar"
       )
     }
     .frame(maxWidth: .infinity)
