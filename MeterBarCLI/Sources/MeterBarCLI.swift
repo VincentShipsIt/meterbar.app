@@ -13,6 +13,7 @@ struct MeterBarCLI: AsyncParsableCommand {
         subcommands: [
             Usage.self,
             Cost.self,
+            Refresh.self,
             FableSessions.self,
             Doctor.self,
             Wake.self,
