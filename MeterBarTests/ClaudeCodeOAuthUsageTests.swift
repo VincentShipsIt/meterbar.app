@@ -29,6 +29,7 @@ final class ClaudeCodeOAuthUsageTests: XCTestCase {
         XCTAssertEqual(weekly.percentage, 30.0, accuracy: 0.01)
         XCTAssertEqual(weekly.windowSeconds, 7 * 24 * 60 * 60)
         XCTAssertEqual(sonnet.percentage, 12.0, accuracy: 0.01)
+        XCTAssertEqual(metrics.modelLimitLabel, "Sonnet")
         XCTAssertEqual(sonnet.windowSeconds, 7 * 24 * 60 * 60)
         XCTAssertNotNil(session.resetTime)
         XCTAssertEqual(metrics.extraUsage?.state, .on)
@@ -47,6 +48,7 @@ final class ClaudeCodeOAuthUsageTests: XCTestCase {
         XCTAssertNotNil(metrics.sessionLimit)
         XCTAssertNotNil(metrics.weeklyLimit)
         XCTAssertNil(metrics.codeReviewLimit)
+        XCTAssertNil(metrics.modelLimitLabel)
     }
 
     // MARK: - Source-selection policy

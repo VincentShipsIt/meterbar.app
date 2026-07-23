@@ -350,6 +350,7 @@ class ClaudeCodeLocalService: ObservableObject {
             sessionLimit: sessionLimit,
             weeklyLimit: weeklyLimit,
             codeReviewLimit: codeReviewLimit,
+            modelLimitLabel: codeReviewLimit == nil ? nil : "Sonnet",
             extraUsage: response.extraUsageStatus
         )
     }

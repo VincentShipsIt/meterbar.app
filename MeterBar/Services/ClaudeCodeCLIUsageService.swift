@@ -134,13 +134,14 @@ nonisolated enum ClaudeCodeCLIUsageParser {
             now: now)
         // The CLI's model-specific window label has changed over time
         // ("Sonnet only" → "Fable", observed claude 2.1.205); match all knowns.
-        let sonnetLimit = parseLimit(
+        let modelLimit = parseLimit(
             from: lines,
             labelPrefixes: ["current week (sonnet only)", "current week (fable)", "sonnet", "fable"],
             windowMinutes: 7 * 24 * 60,
             now: now)
+        let modelLimitLabel = modelLimit == nil ? nil : parseModelLimitLabel(from: lines)
 
-        guard sessionLimit != nil || weeklyLimit != nil || sonnetLimit != nil else {
+        guard sessionLimit != nil || weeklyLimit != nil || modelLimit != nil else {
             // A headless (non-TTY) spawn of `claude /usage` renders a session
             // cost summary instead of the usage screen, so no windows parse.
             // Surface that specifically — the OAuth endpoint is the fix.
@@ -157,7 +158,21 @@ nonisolated enum ClaudeCodeCLIUsageParser {
             service: .claudeCode,
             sessionLimit: sessionLimit,
             weeklyLimit: weeklyLimit,
-            codeReviewLimit: sonnetLimit)
+            codeReviewLimit: modelLimit,
+            modelLimitLabel: modelLimitLabel)
+    }
+
+    private static func parseModelLimitLabel(from lines: [String]) -> String? {
+        for line in lines {
+            let normalized = line.lowercased()
+            if normalized.hasPrefix("current week (fable)") || normalized.hasPrefix("fable") {
+                return "Fable"
+            }
+            if normalized.hasPrefix("current week (sonnet only)") || normalized.hasPrefix("sonnet") {
+                return "Sonnet"
+            }
+        }
+        return nil
     }
 
     private static func parseLimit(
