@@ -1,4 +1,5 @@
 import AppKit
+import MeterBarShared
 import SwiftUI
 
 /// Owns share-card content assembly and PNG rendering outside UsageDashboardView.
