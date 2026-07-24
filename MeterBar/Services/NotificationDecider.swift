@@ -243,7 +243,7 @@ struct NotificationDecider {
             case .weekly:
                 return service == .openRouter ? "Account Credits" : "Weekly"
             case .codeReview:
-                return service == .claudeCode ? (modelLimitLabel ?? "Model") : "Code Review"
+                return service.codeReviewQuotaTitle(modelLimitLabel: modelLimitLabel)
             }
         }
     }

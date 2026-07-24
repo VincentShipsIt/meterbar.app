@@ -49,10 +49,8 @@ public struct WidgetPresentationRow: Identifiable, Equatable, Sendable {
             return "Key limit"
         case (.openRouter, .weekly):
             return "Account credits"
-        case (.claudeCode, .codeReview):
-            return modelLimitLabel ?? "Model"
         case (_, .codeReview):
-            return "Code Review"
+            return service.codeReviewQuotaTitle(modelLimitLabel: modelLimitLabel)
         case (_, .session):
             return "Session"
         case (_, .weekly):
