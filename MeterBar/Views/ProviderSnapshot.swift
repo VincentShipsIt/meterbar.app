@@ -344,8 +344,12 @@ enum ProviderSnapshotBuilder {
             // Claude's third window is model-scoped and has changed names
             // across CLI releases. Preserve the parsed label instead of
             // relabeling Fable as Sonnet; legacy caches use a neutral fallback.
-            let title = service == .claudeCode ? (metrics.modelLimitLabel ?? "Model") : "Code Review"
-            result.append(SnapshotLimit(id: "codeReview", kind: .codeReview, title: title, usageLimit: codeReview))
+            result.append(SnapshotLimit(
+                id: "codeReview",
+                kind: .codeReview,
+                title: service.codeReviewQuotaTitle(modelLimitLabel: metrics.modelLimitLabel),
+                usageLimit: codeReview
+            ))
         }
         return result
     }

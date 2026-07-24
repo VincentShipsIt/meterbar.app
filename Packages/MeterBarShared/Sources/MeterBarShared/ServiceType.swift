@@ -55,4 +55,16 @@ public enum ServiceType: String, Codable, CaseIterable, Identifiable, Sendable {
         case .grok: return 4
         }
     }
+
+    /// Display title for the third ("code review") quota window. For Claude
+    /// Code this window is model-scoped: it echoes the parsed model label
+    /// (e.g. "Fable", "Sonnet"), falling back to a neutral "Model" when no
+    /// label is available — never a hardcoded model name, since the label
+    /// changes across CLI releases. Every other provider shows "Code Review".
+    /// Centralized here because the popover, dashboard, widget, and
+    /// notification copy previously each spelled out this rule — and
+    /// historically did so with inverted defaults.
+    public func codeReviewQuotaTitle(modelLimitLabel: String?) -> String {
+        self == .claudeCode ? (modelLimitLabel ?? "Model") : "Code Review"
+    }
 }
