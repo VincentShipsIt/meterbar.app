@@ -48,10 +48,8 @@ public struct WidgetPresentationRow: Identifiable, Equatable, Sendable {
             return "Key limit"
         case (.openRouter, .weekly):
             return "Account credits"
-        case (.claudeCode, .codeReview):
-            return "Sonnet"
         case (_, .codeReview):
-            return "Code Review"
+            return service.codeReviewQuotaTitle
         case (_, .session):
             return "Session"
         case (_, .weekly):

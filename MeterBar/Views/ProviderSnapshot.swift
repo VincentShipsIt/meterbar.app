@@ -327,11 +327,12 @@ enum ProviderSnapshotBuilder {
             ))
         }
         if let codeReview = metrics.codeReviewLimit {
-            // Claude's third window is the Sonnet-only weekly quota; Codex's is
-            // its code-review quota. (The popover and dashboard previously
-            // implemented this rule with inverted defaults.)
-            let title = service == .claudeCode ? "Sonnet" : "Code Review"
-            result.append(SnapshotLimit(id: "codeReview", kind: .codeReview, title: title, usageLimit: codeReview))
+            result.append(SnapshotLimit(
+                id: "codeReview",
+                kind: .codeReview,
+                title: service.codeReviewQuotaTitle,
+                usageLimit: codeReview
+            ))
         }
         return result
     }

@@ -61,4 +61,14 @@ final class ServiceTypeTests: XCTestCase {
         let cursor = try decoder.decode(ServiceType.self, from: cursorJSON)
         XCTAssertEqual(cursor, .cursor)
     }
+
+    // Centralized rule (popover, dashboard, widget, and notification copy all
+    // route through this): the third quota window is "Sonnet" for Claude Code
+    // and "Code Review" for every other provider.
+    func testCodeReviewQuotaTitle() {
+        XCTAssertEqual(ServiceType.claudeCode.codeReviewQuotaTitle, "Sonnet")
+        for service in ServiceType.allCases where service != .claudeCode {
+            XCTAssertEqual(service.codeReviewQuotaTitle, "Code Review")
+        }
+    }
 }

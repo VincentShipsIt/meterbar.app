@@ -55,4 +55,13 @@ public enum ServiceType: String, Codable, CaseIterable, Identifiable, Sendable {
         case .grok: return 4
         }
     }
+
+    /// Display title for the third ("code review") quota window. It is the
+    /// Sonnet-only weekly quota for Claude Code and the code-review quota for
+    /// every other provider. Centralized here because the popover, dashboard,
+    /// widget, and notification copy previously each spelled out this rule —
+    /// and historically did so with inverted defaults.
+    public var codeReviewQuotaTitle: String {
+        self == .claudeCode ? "Sonnet" : "Code Review"
+    }
 }
